@@ -184,10 +184,26 @@ def try_decode(bytes_, uid=None, ota_candidates=OTA_VERSION_ID_CANDIDATES):
 # UHD
 # ---------------------------------------------------------------------------
 def open_usrp(args):
+    """Open the USRP for RX. The Python binding constructor name varies by UHD
+    version: modern bindings expose uhd.usrp_multi_source(); older ones used
+    uhd.usrp_multi_usrp(). Try both, and on failure print the real available
+    symbols so any other mismatch is self-diagnosing (not a blind AttributeError).
+    """
     import uhd
     args_str = args.device or "type=b200"   # b200 matches B205mini & B210
-    usrp = uhd.usrp_multi_usrp(args_str)
-    return usrp
+    for ctor_name in ("usrp_multi_source", "usrp_multi_usrp"):
+        ctor = getattr(uhd, ctor_name, None)
+        if ctor is not None:
+            try:
+                return ctor(args_str)
+            except Exception as e:
+                print(f"[uhd] {ctor_name}('{args_str}') failed: {e}")
+    avail = [x for x in dir(uhd) if "usrp" in x.lower() or "source" in x.lower()]
+    print(f"[uhd] ERROR: no usable USRP RX constructor found. args='{args_str}'")
+    print(f"[uhd] available uhd.* symbols: {avail}")
+    print("[uhd] hint: install UHD (>=4.2) with python bindings; on the B205mini "
+          "try --device 'type=b200' (auto) or a specific IP like 'type=b200,addr=192.168.2.2'")
+    raise SystemExit(1)
 
 def setup_rx(usrp, args):
     import uhd
@@ -203,6 +219,8 @@ def setup_rx(usrp, args):
     return usrp
 
 def capture(usrp, n):
+    """Get n complex samples. Modern binding: usrp.get_samples(n) -> numpy array.
+    Some builds expose it as a method returning an array; guard the shape."""
     return usrp.get_samples(n)
 
 # ---------------------------------------------------------------------------
