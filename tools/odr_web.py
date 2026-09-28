@@ -144,13 +144,71 @@ class Drone:
         }
 
 
+class ElrsLink:
+    """A decoded ExpressLRS control/telemetry link, keyed by CRC init (which
+    encodes the bind UID low byte ^ OTA version). Distinct from an ODID drone:
+    it is an RF link, not a regulatory ID broadcast."""
+
+    TIMEOUT_S = 15.0
+
+    def __init__(self, key, pkt):
+        self.key = key
+        self.first_seen = pkt.get("t", time.time())
+        self.last_seen = pkt.get("t", time.time())
+        self.packets = 0
+        self.uid = pkt.get("uid")
+        self.ota_versions = set()
+        self.sfs = set()
+        self.types = set()
+        self.inits = set()
+        self.sizes = set()
+        self.last_hex = None
+        self._update(pkt)
+
+    def _update(self, pkt):
+        self.last_seen = pkt.get("t", self.last_seen)
+        self.packets += 1
+        if pkt.get("uid"):
+            self.uid = pkt["uid"]
+        if pkt.get("ov") is not None:
+            self.ota_versions.add(pkt["ov"])
+        if pkt.get("sf") is not None:
+            self.sfs.add(pkt["sf"])
+        if pkt.get("type") is not None:
+            self.types.add(pkt["type"])
+        if pkt.get("init"):
+            self.inits.add(pkt["init"])
+        if pkt.get("size") is not None:
+            self.sizes.add(pkt["size"])
+        if pkt.get("hex"):
+            self.last_hex = pkt["hex"]
+
+    def to_json(self):
+        return {
+            "key": self.key,
+            "first_seen": self.first_seen,
+            "last_seen": self.last_seen,
+            "age_s": round(time.time() - self.last_seen, 1),
+            "packets": self.packets,
+            "uid": self.uid,
+            "ota_versions": sorted(self.ota_versions),
+            "sfs": sorted(self.sfs),
+            "pkt_types": sorted(self.types),
+            "inits": sorted(self.inits),
+            "sizes": sorted(self.sizes),
+            "last_hex": self.last_hex,
+        }
+
+
 class Tracker:
     def __init__(self):
         self.lock = threading.Lock()
         self.drones = {}
+        self.links = {}
         self.feed = []
         self.started = time.time()
         self.total_events = 0
+        self.total_link_pkts = 0
 
     def add_event(self, event):
         key = drone_key(event)
@@ -169,19 +227,45 @@ class Tracker:
             })
             self.feed = self.feed[-MAX_FEED:]
 
+    def add_link(self, pkt):
+        """pkt: one decoded ELRS packet dict (from elrs_live --pkts jsonl).
+        Keyed by init (== UID-derived CRC init, stable per link)."""
+        key = "elrs:" + str(pkt.get("init") or "unknown")
+        with self.lock:
+            self.total_link_pkts += 1
+            l = self.links.get(key)
+            if l is None:
+                l = ElrsLink(key, pkt)
+                self.links[key] = l
+            else:
+                l._update(pkt)
+            self.feed.append({
+                "ts": _dt.datetime.fromtimestamp(pkt.get("t", time.time())).isoformat(timespec="milliseconds"),
+                "key": key, "transport": "ELRS", "addr": None,
+                "counter": None,
+                "types": ["ELRS sf=%s type=%s" % (pkt.get("sf"), pkt.get("type"))],
+            })
+            self.feed = self.feed[-MAX_FEED:]
+
     def snapshot(self):
         now = time.time()
         with self.lock:
             drones = [d.to_json() for d in self.drones.values()
                       if now - d.last_seen < DRONE_TIMEOUT_S]
             drones.sort(key=lambda x: -x["last_seen"])
+            links = [l.to_json() for l in self.links.values()
+                     if now - l.last_seen < ElrsLink.TIMEOUT_S]
+            links.sort(key=lambda x: -x["last_seen"])
             return {
                 "started": self.started,
                 "now": now,
                 "total_events": self.total_events,
+                "total_link_pkts": self.total_link_pkts,
                 "active_drones": len(drones),
                 "known_drones": len(self.drones),
+                "active_links": len(links),
                 "drones": drones,
+                "links": links,
                 "feed": list(reversed(self.feed)),
             }
 
@@ -262,6 +346,49 @@ def replay_loop(tracker, jsonl, interval=0.4):
         time.sleep(interval)
 
 
+def elrs_tail_loop(tracker, path, poll=0.4):
+    """Follow-tail an ELRS --pkts jsonl file (written by elrs_live.py) and feed
+    each decoded packet into the tracker as a link event. The file may not
+    exist yet (ELRS child starts up slowly) — wait for it."""
+    offset = 0
+    fh = None
+    while True:
+        try:
+            if fh is None:
+                if not os.path.exists(path):
+                    time.sleep(poll)
+                    continue
+                fh = open(path, "r", encoding="utf-8", errors="replace")
+                offset = 0
+            fh.seek(0, 2)  # EOF
+            size = fh.tell()
+            if size < offset:
+                # truncated/rotated: re-open from start
+                fh.close(); fh = None
+                continue
+            if size > offset:
+                fh.seek(offset)
+                chunk = fh.read(size - offset)
+                offset = size
+                for line in chunk.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        pkt = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    tracker.add_link(pkt)
+            time.sleep(poll)
+        except FileNotFoundError:
+            fh = None
+            time.sleep(poll)
+        except Exception as e:
+            print("elrs tail error: %r" % (e,), file=sys.stderr)
+            fh = None
+            time.sleep(poll)
+
+
 # ---------------------------------------------------------------------------
 # Web server
 # ---------------------------------------------------------------------------
@@ -310,16 +437,19 @@ INDEX_HTML = r"""<!doctype html>
 </style></head>
 <body>
 <header>
-  <h1>Open Drone ID</h1>
-  <span class="stat">active <b id="active">0</b></span>
-  <span class="stat">known <b id="known">0</b></span>
+  <h1>Drone Scanner <span class="muted">ODID + ELRS</span></h1>
+  <span class="stat">drones <b id="active">0</b></span>
+  <span class="stat">links <b id="links">0</b></span>
   <span class="stat">events <b id="events">0</b></span>
   <span class="stat live" id="src">source: -</span>
 </header>
 <main>
   <div id="list"><div class="muted" style="padding:12px">No drones yet.</div></div>
-  <div id="detail"><h2>Select a drone</h2>
-    <div class="muted">Waiting for Open Drone ID broadcasts…</div></div>
+  <div style="overflow:auto; display:flex; flex-direction:column;">
+    <div id="detail" style="padding:12px 16px; overflow:auto;"><h2>Select a drone</h2>
+      <div class="muted">Waiting for broadcasts…</div></div>
+    <div id="linksPanel" style="padding:12px 16px; overflow:auto; border-top:1px solid var(--line);"></div>
+  </div>
   <div id="feedcol" style="display:none"><h2>Live feed</h2><div id="feed"></div></div>
 </main>
 <script>
@@ -407,14 +537,32 @@ function renderFeed(snap){
     '<div class="ev"><span class="muted">'+e.ts.slice(11,19)+'</span> '
     +esc(e.transport)+' '+(e.addr||'')+' ['+e.types.join(',')+']</div>').join('');
 }
+function renderLinks(snap){
+  const el=document.getElementById('linksPanel');
+  if(!el) return;
+  if(!snap.links.length){ el.innerHTML='<h2 style="margin-top:14px">ELRS links</h2><div class="muted">No CRC-valid ELRS packets yet (bind or --uid needed).</div>'; return; }
+  let h='<h2 style="margin-top:14px">ELRS control/telemetry links</h2>';
+  snap.links.forEach(l=>{
+    h+='<table><tr><th>Key</th><td>'+esc(l.key)+'</td></tr>'
+      +'<tr><th>Packets</th><td>'+l.packets+' · last '+fmtAge(l.age_s)+' ago</td></tr>'
+      +'<tr><th>UID</th><td>'+(l.uid?esc(l.uid):'auto / brute (no UID)')+'</td></tr>'
+      +'<tr><th>OTA versions</th><td>'+esc((l.ota_versions||[]).join(', '))+'</td></tr>'
+      +'<tr><th>LoRa SF</th><td>'+esc((l.sfs||[]).join(', '))+'</td></tr>'
+      +'<tr><th>Pkt types</th><td>'+esc((l.pkt_types||[]).join(', '))+'</td></tr>'
+      +'<tr><th>Sizes</th><td>'+esc((l.sizes||[]).join(', '))+' bytes</td></tr>'
+      +'<tr><th>Last pkt</th><td class="muted">'+(l.last_hex?esc(l.last_hex):'-')+'</td></tr>'
+      +'</table>';
+  });
+  el.innerHTML=h;
+}
 async function refresh(){
   try{
     const r = await fetch('/api/state');
     const snap = await r.json();
     document.getElementById('active').textContent=snap.active_drones;
-    document.getElementById('known').textContent=snap.known_drones;
+    const lk=document.getElementById('links'); if(lk) lk.textContent=snap.active_links||0;
     document.getElementById('events').textContent=snap.total_events;
-    renderList(snap); renderDetail(snap); renderFeed(snap);
+    renderList(snap); renderDetail(snap); renderLinks(snap); renderFeed(snap);
   }catch(e){ /* transient */ }
 }
 refresh();
@@ -479,6 +627,9 @@ def main():
                     default="btmon-live")
     ap.add_argument("-f", "--file")
     ap.add_argument("--jsonl", help="also tee events to this jsonl file")
+    ap.add_argument("--elrs-pkts",
+                    help="also tail this ELRS --pkts jsonl and show ELRS links "
+                         "in the UI (start elrs_live.py --live --pkts <this>")
     args = ap.parse_args()
 
     if args.source == "btmon" and not args.file:
@@ -503,6 +654,12 @@ def main():
             target=capture_loop,
             args=(tracker, args.source, args.file, jsonl), daemon=True)
         cap.start()
+
+    if args.elrs_pkts:
+        elrs = threading.Thread(
+            target=elrs_tail_loop, args=(tracker, args.elrs_pkts), daemon=True)
+        elrs.start()
+        print("ELRS links: tailing %s" % args.elrs_pkts)
 
     try:
         serve(tracker, args.port, args.host)

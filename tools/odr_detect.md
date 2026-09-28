@@ -83,7 +83,35 @@ Same 2.4 GHz band, two frame flavors (both carry the same
 Both transports are optional per regulation (one is mandatory; many
 airframes do BLE-only, some both).
 
-## 2. `odr_web.py` — live Web UI (the main entry point)
+## 2. `drone_scan.py` — overarching supervisor (start here)
+
+One command starts the whole detector and gives a single Web UI on one
+port. It supervises the ODID capture and (optionally) the ELRS decoder as
+child processes and merges both into one tracker/UI. If a subsystem's
+dependency is missing it is skipped with a note, not a crash. Ctrl-C stops
+everything cleanly; a crashed ELRS child is auto-restarted (≤5×).
+
+```sh
+sudo python3 tools/drone_scan.py                       # ODID (BLE/btmon) + UI :10000
+sudo python3 tools/drone_scan.py --elrs --elrs-mode bind          # + ELRS bind decode (no UID)
+python3  tools/drone_scan.py --elrs --elrs-mode live --uid A1B2C3D4E5F6  # + bound link
+python3  tools/drone_scan.py --odid-source replay                 # no radio: synthetic ODID
+python3  tools/drone_scan.py --elrs --elrs-pkts-replay t.jsonl    # no SDR: synthetic ELRS links
+```
+
+Then open **http://localhost:10000**. The left column lists ODID drones
+(identified by serial/registration), the middle column shows the selected
+drone's full parameter set **and** an "ELRS links" panel (UID, OTA
+versions, LoRa SF, packet types, last packet) below it, and a live event
+feed (both protocols) is available. Both streams tee to jsonl
+(`odr_scan_<ts>.jsonl`, `elrs_pkts_<ts>.jsonl`).
+
+What it can and can't unify: it supervises the two very different capture
+front-ends (BLE/btmon vs. SDR/UHD-LoRa) and merges their *decoded* events
+into one UI, but they remain distinct data — drones (ODID regulatory ID)
+vs. links (ELRS RF control), shown in separate panels, not merged rows.
+
+## 3. `odr_web.py` — live Web UI (standalone)
 
 Zero-dependency (Python 3.8+ stdlib). Starts a capture and an HTTP server;
 open the browser and you see every drone being identified in real time.
@@ -111,7 +139,7 @@ Use `--source replay` to verify the whole pipeline on a machine with no
 drone in range: it generates a synthetic moving ODID beacon through the
 identical decode path.
 
-## 3. `odr_detect.py` — capture + decode (CLI / library)
+## 4. `odr_detect.py` — capture + decode (CLI / library)
 
 ```
 python3 tools/odr_detect.py --selftest
@@ -131,7 +159,7 @@ python3 tools/odr_detect.py --source stdin < btmon.log     # generic line input
   frame with known content, runs them through the extractors + decoders,
   and asserts the decoded fields.
 
-## 4. Capture method tradeoffs (Linux laptop)
+## 5. Capture method tradeoffs (Linux laptop)
 
 ### Option A: Bluetooth adapter + BlueZ `btmon` (recommended for BLE)
 
@@ -234,7 +262,7 @@ energy in the 2.4 GHz band, but it is the wrong tool:
 **Rule of thumb: btmon for BLE (default), monitor-mode Wi-Fi for beacon
 flavor, SDR only for RF-level questions.**
 
-## 5. Reference pointers
+## 6. Reference pointers
 
 - C reference (parse logic): `../odr_core/libopendroneid/opendroneid.c`
   (`decode*Message`, `decodeMessagePack`, `checkPackContent`),
