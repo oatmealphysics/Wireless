@@ -154,28 +154,36 @@ class USRP:
                 continue
         if sa is None:
             raise SystemExit("could not construct UHD StreamArgs")
-        # select RX subdev + antenna + reset DC offset (B205mini needs this,
-        # otherwise the RX path can open but deliver nothing)
+        # select RX subdev + antenna + DC offset (4.9 pybind uses set_rx_* names;
+        # the RX path must be configured or recv times out with no data)
         try:
-            d.set_subdev_spec("A", 0)
-            print("[sdr] set_subdev_spec A:0")
+            d.set_rx_subdev_spec("A", 0)
+            print("[sdr] set_rx_subdev_spec A:0")
         except Exception as e:
-            print("[sdr] note: set_subdev_spec failed (%r)" % (e,))
+            print("[sdr] note: set_rx_subdev_spec failed (%r)" % (e,))
+        ant_ok = False
+        for ant in ("RX2", "RX1", "RX"):
+            try:
+                d.set_rx_antenna(ant, 0)
+                ant_ok = True
+                print("[sdr] set_rx_antenna %s" % ant)
+                break
+            except Exception:
+                continue
+        if not ant_ok:
+            try:
+                ants = d.get_rx_antennas(0)
+                d.set_rx_antenna(ants[0], 0)
+                print("[sdr] set_rx_antenna %s" % ants[0])
+            except Exception as e:
+                print("[sdr] note: antenna set failed (%r)" % (e,))
         try:
-            d.set_antenna("RX2", 0)
+            d.set_rx_dc_offset(True, 0)
         except Exception:
             try:
-                d.set_antenna("RX1", 0)
+                d.set_rx_dc_offset(True)
             except Exception:
-                try:
-                    ants = d.get_antenna_names(0)
-                    d.set_antenna(ants[0], 0)
-                except Exception:
-                    pass
-        try:
-            d.set_dc_offset_mode(True, 0)
-        except Exception:
-            pass
+                pass
         self.streamer = d.get_rx_stream(sa)
         # metadata object for recv(buf, meta, timeout) -- class is uhd.types.RXMetadata
         for mk in (lambda: u.types.RXMetadata(),

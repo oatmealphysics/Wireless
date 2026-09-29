@@ -291,23 +291,29 @@ class USRP:
         if sa is None:
             raise SystemExit("could not construct UHD StreamArgs")
         try:
-            d.set_subdev_spec("A", 0)
+            d.set_rx_subdev_spec("A", 0)
         except Exception:
             pass
+        ant_ok = False
+        for ant in ("RX2", "RX1", "RX"):
+            try:
+                d.set_rx_antenna(ant, 0)
+                ant_ok = True
+                break
+            except Exception:
+                continue
+        if not ant_ok:
+            try:
+                d.set_rx_antenna(d.get_rx_antennas(0)[0], 0)
+            except Exception:
+                pass
         try:
-            d.set_antenna("RX2", 0)
+            d.set_rx_dc_offset(True, 0)
         except Exception:
             try:
-                d.set_antenna("RX1", 0)
+                d.set_rx_dc_offset(True)
             except Exception:
-                try:
-                    d.set_antenna(d.get_antenna_names(0)[0], 0)
-                except Exception:
-                    pass
-        try:
-            d.set_dc_offset_mode(True, 0)
-        except Exception:
-            pass
+                pass
         self.streamer = d.get_rx_stream(sa)
         for mk in (lambda: u.types.RXMetadata(),
                    lambda: getattr(u, "RXMetadata", None) and u.RXMetadata(),
