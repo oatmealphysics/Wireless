@@ -290,6 +290,24 @@ class USRP:
                 continue
         if sa is None:
             raise SystemExit("could not construct UHD StreamArgs")
+        try:
+            d.set_subdev_spec("A", 0)
+        except Exception:
+            pass
+        try:
+            d.set_antenna("RX2", 0)
+        except Exception:
+            try:
+                d.set_antenna("RX1", 0)
+            except Exception:
+                try:
+                    d.set_antenna(d.get_antenna_names(0)[0], 0)
+                except Exception:
+                    pass
+        try:
+            d.set_dc_offset_mode(True, 0)
+        except Exception:
+            pass
         self.streamer = d.get_rx_stream(sa)
         for mk in (lambda: u.types.RXMetadata(),
                    lambda: getattr(u, "RXMetadata", None) and u.RXMetadata(),
@@ -317,24 +335,23 @@ class USRP:
         per = max(per, 8)
         out = np.zeros(n, dtype=np.complex64)
         filled = 0
+        stalls = 0
         while filled < n:
             chunk = min(per, n - filled)
             buf = out[filled:filled + chunk]
-            if self._stream_meta is not None:
-                try:
-                    got = self.streamer.recv(buf, self._stream_meta, 1.0)
-                except TypeError:
-                    got = self.streamer.recv(buf, self._stream_meta)
-            else:
-                try:
-                    got = self.streamer.recv(buf)
-                except TypeError:
-                    got = self.streamer.recv(buf, None)
+            try:
+                got = self.streamer.recv(buf, self._stream_meta, 2.0)
+            except TypeError:
+                got = self.streamer.recv(buf, self._stream_meta)
             got = int(got)
             if got <= 0:
-                break
+                stalls += 1
+                if stalls > 5:
+                    break
+                continue
+            stalls = 0
             filled += got
-        return out[:filled] if filled else out[:0]
+        return out[:filled]
 
 
 def open_usrp(args):

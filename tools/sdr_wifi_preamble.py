@@ -154,6 +154,28 @@ class USRP:
                 continue
         if sa is None:
             raise SystemExit("could not construct UHD StreamArgs")
+        # select RX subdev + antenna + reset DC offset (B205mini needs this,
+        # otherwise the RX path can open but deliver nothing)
+        try:
+            d.set_subdev_spec("A", 0)
+            print("[sdr] set_subdev_spec A:0")
+        except Exception as e:
+            print("[sdr] note: set_subdev_spec failed (%r)" % (e,))
+        try:
+            d.set_antenna("RX2", 0)
+        except Exception:
+            try:
+                d.set_antenna("RX1", 0)
+            except Exception:
+                try:
+                    ants = d.get_antenna_names(0)
+                    d.set_antenna(ants[0], 0)
+                except Exception:
+                    pass
+        try:
+            d.set_dc_offset_mode(True, 0)
+        except Exception:
+            pass
         self.streamer = d.get_rx_stream(sa)
         # metadata object for recv(buf, meta, timeout) -- class is uhd.types.RXMetadata
         for mk in (lambda: u.types.RXMetadata(),
@@ -168,15 +190,51 @@ class USRP:
         if self._stream_meta is None:
             raise SystemExit("could not construct UHD RXMetadata object")
 
+    def _stream_cmd_start(self):
+        """Start the RX stream explicitly. 4.9 needs a stream_cmd object, not a
+        bool. Best-effort: if the stream auto-starts on first recv this is a
+        no-op, and if the API differs we just log it and continue."""
+        u = self.uhd
+        sc = None
+        for mk in (lambda: u.types.stream_cmd(u.types.stream_cmd.stream_mode_t.CONTINUOUS),
+                   lambda: getattr(u.types, "stream_cmd", None) and u.types.stream_cmd(),
+                   lambda: getattr(u, "stream_cmd", None) and u.stream_cmd()):
+            try:
+                sc = mk()
+                break
+            except Exception:
+                continue
+        if sc is None:
+            print("[sdr] note: no stream_cmd object available; relying on auto-start")
+            return
+        try:
+            self.streamer.issue_stream_cmd(sc)
+            print("[sdr] stream started via issue_stream_cmd")
+        except Exception as e:
+            print("[sdr] note: issue_stream_cmd failed (%r); relying on auto-start" % (e,))
+
+    def _recv_chunk(self, buf, timeout):
+        """recv one chunk into buf; return (count, metadata_error_str)."""
+        st, md = self.streamer, self._stream_meta
+        try:
+            got = st.recv(buf, md, timeout)
+        except TypeError:
+            got = st.recv(buf, md)
+        err = "ok"
+        try:
+            err = str(md.error_code)
+        except Exception:
+            pass
+        return int(got), err
+
     def get(self, n):
-        """Return n complex64 samples as a numpy array."""
+        """Return up to n complex64 samples. Self-diagnosing: prints what it's
+        doing so the first live run reveals the stream state (no separate probe
+        commands needed)."""
         d = self.dev
-        # modern convenience path
         if hasattr(d, "get_samples"):
             return np.asarray(d.get_samples(n), dtype=np.complex64)
-        # 4.9 pybind streaming path: recv(buf, meta, timeout) -> count
         self._ensure_stream(None)
-        # some builds cap per-call samples
         per = n
         if hasattr(self.streamer, "get_max_num_samps"):
             try:
@@ -186,25 +244,46 @@ class USRP:
         per = max(per, 8)
         out = np.zeros(n, dtype=np.complex64)
         filled = 0
-        timeout = 1.0
+        # First, a diagnostic probe: one short recv to see if the stream is
+        # delivering anything at all.
+        probe = out[0:min(per, n)]
+        got0, err0 = self._recv_chunk(probe, 2.0)
+        print("[sdr] probe recv: got=%d err=%s (buffer absmax=%s)"
+              % (got0, err0,
+                 float(np.abs(probe[:max(got0,1)]).max()) if got0 > 0 else "n/a"))
+        if got0 > 0:
+            filled += got0
+        else:
+            # Stream delivered nothing. Try to start it explicitly and re-probe.
+            self._stream_cmd_start()
+            probe2 = out[0:min(per, n)]
+            got1, err1 = self._recv_chunk(probe2, 3.0)
+            print("[sdr] re-probe after stream start: got=%d err=%s" % (got1, err1))
+            if got1 > 0:
+                filled += got1
+            else:
+                print("[sdr] ERROR: RX stream is not delivering samples "
+                      "(recv timeout, no data). The board opens and tunes but "
+                      "the USB RX path is not producing. This is usually: "
+                      "antenna/subdev not selected, or the RX chain needs "
+                      "set_subdev_spec / a dc-offset reset. See stderr hints "
+                      "above. Aborting capture.")
+                raise SystemExit(2)
+        # Fill the rest of the requested window.
+        timeout = 2.0
+        stalls = 0
         while filled < n:
             chunk = min(per, n - filled)
             buf = out[filled:filled + chunk]
-            if self._stream_meta is not None:
-                try:
-                    got = self.streamer.recv(buf, self._stream_meta, timeout)
-                except TypeError:
-                    got = self.streamer.recv(buf, self._stream_meta)
-            else:
-                try:
-                    got = self.streamer.recv(buf)
-                except TypeError:
-                    got = self.streamer.recv(buf, None)
-            got = int(got)
+            got, err = self._recv_chunk(buf, timeout)
             if got <= 0:
-                break
+                stalls += 1
+                if stalls > 5:
+                    break
+                continue
+            stalls = 0
             filled += got
-        return out[:filled] if filled else out[:0]
+        return out[:filled]
 
 
 # ---------------------------------------------------------------------------
@@ -345,10 +424,11 @@ def main():
     ap.add_argument("--device", default=None, help="UHD device arg (type=b200)")
     ap.add_argument("--center", type=float, default=2.437e9,
                     help="center frequency Hz (2437 MHz = 2.4 GHz Wi-Fi mid)")
-    ap.add_argument("--srate", type=float, default=25.0e6,
-                    help="sample rate Hz (>=20 MS/s for 20 MHz Wi-Fi; 25 MS/s default)")
+    ap.add_argument("--srate", type=float, default=10.0e6,
+                    help="sample rate Hz (10 MS/s default = safe over USB3; "
+                         "raise to 20-25 MS/s for full 20 MHz Wi-Fi bandwidth)")
     ap.add_argument("--gain", type=float, default=30.0, help="RF gain dB")
-    ap.add_argument("--seconds", type=float, default=10.0, help="capture seconds")
+    ap.add_argument("--seconds", type=float, default=5.0, help="capture seconds")
     ap.add_argument("--min-conf", type=float, default=0.5,
                     help="min normalized correlation confidence to report")
     ap.add_argument("--top", type=int, default=15, help="show top N candidates")
