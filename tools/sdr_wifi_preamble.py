@@ -27,54 +27,181 @@ worth building. If you see none, we adjust gain/center/antenna first.
 
 import argparse
 import time
+import os
+import sys
 import numpy as np
 
+# --- make the 4.9 pybind UHD importable + firmware findable without env vars ---
+for _sp in ("/usr/local/lib/python3.12/site-packages",
+            "/usr/local/lib/python3/dist-packages"):
+    if os.path.isdir(_sp) and _sp not in sys.path:
+        sys.path.insert(0, _sp)
+os.environ.setdefault("UHD_IMAGES_DIR", "/usr/local/share/uhd/images")
+
 
 # ---------------------------------------------------------------------------
-# UHD (board-agnostic open + RX setup, shared with elrs_live.py conventions)
+# UHD (board-agnostic, version-tolerant). Order of attempts is chosen so the
+# UHD 4.9 pybind API (uhd.usrp.MultiUSRP + set_rx_* + recv(buf, meta, t)) is
+# tried FIRST, since that is what's confirmed working on the target laptop;
+# 4.2+ multi_source/get_samples is the fallback for other setups.
 # ---------------------------------------------------------------------------
-def open_usrp(device_arg=None):
-    import uhd
-    args_str = device_arg or "type=b200"  # b200 matches B205mini and B210
-    last_err = None
-    for ctor_name in ("usrp_multi_source", "usrp_multi_usrp"):
-        ctor = getattr(uhd, ctor_name, None)
-        if ctor is None:
-            continue
-        try:
-            return uhd, ctor(args_str), uhd.get_device(0) if hasattr(uhd, "get_device") else None
-        except Exception as e:
-            last_err = e
-    avail = [x for x in dir(uhd) if "usrp" in x.lower() or "source" in x.lower()]
-    raise SystemExit(
-        "no UHD USRP source constructor worked (args=%r)\n  error: %r\n  "
-        "available uhd.* symbols: %s\n  hint: set UHD_IMAGES_DIR if firmware "
-        "isn't found; check 'lsusb | grep -i ettus' and 'uhd_find_devices'."
-        % (args_str, last_err, avail))
+class USRP:
+    """Thin wrapper so the rest of the code calls one stable interface
+    (tune/rate/gain/get) regardless of which UHD binding is present."""
 
+    def __init__(self, device_arg=None):
+        self.uhd = self._import_uhd()
+        args = device_arg or "type=b200"
+        self.dev = self._open(args)
+        self.streamer = None
+        self._stream_meta = None
 
-def setup_rx(usrp, uhd, center, srate, gain):
-    usrp.set_tune_request(uhd.tune_request(center))
-    usrp.set_sample_rate(srate)
-    # gain: try RF then baseband if the chain rejects the value
-    try:
-        usrp.set_gain(gain)
-    except Exception:
-        try:
-            usrp.set_gain(gain, 0)
-        except Exception as e:
-            print("warn: set_gain(%s) failed (%s); using default gain" % (gain, e))
-    # antenna: query rather than hardcode (B205mini has one, B210 has RX1/RX2)
-    try:
-        ants = usrp.get_antenna_names(0)
-        usrp.set_antenna(ants[0], 0)
-    except Exception:
-        pass
-    return usrp
+    def _import_uhd(self):
+        import uhd
+        return uhd
 
+    def _open(self, args):
+        u = self.uhd
+        errors = []
+        # 1) UHD 4.9 pybind: uhd.usrp.MultiUSRP / uhd.usrp.multi_usrp
+        for sub in ("usrp",):
+            mod = getattr(u, sub, None)
+            for cname in ("MultiUSRP", "multi_usrp"):
+                ctor = getattr(mod, cname, None) if mod is not None else None
+                if ctor is None:
+                    continue
+                try:
+                    return ctor(args)
+                except Exception as e:
+                    errors.append((sub + "." + cname, e))
+        # 2) 4.2+ multi-board source
+        for cname in ("usrp_multi_source", "usrp_multi_usrp"):
+            ctor = getattr(u, cname, None)
+            if ctor is None:
+                continue
+            try:
+                return ctor(args)
+            except Exception as e:
+                errors.append((cname, e))
+        # 3) raw device
+        ctor = getattr(u, "device", None)
+        if ctor is not None:
+            try:
+                return ctor(args)
+            except Exception as e:
+                errors.append(("device", e))
+        avail = [x for x in dir(u) if "usrp" in x.lower() or "source" in x.lower()]
+        raise SystemExit(
+            "no UHD constructor worked for %r\n  tried: %s\n  "
+            "available uhd.* symbols: %s\n  hint: check UHD_IMAGES_DIR, "
+            "'lsusb | grep -i ettus', 'uhd_find_devices'."
+            % (args, errors, avail))
 
-def capture(usrp, n):
-    return usrp.get_samples(n)
+    # -- tuning (try 4.9 names then 4.2+ names) --
+    def set_freq(self, center):
+        d = self.dev
+        if hasattr(d, "set_rx_freq"):
+            d.set_rx_freq(center)
+        elif hasattr(d, "set_center_freq"):
+            d.set_center_freq(center, 0)
+        elif hasattr(d, "set_tune_request"):
+            d.set_tune_request(self.uhd.tune_request(center))
+        else:
+            raise SystemExit("no freq-set method found on device %r" % (d,))
+
+    def set_rate(self, srate):
+        d = self.dev
+        if hasattr(d, "set_rx_rate"):
+            d.set_rx_rate(srate)
+        elif hasattr(d, "set_sample_rate"):
+            d.set_sample_rate(srate)
+        else:
+            raise SystemExit("no rate-set method found on device %r" % (d,))
+
+    def set_gain(self, gain):
+        d = self.dev
+        for name in ("set_rx_gain", "set_gain"):
+            if hasattr(d, name):
+                try:
+                    getattr(d, name)(gain)
+                    return
+                except Exception:
+                    try:
+                        getattr(d, name)(gain, 0)
+                        return
+                    except Exception as e:
+                        print("warn: %s(%s) failed (%s); using default gain"
+                              % (name, gain, e))
+                        return
+        print("warn: no gain-set method; using default gain")
+
+    def _ensure_stream(self, srate_unused):
+        """Lazily create the RX streamer + metadata object."""
+        if self.streamer is not None:
+            return
+        u, d = self.uhd, self.dev
+        # build StreamArgs: try (fmt, '') then (fmt,) then StreamArgs()
+        sa = None
+        for mk in (lambda: u.usrp.StreamArgs("fc32", ""),
+                   lambda: getattr(u, "usrp", None) and u.usrp.StreamArgs("fc32"),
+                   lambda: u.StreamArgs("fc32", ""),
+                   lambda: u.StreamArgs("fc32"),
+                   lambda: u.StreamArgs()):
+            try:
+                sa = mk()
+                break
+            except Exception:
+                continue
+        if sa is None:
+            raise SystemExit("could not construct UHD StreamArgs")
+        self.streamer = d.get_rx_stream(sa)
+        # metadata object for recv(buf, meta, timeout)
+        for mk in (lambda: u.types.rx_metadata(),
+                   lambda: u.rx_metadata(),
+                   lambda: u.usrp.rx_metadata()):
+            try:
+                self._stream_meta = mk()
+                break
+            except Exception:
+                continue
+
+    def get(self, n):
+        """Return n complex64 samples as a numpy array."""
+        d = self.dev
+        # modern convenience path
+        if hasattr(d, "get_samples"):
+            return np.asarray(d.get_samples(n), dtype=np.complex64)
+        # 4.9 pybind streaming path: recv(buf, meta, timeout) -> count
+        self._ensure_stream(None)
+        # some builds cap per-call samples
+        per = n
+        if hasattr(self.streamer, "get_max_num_samps"):
+            try:
+                per = min(n, int(self.streamer.get_max_num_samps()))
+            except Exception:
+                per = n
+        per = max(per, 8)
+        out = np.zeros(n, dtype=np.complex64)
+        filled = 0
+        timeout = 1.0
+        while filled < n:
+            chunk = min(per, n - filled)
+            buf = out[filled:filled + chunk]
+            if self._stream_meta is not None:
+                try:
+                    got = self.streamer.recv(buf, self._stream_meta, timeout)
+                except TypeError:
+                    got = self.streamer.recv(buf, self._stream_meta)
+            else:
+                try:
+                    got = self.streamer.recv(buf)
+                except TypeError:
+                    got = self.streamer.recv(buf, None)
+            got = int(got)
+            if got <= 0:
+                break
+            filled += got
+        return out[:filled] if filled else out[:0]
 
 
 # ---------------------------------------------------------------------------
@@ -232,14 +359,16 @@ def main():
         import sys
         sys.exit(selftest())
 
-    uhd, usrp, _ = open_usrp(args.device)
-    setup_rx(usrp, uhd, args.center, args.srate, args.gain)
+    usrp = USRP(args.device)
+    usrp.set_freq(args.center)
+    usrp.set_rate(args.srate)
+    usrp.set_gain(args.gain)
     n = int(args.srate * args.seconds)
     print("[sdr_wifi_preamble] center %.1f MHz, %.2f MS/s, gain %.0f dB, %.1f s (%d samples)"
           % (args.center / 1e6, args.srate / 1e6, args.gain, args.seconds, n))
 
     t0 = time.time()
-    iq = capture(usrp, n)
+    iq = usrp.get(n)
     iq = np.asarray(iq, dtype=np.complex64)
     if args.save:
         np.ascontiguousarray(iq).tofile(args.save)
