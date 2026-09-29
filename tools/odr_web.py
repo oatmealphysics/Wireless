@@ -163,6 +163,10 @@ class ElrsLink:
         self.inits = set()
         self.sizes = set()
         self.last_hex = None
+        self.directions = set()
+        self.armed_seen = False
+        self.last_channels = None
+        self.uid_low2 = None
         self._update(pkt)
 
     def _update(self, pkt):
@@ -182,6 +186,15 @@ class ElrsLink:
             self.sizes.add(pkt["size"])
         if pkt.get("hex"):
             self.last_hex = pkt["hex"]
+        d = pkt.get("decoded") or {}
+        if d.get("direction"):
+            self.directions.add(d["direction"])
+        if d.get("is_armed"):
+            self.armed_seen = True
+        if d.get("channels_us"):
+            self.last_channels = d["channels_us"]
+        if d.get("uid_low2"):
+            self.uid_low2 = d["uid_low2"]
 
     def to_json(self):
         return {
@@ -191,11 +204,15 @@ class ElrsLink:
             "age_s": round(time.time() - self.last_seen, 1),
             "packets": self.packets,
             "uid": self.uid,
+            "uid_low2": self.uid_low2,
             "ota_versions": sorted(self.ota_versions),
             "sfs": sorted(self.sfs),
             "pkt_types": sorted(self.types),
             "inits": sorted(self.inits),
             "sizes": sorted(self.sizes),
+            "directions": sorted(self.directions),
+            "armed_seen": self.armed_seen,
+            "last_channels": self.last_channels,
             "last_hex": self.last_hex,
         }
 
@@ -546,9 +563,13 @@ function renderLinks(snap){
     h+='<table><tr><th>Key</th><td>'+esc(l.key)+'</td></tr>'
       +'<tr><th>Packets</th><td>'+l.packets+' · last '+fmtAge(l.age_s)+' ago</td></tr>'
       +'<tr><th>UID</th><td>'+(l.uid?esc(l.uid):'auto / brute (no UID)')+'</td></tr>'
+      +'<tr><th>UID low 2</th><td>'+(l.uid_low2?esc(l.uid_low2):'-')+'</td></tr>'
+      +'<tr><th>Direction</th><td>'+esc((l.directions||[]).join(', '))+'</td></tr>'
       +'<tr><th>OTA versions</th><td>'+esc((l.ota_versions||[]).join(', '))+'</td></tr>'
       +'<tr><th>LoRa SF</th><td>'+esc((l.sfs||[]).join(', '))+'</td></tr>'
       +'<tr><th>Pkt types</th><td>'+esc((l.pkt_types||[]).join(', '))+'</td></tr>'
+      +'<tr><th>Armed seen</th><td>'+(l.armed_seen?'yes':'no')+'</td></tr>'
+      +'<tr><th>Ch0 (last)</th><td>'+(l.last_channels&&l.last_channels.CH0!=null?l.last_channels.CH0+' us':'-')+'</td></tr>'
       +'<tr><th>Sizes</th><td>'+esc((l.sizes||[]).join(', '))+' bytes</td></tr>'
       +'<tr><th>Last pkt</th><td class="muted">'+(l.last_hex?esc(l.last_hex):'-')+'</td></tr>'
       +'</table>';

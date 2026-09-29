@@ -26,6 +26,12 @@ DEPS:  pip install numpy uhd     (uhd = UHD python bindings, >= 4.2)
 import argparse, json, struct, sys, time, hashlib
 import numpy as np
 
+# full OTA field decoder (direction/type/channels/CRC-init/UID-low2)
+import importlib.util as _ilu_ota, os as _os_ota
+_ota_path = _os_ota.path.join(_os_ota.dirname(_os_ota.abspath(__file__)), "elrs_ota.py")
+_ota_spec = _ilu_ota.spec_from_file_location("elrs_ota", _ota_path)
+elrs_ota = _ilu_ota.module_from_spec(_ota_spec); _ota_spec.loader.exec_module(elrs_ota)
+
 # ---------------------------------------------------------------------------
 # ELRS constants (verified vs ExpressLRS main: src/src/common.cpp, OTA.h, targets.h)
 # ---------------------------------------------------------------------------
@@ -267,11 +273,32 @@ def do_live(args, bind=False):
                     for (off, size, ptype, init, ov) in try_decode(b, uid):
                         line = (f"  HIT sf={sf} inv={int(inv)} size={size} type={ptype} "
                                 f"init=0x{init:04x} ov={ov}")
-                        print(f"[{time.time()-t0:7.2f}s]{line}  {bytes(b[off:off+size]).hex()}")
+                        pkt_bytes = bytes(b[off:off+size])
+                        # full field decode (direction/type/channels/CRC-init/UID-low2)
+                        dec = elrs_ota.decode_packet(pkt_bytes, init=init,
+                                                     ota_version=ov, sf=sf)
+                        shown_line = line
+                        if dec:
+                            extra = " ".join(
+                                ["dir=%s" % dec.get("direction", "?"),
+                                 "pkt=%s" % dec.get("type", "?")])
+                            if dec.get("is_armed") is not None:
+                                extra += " armed=%d" % dec["is_armed"]
+                            if dec.get("channels_us"):
+                                c = dec["channels_us"]
+                                extra += " ch0=%dus" % c.get("CH0", -1)
+                            if dec.get("uid_low2"):
+                                extra += " uid_low2=%s" % dec["uid_low2"]
+                            shown_line = line + "  " + extra
+                        print(f"[{time.time()-t0:7.2f}s]{shown_line}  {pkt_bytes.hex()}")
                         if pk:
-                            pk.write(json.dumps({"t": time.time(), "sf": sf, "inv": inv,
-                                                 "size": size, "type": ptype, "init": hex(init),
-                                                 "ov": ov, "hex": bytes(b[off:off+size]).hex()}) + "\n")
+                            rec = {"t": time.time(), "sf": sf, "inv": inv,
+                                   "size": size, "type": ptype, "init": hex(init),
+                                   "ov": ov, "hex": pkt_bytes.hex()}
+                            if dec:
+                                rec["decoded"] = {k: v for k, v in dec.items()
+                                                  if k != "_offset"}
+                            pk.write(json.dumps(rec) + "\n")
                             pk.flush()
                         shown += 1
     except KeyboardInterrupt:
