@@ -291,14 +291,17 @@ class USRP:
         if sa is None:
             raise SystemExit("could not construct UHD StreamArgs")
         self.streamer = d.get_rx_stream(sa)
-        for mk in (lambda: u.types.rx_metadata(),
-                   lambda: u.rx_metadata(),
-                   lambda: u.usrp.rx_metadata()):
+        for mk in (lambda: u.types.RXMetadata(),
+                   lambda: getattr(u, "RXMetadata", None) and u.RXMetadata(),
+                   lambda: u.types.rx_metadata(),
+                   lambda: u.rx_metadata()):
             try:
                 self._stream_meta = mk()
                 break
             except Exception:
                 continue
+        if self._stream_meta is None:
+            raise SystemExit("could not construct UHD RXMetadata object")
 
     def get(self, n):
         d = self.dev
