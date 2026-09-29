@@ -199,25 +199,28 @@ class USRP:
             raise SystemExit("could not construct UHD RXMetadata object")
 
     def _stream_cmd_start(self):
-        """Start the RX stream explicitly. 4.9 needs a stream_cmd object, not a
-        bool. Best-effort: if the stream auto-starts on first recv this is a
-        no-op, and if the API differs we just log it and continue."""
+        """Start the RX stream explicitly. 4.9 pybind: StreamCMD(StreamMode).
+        The continuous-start mode is StreamMode.start_cont. Without this the
+        streamer may never begin delivering, and recv times out with no data."""
         u = self.uhd
         sc = None
-        for mk in (lambda: u.types.stream_cmd(u.types.stream_cmd.stream_mode_t.CONTINUOUS),
-                   lambda: getattr(u.types, "stream_cmd", None) and u.types.stream_cmd(),
-                   lambda: getattr(u, "stream_cmd", None) and u.stream_cmd()):
-            try:
-                sc = mk()
-                break
-            except Exception:
-                continue
+        SM = getattr(getattr(u, "types", None), "StreamMode", None)
+        SC = getattr(getattr(u, "types", None), "StreamCMD", None)
+        if SM is not None and SC is not None:
+            mode = getattr(SM, "start_cont", None)
+            if mode is None:
+                mode = getattr(SM, "CONTINUOUS", None)
+            if mode is not None:
+                try:
+                    sc = SC(mode)
+                except Exception:
+                    sc = None
         if sc is None:
-            print("[sdr] note: no stream_cmd object available; relying on auto-start")
+            print("[sdr] note: could not build StreamCMD; relying on auto-start")
             return
         try:
             self.streamer.issue_stream_cmd(sc)
-            print("[sdr] stream started via issue_stream_cmd")
+            print("[sdr] stream started (issue_stream_cmd start_cont)")
         except Exception as e:
             print("[sdr] note: issue_stream_cmd failed (%r); relying on auto-start" % (e,))
 
@@ -243,6 +246,9 @@ class USRP:
         if hasattr(d, "get_samples"):
             return np.asarray(d.get_samples(n), dtype=np.complex64)
         self._ensure_stream(None)
+        # Start the stream explicitly BEFORE the first recv (4.9 pybind does
+        # not reliably auto-start on first recv; without this recv times out).
+        self._stream_cmd_start()
         per = n
         if hasattr(self.streamer, "get_max_num_samps"):
             try:

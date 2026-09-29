@@ -327,11 +327,31 @@ class USRP:
         if self._stream_meta is None:
             raise SystemExit("could not construct UHD RXMetadata object")
 
+    def _stream_cmd_start(self):
+        u = self.uhd
+        SM = getattr(getattr(u, "types", None), "StreamMode", None)
+        SC = getattr(getattr(u, "types", None), "StreamCMD", None)
+        sc = None
+        if SM is not None and SC is not None:
+            mode = getattr(SM, "start_cont", None) or getattr(SM, "CONTINUOUS", None)
+            if mode is not None:
+                try:
+                    sc = SC(mode)
+                except Exception:
+                    sc = None
+        if sc is None:
+            return
+        try:
+            self.streamer.issue_stream_cmd(sc)
+        except Exception:
+            pass
+
     def get(self, n):
         d = self.dev
         if hasattr(d, "get_samples"):
             return np.asarray(d.get_samples(n), dtype=np.complex64)
         self._ensure_stream()
+        self._stream_cmd_start()
         per = n
         if hasattr(self.streamer, "get_max_num_samps"):
             try:
