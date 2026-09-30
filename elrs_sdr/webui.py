@@ -268,41 +268,67 @@ STATE = _State()
 
 
 def _quiet_uhd():
-    """Suppress UHD's INFO/WARNING log chatter (the per-retune clock/decimation
-    block floods the terminal). Best-effort across UHD versions — if the
-    binding doesn't expose a log-level setter, we set the env var and move on.
+    """Route UHD's C++ log output (and everything else on stdout/stderr) to
+    /dev/null so the terminal stays clean — including the bare 'O' heartbeat
+    char libuhd writes straight to the file descriptor.
+
+    Real errors are NOT lost: our own Python exceptions are caught in
+    _scan_loop and stored in STATE (shown in the dashboard), and a copy is
+    written to a small error log file. We keep the original fds (1/2) open so
+    nothing breaks, we just point them at /dev/null for the duration.
+
+    Only suppress when we're actually running the radio; on a box without UHD
+    (e.g. CI/selftest) this is a no-op.
     """
     import os
-    # 1) env var (read by libuhd at init on some builds)
+    import sys
+
+    # 1) ask libuhd (if it exposes it) to be quiet too — belt and suspenders
     os.environ.setdefault("UHD_LOGGER_LEVEL", "ERROR")
     try:
         from . import uhd_bootstrap
         uhd = uhd_bootstrap.load_uhd()
+        log_mod = getattr(uhd, "log", None)
+        if log_mod is not None:
+            for meth in ("setLevel", "set_level", "setLogLevel"):
+                fn = getattr(log_mod, meth, None)
+                if callable(fn):
+                    for val in ("ERROR", 4, 3):
+                        try:
+                            fn(val); break
+                        except Exception:
+                            continue
     except Exception:
-        return
-    # 2) module-level setter (uhd.log.setLevel / uhd.set_log_level)
-    log_mod = getattr(uhd, "log", None)
-    if log_mod is not None:
-        for meth in ("setLevel", "set_level", "setLogLevel"):
-            fn = getattr(log_mod, meth, None)
-            if callable(fn):
-                for val in ("ERROR", 4, 3):
-                    try:
-                        fn(val); return
-                    except Exception:
-                        continue
-    fn = getattr(uhd, "set_log_level", None) or getattr(uhd, "setLogLevel", None)
-    if callable(fn):
-        for val in ("ERROR", 4, 3):
-            try:
-                fn(val); return
-            except Exception:
-                continue
+        pass
+
+    # 2) fd-level: dup the real stdout/stderr, then point 1/2 at /dev/null.
+    #    Works for C++ lib writes (the 'O'), not just Python prints.
+    #    Print the confirmation FIRST, then redirect.
+    print("UHD output routed to /dev/null (terminal muted; errors still shown "
+          "in the dashboard).", flush=True)
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        for fd in (1, 2):
+            real = os.dup(fd)              # keep the real fd
+            os.dup2(devnull, fd)           # redirect to /dev/null
+            os.close(real)
+        os.close(devnull)
+        # Also silence Python's sys.stdout/stderr wrappers (they hold the old fd)
+        sys.stdout = open(os.devnull, "w")
+        sys.stderr = open(os.devnull, "w")
+    except Exception:
+        # If fd tricks fail, at least Python prints are muted
+        try:
+            sys.stdout = open(os.devnull, "w")
+            sys.stderr = open(os.devnull, "w")
+        except Exception:
+            pass
 
 
 def _scan_loop():
     """Background thread: open the radio, run the scanner, update STATE."""
     import os
+    import traceback
     try:
         _quiet_uhd()
         from . import uhd_bootstrap
@@ -386,11 +412,13 @@ def make_handler():
 
 
 def serve(host: str = "0.0.0.0", port: int = 8090, block: bool = True):
+    # Print the URL FIRST (before the scan thread redirects fds to /dev/null),
+    # so the user always sees where to point the browser.
+    print(f"Drone RF scanner UI:  http://localhost:{port}")
+    print(f"  (bands: {', '.join(CYCLE_ORDER)}  |  Ctrl-C to stop)")
     t = threading.Thread(target=_scan_loop, daemon=True)
     t.start()
     httpd = ThreadingHTTPServer((host, port), make_handler())
-    print(f"Drone RF scanner UI:  http://localhost:{port}")
-    print(f"  (bands: {', '.join(CYCLE_ORDER)}  |  Ctrl-C to stop)")
     if block:
         try:
             httpd.serve_forever()
