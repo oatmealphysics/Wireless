@@ -516,8 +516,10 @@ def test_detections_table():
           and "function lock(" not in html)
     check("table section is the main view (view-table)",
           'id="view-table"' in html and html.index('id="view-table"') < html.index("dettbody"))
-    check("dashboard has a fixed-height table scroll container (no reflow)",
-          "table-scroll" in html and "max-height:300px" in html)
+    check("table grows with entries (no max-height cap, page scrolls)",
+          "max-height:300px" not in html and "overflow-y:auto" not in html)
+    check("right panel is sticky (stays visible while a long table scrolls)",
+          "position:sticky" in html and "align-self:start" in html)
     # (5) anti-jitter + sorting: fixed table layout, colgroup widths, sortable
     #     headers, and a stable default order (first_seen) so rows don't jump
     check("table uses table-layout:fixed (no column-width jitter)",
