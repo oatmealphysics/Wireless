@@ -168,7 +168,28 @@ def ofdm_preamble(iq: np.ndarray, srate: float) -> tuple[float, str]:
             best = score
             best_label = label
             best_m = m_peak
-    return min(1.0, best), f"M={best_m:.2f}@{best_label}"
+    # gate 1 result: OFDM symbol-timing present (Schmidl-Cox)
+    timing_score = min(1.0, best)
+    if timing_score < 0.3:
+        # no OFDM timing -> not OFDM (let the other detectors handle it)
+        return 0.0, f"no OFDM timing (M={best_m:.2f})"
+    # gate 2 (the POSITIVE 802.11 confirmation): try to demod + validate the
+    # L-SIG. A valid L-SIG (Rate/Length/Parity/Tail all consistent) proves this
+    # is genuinely 802.11, not just OFDM-shaped. This gate is capture-gated
+    # (the RF front-end needs a real beacon to calibrate), so until then it
+    # returns False and we report the timing as UNCONFIRMED OFDM. When it
+    # validates on a real capture, the score jumps to 1.0 and the classifier
+    # can flip OFDM to confirmed.
+    from . import wifi
+    try:
+        lsig_ok, lsig_detail = wifi.demod_lsig(iq, srate)
+    except Exception as e:
+        lsig_ok, lsig_detail = False, f"lsig_err:{e}"
+    if lsig_ok:
+        # GENUINE 802.11: valid L-SIG decoded + validated
+        return 1.0, f"802.11 L-SIG VALID ({lsig_detail})"
+    # OFDM timing present but L-SIG not (yet) validated -> UNCONFIRMED OFDM
+    return 0.5 + 0.5 * timing_score, f"OFDM timing M={best_m:.2f}@{best_label} (L-SIG: {lsig_detail})"
 
 
 # ============================================================================

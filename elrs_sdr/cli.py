@@ -530,6 +530,25 @@ def cmd_validate(args):
                 idx = np.where(pres)[0]
                 track.append(float(freqs[idx[int(np.argmax(db[idx]))]]))
     fhss_s, fhss_m = run(positivedet.fhss_hop, track)
+    # --- L-SIG scan: try demod_lsig at many offsets to find a valid 802.11
+    #     L-SIG anywhere in the capture. The front-end's Schmidl-Cox sync may
+    #     miss the right offset on a real capture, so we brute-force offsets.
+    #     This is the tuning tool for the POSITIVE 802.11 confirmation.
+    from . import wifi
+    lsig_hits = 0
+    lsig_best = None
+    step = max(1, int(srate * 0.1e-6))       # ~0.1 us offset granularity
+    # scan a limited number of windows for speed (the L-SIG is 2 symbols)
+    n_scan = min(2000, len(samples) // (2 * int(srate * 12.8e-6) + 64))
+    for w in range(n_scan):
+        off = w * step
+        if off + 4 * 64 > len(samples):
+            break
+        ok, detail = wifi.demod_lsig(samples[off:off + 4 * 64 + 2048], srate)
+        if ok:
+            lsig_hits += 1
+            if lsig_best is None:
+                lsig_best = (off, detail)
     rows = [
         ("LoRa / ELRS  (CONFIRMED)",  lora_s,  lora_m,  ds.DroneScanner._LORA_CLAIM),
         ("OFDM / Wi-Fi (UNCONFIRMED)",ofdm_s,  ofdm_m,  ds.DroneScanner._OFDM_CLAIM),
@@ -541,12 +560,20 @@ def cmd_validate(args):
         print(f"  {name:28s} score={score:.2f}  claim={claim:.2f}  "
               f"-> {verdict:4s}  ({metric})")
     print()
+    print("802.11 L-SIG SCAN (the POSITIVE 802.11 confirmation):")
+    if lsig_hits > 0:
+        print(f"  ** {lsig_hits} VALID L-SIG decoded (first at offset {lsig_best[0]}: {lsig_best[1]}) **")
+        print("  -> this capture IS 802.11. The OFDM detector can be flipped to")
+        print("     confirmed once the front-end sync is tuned to land on the L-SIG.")
+    else:
+        print("  no valid L-SIG found. Either (a) not 802.11, (b) the front-end")
+        print("  sync/channel-est needs tuning, or (c) the L-SIG interleaver/bit-")
+        print("  order needs the real-capture calibration. Tune the front-end in")
+        print("  wifi.demod_lsig against this capture until a valid L-SIG appears.")
+    print()
     print("TUNING: for a known-protocol capture, that protocol's score should")
-    print("be the highest and >= its claim. If a detector fires on the WRONG")
-    print("capture (or misses the right one), adjust its _*_CLAIM in")
-    print("dronescan.py and re-run until each protocol's own detector is the")
-    print("clear winner. Once confirmed on real captures, flip its")
-    print("'confirmed' flag to True in _classify_positive.")
+    print("be the highest and >= its claim. The 802.11 path is confirmed by a")
+    print("VALID L-SIG (Rate/Length/Parity/Tail consistent), not just OFDM timing.")
 
 
 # ----------------------------------------------------------------------------
