@@ -263,13 +263,22 @@ def cmd_scan(args):
 # ----------------------------------------------------------------------------
 def cmd_capture(args):
     _need_uhd()
+    # if --band given, capture at the band's center with its sample rate
+    if getattr(args, "band", None):
+        from .dronescan import band_by_name
+        b = band_by_name(args.band)
+        args.freq = (b.lo_hz + b.hi_hz) / 2
+        args.srate = b.srate
     r = _open_radio(args)
     r.tune(args.freq, args.srate, args.gain, args.antenna)
+    bandnote = f" (band {args.band})" if getattr(args, "band", None) else ""
     print(f"capturing {args.samples:,} IQ samples @ {args.freq/1e6:.1f} MHz, "
-          f"{args.srate/1e3:.0f} ksps -> {args.out}", flush=True)
+          f"{args.srate/1e3:.0f} ksps{bandnote} -> {args.out}", flush=True)
     t0 = time.time()
     r.capture(args.samples, args.out)
     print(f"done in {time.time()-t0:.1f}s", flush=True)
+    print(f"\nto tune the detectors on this capture:", flush=True)
+    print(f"  elrs-sdr validate {args.out} --srate {args.srate:g}", flush=True)
 
 
 # ----------------------------------------------------------------------------
@@ -476,6 +485,71 @@ def cmd_webui(args):
 
 
 # ----------------------------------------------------------------------------
+# validate — run the positive detectors on a captured IQ file (offline)
+# ----------------------------------------------------------------------------
+def cmd_validate(args):
+    """Run the positive-identification detectors on a captured IQ file.
+
+    This is the tuning loop for the UNCONFIRMED detectors: capture a real
+    signal of a known protocol (with `capture --band`), then run this to see
+    what each detector reports on the real data. A correct capture of protocol
+    X should show X's detector high and the others low — that's how the
+    synthetic-calibrated thresholds get confirmed.
+    """
+    from .radio import read_complex8
+    from . import positivedet, dronescan as ds
+    samples = read_complex8(args.file)
+    srate = args.srate
+    print(f"validating {len(samples):,} samples @ {srate/1e6:.3f} Msps "
+          f"from {args.file}", flush=True)
+    print("=" * 62)
+    print("POSITIVE-IDENTIFICATION DETECTOR METRICS (real capture)")
+    print("=" * 62)
+    # run each detector on the full capture (and a few sub-windows for robustness)
+    def run(fn, *a, **k):
+        try:
+            return fn(*a, **k)
+        except Exception as e:
+            return (0.0, f"error: {e}")
+    lora_s, lora_m = run(positivedet.lora_chirp, samples, srate)
+    ofdm_s, ofdm_m = run(positivedet.ofdm_preamble, samples, srate)
+    video_s, video_m = run(positivedet.analog_video, samples, srate)
+    # FHSS needs a freq track: approximate from a few sub-windows' peaks
+    from .dronescan import power_spectrum
+    track = []
+    nwin = min(16, len(samples) // 4096)
+    for i in range(nwin):
+        seg = samples[i * 4096:(i + 1) * 4096]
+        if len(seg) < 4096:
+            break
+        freqs, db = power_spectrum(seg, srate)
+        if len(freqs):
+            floor = float(np.percentile(db, 20))
+            pres = db > floor + 8.0
+            if pres.any():
+                idx = np.where(pres)[0]
+                track.append(float(freqs[idx[int(np.argmax(db[idx]))]]))
+    fhss_s, fhss_m = run(positivedet.fhss_hop, track)
+    rows = [
+        ("LoRa / ELRS  (CONFIRMED)",  lora_s,  lora_m,  ds.DroneScanner._LORA_CLAIM),
+        ("OFDM / Wi-Fi (UNCONFIRMED)",ofdm_s,  ofdm_m,  ds.DroneScanner._OFDM_CLAIM),
+        ("Analog video (UNCONFIRMED)",video_s, video_m, ds.DroneScanner._VIDEO_CLAIM),
+        ("FHSS         (UNCONFIRMED)",fhss_s,  fhss_m,  ds.DroneScanner._FHSS_CLAIM),
+    ]
+    for name, score, metric, claim in rows:
+        verdict = "FIRE" if score >= claim else "no"
+        print(f"  {name:28s} score={score:.2f}  claim={claim:.2f}  "
+              f"-> {verdict:4s}  ({metric})")
+    print()
+    print("TUNING: for a known-protocol capture, that protocol's score should")
+    print("be the highest and >= its claim. If a detector fires on the WRONG")
+    print("capture (or misses the right one), adjust its _*_CLAIM in")
+    print("dronescan.py and re-run until each protocol's own detector is the")
+    print("clear winner. Once confirmed on real captures, flip its")
+    print("'confirmed' flag to True in _classify_positive.")
+
+
+# ----------------------------------------------------------------------------
 # parser
 # ----------------------------------------------------------------------------
 def build_parser():
@@ -513,10 +587,22 @@ def build_parser():
 
     sp = sub.add_parser("capture", help="capture IQ to a .complex8 file")
     add_common(sp)
+    sp.add_argument("--band", default=None,
+                    choices=["2.4", "5.8", "sub1g", "433"],
+                    help="capture at this band's center with its sample rate "
+                         "(overrides --freq/--srate)")
     sp.add_argument("--samples", type=int, default=1 << 20,
                     help="number of IQ samples (default 1M)")
     sp.add_argument("--out", default="capture.complex8")
     sp.set_defaults(fn=cmd_capture)
+
+    sp = sub.add_parser("validate",
+                        help="run the positive detectors on a capture file "
+                             "(tune the UNCONFIRMED detectors)")
+    sp.add_argument("file", help="a .complex8 capture file")
+    sp.add_argument("--srate", type=float, default=4e6,
+                    help="the sample rate the capture was taken at (default 4 Msps)")
+    sp.set_defaults(fn=cmd_validate)
 
     sp = sub.add_parser("decode", help="decode a .complex8 file offline")
     sp.add_argument("file")
