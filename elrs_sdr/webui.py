@@ -60,6 +60,11 @@ DASHBOARD = r"""<!DOCTYPE html>
   .wf-wrap { background:#05080b; border:1px solid #1c2733; border-radius:8px;
              overflow:hidden; position:relative; }
   canvas#wf { display:block; width:100%; height:300px; }
+  /* fixed-height scroll box for the detections table so it NEVER changes the
+     page height / pushes the waterfall or other elements around */
+  .table-card { padding:0; }
+  .table-card h2 { padding:11px 14px 0; }
+  .table-scroll { max-height:300px; overflow-y:auto; }
   .wf-label { position:absolute; top:8px; left:10px; font-size:12px;
               color:#7fa8c9; background:rgba(5,8,11,.6); padding:2px 8px;
               border-radius:5px; }
@@ -85,11 +90,6 @@ DASHBOARD = r"""<!DOCTYPE html>
   .resume:hover { background:#1c4059; }
   .sig { font-size:11px; color:#7fa8c9; }
 
-  .viewtabs { display:flex; gap:4px; margin:0 0 10px; }
-  .vtab { padding:6px 14px; border:1px solid #223243; background:#0d141b;
-          border-radius:7px; cursor:pointer; font-size:13px; color:#8fa3b5;
-          user-select:none; }
-  .vtab.active { background:#123049; border-color:#2f6ea0; color:#dff0ff; }
   table.dets { width:100%; border-collapse:collapse; font-size:12.5px; }
   table.dets th { text-align:left; padding:6px 9px; color:#7fa8c9; font-weight:600;
                   border-bottom:1px solid #223243; position:sticky; top:0;
@@ -112,10 +112,6 @@ DASHBOARD = r"""<!DOCTYPE html>
   <span class="status" id="lockbtn-wrap"></span>
 </header>
 <main>
-  <div class="viewtabs">
-    <div class="vtab active" id="vt-waterfall" onclick="setView('waterfall')">Waterfall</div>
-    <div class="vtab" id="vt-table" onclick="setView('table')">Detections <span id="detcount" class="sig"></span></div>
-  </div>
   <section id="view-waterfall">
     <div class="tabs" id="tabs"></div>
     <div class="wf-wrap">
@@ -124,19 +120,20 @@ DASHBOARD = r"""<!DOCTYPE html>
     </div>
     <div class="hint">Auto-cycling through bands. <b>Click a band tab to lock</b> on it;
       click the <b>Resume</b> button (or click the locked tab) to release back to cycling.</div>
-  </section>
-  <section id="view-table" class="hidden">
-    <div class="card" style="padding:0; overflow:auto; max-height:560px;">
-      <table class="dets">
-        <thead>
-          <tr>
-            <th>Band</th><th>Freq (MHz)</th><th>Protocol</th>
-            <th>Make / Model</th><th>Manufacturer</th><th>Type</th>
-            <th>Strength</th><th>Age</th><th>Conf</th>
-          </tr>
-        </thead>
-        <tbody id="dettbody"><tr><td colspan="9" class="quiet">no detections yet…</td></tr></tbody>
-      </table>
+    <div class="card table-card" style="padding:0; margin-top:12px;">
+      <h2>Detections</h2>
+      <div class="table-scroll">
+        <table class="dets">
+          <thead>
+            <tr>
+              <th>Band</th><th>Freq (MHz)</th><th>Protocol</th>
+              <th>Make / Model</th><th>Manufacturer</th><th>Type</th>
+              <th>Strength</th><th>Age</th><th>Conf</th>
+            </tr>
+          </thead>
+          <tbody id="dettbody"><tr><td colspan="9" class="quiet">no detections yet…</td></tr></tbody>
+        </table>
+      </div>
     </div>
     <div class="hint">Make/Model is the <b>protocol family</b> (e.g. "ELRS-family LoRa") — a
       passive SDR identifies the <i>kind</i> of link, not the vendor. Manufacturer is a real
@@ -270,22 +267,9 @@ function render(){
   renderTable();
 }
 
-function setView(v){
-  const wf = el('view-waterfall'), tb = el('view-table');
-  const vtW = el('vt-waterfall'), vtT = el('vt-table');
-  if(v === 'table'){
-    wf.classList.add('hidden'); tb.classList.remove('hidden');
-    vtW.classList.remove('active'); vtT.classList.add('active');
-  } else {
-    tb.classList.add('hidden'); wf.classList.remove('hidden');
-    vtT.classList.remove('active'); vtW.classList.add('active');
-  }
-}
-
 function renderTable(){
   if(!state || !state.detections) return;
   const rows = state.detections;
-  el('detcount').textContent = rows.length ? `(${rows.length})` : '';
   const tb = el('dettbody');
   if(!rows.length){
     tb.innerHTML = '<tr><td colspan="9" class="quiet">no detections yet…</td></tr>';

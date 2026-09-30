@@ -472,11 +472,17 @@ def test_detections_table():
               r["seen_count"] >= 4, f"seen_count={r['seen_count']}")
         check("manufacturer is None for a non-Wi-Fi tone (no fake vendor)",
               r["manufacturer"] is None, f"manufacturer={r['manufacturer']}")
-    # the dashboard must actually contain the table + view-switch wiring
+    # the dashboard must actually contain the table (below the waterfall,
+    # always visible) + the render JS
     html = webui.DASHBOARD
-    check("dashboard has the Detections view-tab", "vt-table" in html)
-    check("dashboard has the table body + setView + renderTable JS",
-          all(s in html for s in ("dettbody", "function setView", "function renderTable")))
+    check("dashboard has the detections table body", "dettbody" in html)
+    check("dashboard has the renderTable JS", "function renderTable" in html)
+    check("dashboard has no view-tabs anymore (table is always visible)",
+          "vt-table" not in html and "viewtabs" not in html)
+    check("dashboard table sits inside the waterfall section (below it)",
+          html.index("id=\"view-waterfall\"") < html.index("dettbody"))
+    check("dashboard has a fixed-height table scroll container (no reflow)",
+          "table-scroll" in html and "max-height:300px" in html)
     check("dashboard Make/Model column header present", "Make / Model" in html)
 
 
