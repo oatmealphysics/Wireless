@@ -103,6 +103,12 @@ DASHBOARD = r"""<!DOCTYPE html>
   table.dets col.c-age    { width:90px; }
   table.dets col.c-last   { width:88px; }
   table.dets col.c-conf   { width:72px; }
+  table.dets col.c-status { width:100px; }
+  table.dets col.c-metric { width:150px; }
+  .status-badge { padding:1px 7px; border-radius:9px; font-size:11px; font-weight:600; }
+  .status-badge.confirmed { background:#12321f; color:#5fd07a; }
+  .status-badge.unconfirmed { background:#3a2f12; color:#ffb43c; }
+  .metric { font-size:11px; color:#7f95a8; font-family:monospace; }
   .conf-badge { padding:1px 7px; border-radius:9px; font-size:11px; font-weight:600; }
   .conf-badge.high { background:#12321f; color:#5fd07a; }
   .conf-badge.medium { background:#3a2f12; color:#ffb43c; }
@@ -140,7 +146,7 @@ DASHBOARD = r"""<!DOCTYPE html>
             <col class="c-band"><col class="c-freq"><col class="c-proto">
             <col class="c-make"><col class="c-manuf"><col class="c-type">
             <col class="c-str"><col class="c-age"><col class="c-last">
-            <col class="c-conf">
+            <col class="c-conf"><col class="c-status"><col class="c-metric">
           </colgroup>
           <thead>
             <tr>
@@ -154,16 +160,22 @@ DASHBOARD = r"""<!DOCTYPE html>
               <th data-col="age_s" onclick="sortCol('age_s')">Age</th>
               <th data-col="last_seen_s" onclick="sortCol('last_seen_s')">Last seen</th>
               <th data-col="confidence" onclick="sortCol('confidence')">Conf</th>
+              <th data-col="confirmed" onclick="sortCol('confirmed')">Status</th>
+              <th data-col="metric" onclick="sortCol('metric')">Detector metric</th>
             </tr>
           </thead>
-          <tbody id="dettbody"><tr><td colspan="10" class="quiet">no detections yet…</td></tr></tbody>
+          <tbody id="dettbody"><tr><td colspan="12" class="quiet">no detections yet…</td></tr></tbody>
         </table>
       </div>
     </div>
-    <div class="hint">Make/Model is the <b>protocol family</b> (e.g. "ELRS-family LoRa") — a
-      passive SDR identifies the <i>kind</i> of link, not the vendor. Manufacturer is a real
-      OUI→vendor only for Wi-Fi signals once 802.11 beacon decode is validated against a
-      capture (shows — until then). Age = how long the signal has been present.
+    <div class="hint"><b>Positive identification:</b> each protocol is labeled only when its
+      <i>own</i> detector fires — nothing is default-binned by elimination.
+      <span class="status-badge confirmed">CONFIRMED</span> = capture-validated detector
+      (LoRa chirp). <span class="status-badge unconfirmed">UNCONFIRMED</span> = correct
+      structure but synthetic-calibrated threshold (OFDM / analog video / FHSS) — the
+      Detector-metric column shows the raw number a real capture can tune. To confirm an
+      UNCONFIRMED protocol, run <code>python3 -m elrs_sdr capture --band 2.4</code> with the
+      signal present; the saved IQ tunes that detector's threshold.
       <b>Click a column header to sort</b> (click again to flip direction); the arrow
       shows the active sort.</div>
   </section>
@@ -252,6 +264,7 @@ function renderTable(){
     rows.sort((a,b)=>{
       let va = a[col], vb = b[col];
       if(col === 'confidence'){ va = CONF_RANK[va]??3; vb = CONF_RANK[vb]??3; }
+      if(col === 'confirmed'){ va = va?1:0; vb = vb?1:0; }  // boolean
       if(typeof va === 'string' || typeof vb === 'string'){
         va = (va==null?'':String(va)); vb = (vb==null?'':String(vb));
         return va < vb ? -dir : va > vb ? dir : (a.first_seen - b.first_seen);
@@ -263,7 +276,7 @@ function renderTable(){
     rows.sort((a,b)=> a.first_seen - b.first_seen);
   }
   if(!rows.length){
-    tb.innerHTML = '<tr><td colspan="10" class="quiet">no detections yet…</td></tr>';
+    tb.innerHTML = '<tr><td colspan="12" class="quiet">no detections yet…</td></tr>';
     return;
   }
   tb.innerHTML = rows.map(r=>{
@@ -271,6 +284,9 @@ function renderTable(){
     const lastSeen = r.last_seen_s !== undefined
       ? (r.last_seen_s < 1.5 ? 'now' : r.last_seen_s.toFixed(0)+'s ago')
       : '—';
+    const status = r.confirmed
+      ? '<span class="status-badge confirmed">CONFIRMED</span>'
+      : '<span class="status-badge unconfirmed">UNCONFIRMED</span>';
     return `<tr>
       <td>${r.band}</td>
       <td>${r.freq_mhz.toFixed(1)}</td>
@@ -282,6 +298,8 @@ function renderTable(){
       <td class="age">${r.age_s.toFixed(1)}s <span class="sig">×${r.seen_count}</span></td>
       <td class="age">${lastSeen}</td>
       <td><span class="conf-badge ${r.confidence}">${r.confidence}</span></td>
+      <td>${status}</td>
+      <td class="metric">${r.metric||'—'}</td>
     </tr>`;
   }).join('');
 }

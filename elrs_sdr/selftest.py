@@ -532,6 +532,25 @@ def test_detections_table():
           "a.first_seen - b.first_seen" in html)
     check("sort arrow indicator present (shows active column + direction)",
           ".arrow" in html and "textContent = sortDir" in html)
+    # (6) positive-identification: every row carries confirmed + metric; the UI
+    #     has a Status column (CONFIRMED/UNCONFIRMED) + a Detector-metric column,
+    #     and nothing is default-binned to a confident protocol without a
+    #     detector firing (a plain tone is either unidentified or UNCONFIRMED).
+    check("every table row carries confirmed + metric (positive-ID state)",
+          all("confirmed" in r and "metric" in r for r in rows),
+          f"rows missing fields: {[k for r in rows for k in ('confirmed','metric') if k not in r]}")
+    check("a plain tone is NOT a confident claim (UNCONFIRMED or unidentified)",
+          all((r["confirmed"] is False) for r in rows),
+          f"rows claimed confirmed: {[r['protocol'] for r in rows if r.get('confirmed')]}")
+    check("dashboard has a Status column (confirmed/UNCONFIRMED)",
+          'data-col="confirmed"' in html and "status-badge" in html)
+    check("dashboard has a Detector-metric column",
+          'data-col="metric"' in html and 'class="metric"' in html)
+    check("dashboard renders both CONFIRMED and UNCONFIRMED labels",
+          "CONFIRMED" in html and "UNCONFIRMED" in html)
+    check("positive-ID hint explains the CONFIRMED vs UNCONFIRMED model",
+          "Positive identification" in html and "no default-binned" in html.lower()
+          or "default-binned" in html)
 
 
 def main():

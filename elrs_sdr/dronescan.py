@@ -34,6 +34,7 @@ import numpy as np
 from dataclasses import dataclass, field
 
 from . import wifi
+from . import positivedet
 
 # ----------------------------------------------------------------------------
 # Band definitions
@@ -231,6 +232,9 @@ class Detection:
     protocol: str            # human label (ELRS-family, Wi-Fi/DJI, ...)
     confidence: str          # high | medium | low
     note: str = ""
+    # --- positive-identification state ---
+    confirmed: bool = False  # True only for CAPTURE-VALIDATED detectors (LoRa)
+    metric: str = ""         # raw detector metric (chirp dB / OFDM M / line-rate / hop)
     # --- best-effort identity (populated only when we actually have it) ---
     manufacturer: str | None = None    # OUI->vendor (Wi-Fi) or None (else)
     # --- persistence tracking (set by the scanner, not the classifier) ---
@@ -363,15 +367,13 @@ class DroneScanner:
             st.present = True
             st.presence_db = float(db[peak_global] - floor)
             peak_freq = float(freqs[peak_global])
-            # --- classify ---
-            # LoRa chirp (most specific, check first)
-            lora_s = lora_chirp_score(samples, b.srate)
-            ofdm_s, ofdm_reason = ofdm_score(freqs, db, b, presence)
-            video_s = analog_video_score(freqs, db, presence, b)
-            # hop behavior: is the energy location moving across cycles?
-            hop = self._track_hop(b.name, freqs, presence, db)
-            det = self._classify(b, st, freqs, db, presence, peak_freq,
-                                 lora_s, ofdm_s, ofdm_reason, video_s, hop)
+            # --- POSITIVE-IDENTIFICATION classify ---
+            # Each protocol's OWN detector fires independently; nothing is
+            # default-binned by elimination. LoRa is the only capture-validated
+            # detector (confirmed=True); the rest are synthetic-calibrated and
+            # reported as UNCONFIRMED with their raw metric.
+            det = self._classify_positive(b, st, samples, freqs, db, presence,
+                                          peak_freq)
             # best-effort manufacturer: attempt real 802.11 beacon decode for
             # OFDM signals on a Wi-Fi channel. Returns None (-> "—") until the
             # RF front-end is validated against a real capture; never a guess.
@@ -400,7 +402,7 @@ class DroneScanner:
             # keep only the most recent few detections
             st.detections = [det] + st.detections
             st.detections = st.detections[:5]
-            st.hopping = hop
+            # (st.hopping is set inside _classify_positive via _track_hop)
         else:
             st.present = False
             st.detections = []
@@ -417,6 +419,8 @@ class DroneScanner:
             "make_model": det.protocol,
             "manufacturer": det.manufacturer,
             "confidence": det.confidence,
+            "confirmed": det.confirmed,
+            "metric": det.metric,
             "strength_db": round(det.power_db, 1),
             "hopping": st.hopping,
             "type": "control-link" if (st.hopping and det.signature != "video")
@@ -444,35 +448,79 @@ class DroneScanner:
         distinct = len({round(f / 5e5) for f in hist if f is not None})
         return distinct >= 2
 
-    def _classify(self, b, st, freqs, db, presence, peak_freq,
-                  lora_s, ofdm_s, ofdm_reason, video_s, hop) -> Detection:
-        # Tiered decision. LoRa chirp is the most specific -> wins if high.
-        if lora_s > 12.0:
-            return Detection(peak_freq, float(db.max() - st.floor_db),
-                             "lora",
-                             "ELRS-family LoRa (2.4/868/915)",
-                             "high",
-                             f"chirp {lora_s:.0f}dB{' hopping' if hop else ''}")
-        if video_s > 0.6:
-            return Detection(peak_freq, float(db.max() - st.floor_db),
-                             "video", "Analog FPV video (5.8 GHz)",
-                             "high",
-                             f"wide {ofdm_reason}{' constant' if not hop else ''}")
-        if ofdm_s > 0.6:
-            return Detection(peak_freq, float(db.max() - st.floor_db),
-                             "ofdm", "Wi-Fi / OFDM (DJI / consumer / FPV-WiFi)",
-                             "high" if ofdm_s > 0.8 else "medium",
-                             f"{ofdm_reason}{' hopping' if hop else ' static'}")
-        if hop and presence.sum() > 4:
-            return Detection(peak_freq, float(db.max() - st.floor_db),
-                             "fhss", "FHSS wideband (FrSky-family / generic)",
-                             "medium",
-                             f"hopping non-OFDM {ofdm_reason}")
-        # low-confidence presence
-        return Detection(peak_freq, float(db.max() - st.floor_db),
-                         "unknown", "Unidentified RF (best-effort)",
-                         "low",
-                         f"{ofdm_reason or 'weak'}{' hopping' if hop else ''}")
+    # per-protocol claim thresholds (score 0..1). A protocol is CLAIMED only
+    # if its own detector clears its threshold. LoRa is the only confirmed one.
+    _LORA_CLAIM = 0.5      # chirp score (dB-normalized) >= 0.5  (~9 dB)
+    _OFDM_CLAIM = 0.6      # Schmidl-Cox M peak (synthetic-calibrated)
+    _VIDEO_CLAIM = 0.6     # line-rate prominence (synthetic-calibrated)
+    _FHSS_CLAIM = 0.5      # discrete-freq hopping regularity (synthetic-calib)
+
+    def _classify_positive(self, b, st, samples, freqs, db, presence,
+                           peak_freq) -> Detection:
+        """Positive-identification classification.
+
+        Run each protocol's OWN detector. A protocol is claimed only if its
+        detector clears its threshold; the highest-scoring claimant wins. If
+        NO detector claims, the signal is honestly 'unidentified' (no default
+        bin). Only LoRa is capture-validated (confirmed=True); the others are
+        synthetic-calibrated and reported UNCONFIRMED with their raw metric so
+        a real capture can later tune the thresholds.
+        """
+        # track the peak-freq history (feeds FHSS + the hopping display flag)
+        hop = self._track_hop(b.name, freqs, presence, db)
+        st.hopping = hop
+        power_db = float(db.max() - st.floor_db)
+
+        # --- run every positive detector independently ---
+        lora_score, lora_metric = positivedet.lora_chirp(samples, b.srate)
+        ofdm_score, ofdm_metric = positivedet.ofdm_preamble(samples, b.srate)
+        video_score, video_metric = positivedet.analog_video(samples, b.srate)
+        freq_track = [f for f in self._hop_hist.get(b.name, []) if f is not None]
+        fhss_score, fhss_metric = positivedet.fhss_hop(freq_track)
+
+        # candidate claimants: (score, signature, protocol, confirmed, metric)
+        candidates = []
+        if lora_score >= self._LORA_CLAIM:
+            candidates.append((lora_score, "lora",
+                               "ELRS-family LoRa (2.4/868/915)", True, lora_metric))
+        if ofdm_score >= self._OFDM_CLAIM:
+            candidates.append((ofdm_score, "ofdm",
+                               "Wi-Fi / OFDM (DJI / consumer / FPV-WiFi)",
+                               False, ofdm_metric))
+        if b.name == "5.8" and video_score >= self._VIDEO_CLAIM:
+            candidates.append((video_score, "video",
+                               "Analog FPV video (5.8 GHz)", False, video_metric))
+        if fhss_score >= self._FHSS_CLAIM and presence.sum() > 4:
+            candidates.append((fhss_score, "fhss",
+                               "FHSS wideband (FrSky-family / generic)",
+                               False, fhss_metric))
+
+        if not candidates:
+            # nothing positively claimed — honestly unidentified (no default bin)
+            return Detection(peak_freq, power_db, "unknown",
+                             "Unidentified RF (no positive match)", "low",
+                             confirmed=False,
+                             metric=f"lora={lora_score:.2f} ofdm={ofdm_score:.2f} "
+                                    f"vid={video_score:.2f} fhss={fhss_score:.2f}")
+
+        # pick the best claimant; tie-break favors LoRa (the confirmed one)
+        def rank(c):
+            score, sig, proto, conf, metric = c
+            return (score, 1 if conf else 0)
+        best = max(candidates, key=rank)
+        score, sig, proto, conf, metric = best
+        # confidence label from score + confirmation
+        if conf and score >= 0.8:
+            conf_label = "high"
+        elif conf:
+            conf_label = "medium"
+        elif score >= 0.8:
+            conf_label = "medium"
+        else:
+            conf_label = "low"
+        suffix = f"{' [UNCONFIRMED]' if not conf else ' [confirmed]'} ({metric})"
+        return Detection(peak_freq, power_db, sig, proto, conf_label,
+                         note=suffix, confirmed=conf, metric=metric)
 
     def state_dict(self, window_s: float | None = None) -> dict:
         ws = window_s if window_s is not None else self.window_s
