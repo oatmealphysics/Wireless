@@ -41,27 +41,11 @@ DASHBOARD = r"""<!DOCTYPE html>
            display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
   header h1 { font-size:17px; margin:0; color:#e8eef4; font-weight:600; }
   .status { font-size:12.5px; color:#7fa8c9; }
-  .live { color:#5fd07a; }
   main { display:grid; grid-template-columns: 1fr 340px; gap:14px; padding:14px 18px; }
   @media (max-width: 900px){ main { grid-template-columns: 1fr; } }
 
-  .tabs { display:flex; gap:6px; margin-bottom:8px; flex-wrap:wrap; }
-  .tab { padding:7px 13px; border:1px solid #223243; background:#0f151b;
-         border-radius:7px; cursor:pointer; font-size:13px; color:#aebccb;
-         transition: background .12s, border-color .12s; user-select:none; }
-  .tab:hover { background:#15202b; }
-  .tab.active { background:#16324a; border-color:#2f6ea0; color:#dff0ff; }
-  .tab.locked { border-color:#5fd07a; box-shadow:0 0 0 1px #5fd07a inset; }
-  .tab .dot { display:inline-block; width:8px; height:8px; border-radius:50%;
-              margin-right:6px; background:#2a3a48; vertical-align:middle; }
-  .tab.present .dot { background:#ff5c5c; }
-  .tab.hop .dot { background:#ffb43c; }
-
-  .wf-wrap { background:#05080b; border:1px solid #1c2733; border-radius:8px;
-             overflow:hidden; position:relative; }
-  canvas#wf { display:block; width:100%; height:300px; }
   /* fixed-height scroll box for the detections table so it NEVER changes the
-     page height / pushes the waterfall or other elements around */
+     page height / pushes other elements around */
   .table-card { padding:0; }
   .table-card h2 { padding:11px 14px 0; }
   .table-head { display:flex; align-items:center; justify-content:space-between;
@@ -71,9 +55,6 @@ DASHBOARD = r"""<!DOCTYPE html>
   .win-label select { background:#0d141b; color:#cdd6df; border:1px solid #223243;
                       border-radius:6px; padding:4px 8px; font-size:12px; cursor:pointer; }
   .table-scroll { max-height:300px; overflow-y:auto; }
-  .wf-label { position:absolute; top:8px; left:10px; font-size:12px;
-              color:#7fa8c9; background:rgba(5,8,11,.6); padding:2px 8px;
-              border-radius:5px; }
   .hint { font-size:11.5px; color:#5a6b7a; margin-top:6px; }
 
   .panel { display:flex; flex-direction:column; gap:12px; }
@@ -91,9 +72,6 @@ DASHBOARD = r"""<!DOCTYPE html>
   .badge.medium { background:#4a3a1c; color:#e0c87f; }
   .badge.low { background:#3a2a1c; color:#c9a87f; }
   .quiet { color:#5a6b7a; font-style:italic; }
-  .resume { padding:7px 13px; border:1px solid #2f6ea0; background:#16324a;
-            color:#dff0ff; border-radius:7px; cursor:pointer; font-size:12.5px; }
-  .resume:hover { background:#1c4059; }
   .sig { font-size:11px; color:#7fa8c9; }
 
   /* table-layout:fixed + explicit widths => columns NEVER resize when cell
@@ -133,17 +111,9 @@ DASHBOARD = r"""<!DOCTYPE html>
 <header>
   <h1>Drone RF Scanner</h1>
   <span class="status" id="status">connecting…</span>
-  <span class="status" id="lockbtn-wrap"></span>
 </header>
 <main>
-  <section id="view-waterfall">
-    <div class="tabs" id="tabs"></div>
-    <div class="wf-wrap">
-      <canvas id="wf" width="820" height="300"></canvas>
-      <div class="wf-label" id="wflabel"></div>
-    </div>
-    <div class="hint">Auto-cycling through bands. <b>Click a band tab to lock</b> on it;
-      click the <b>Resume</b> button (or click the locked tab) to release back to cycling.</div>
+  <section id="view-table">
     <div class="card table-card" style="padding:0; margin-top:12px;">
       <div class="table-head">
         <h2>Detections <span class="sig">(all bands)</span></h2>
@@ -188,7 +158,9 @@ DASHBOARD = r"""<!DOCTYPE html>
     <div class="hint">Make/Model is the <b>protocol family</b> (e.g. "ELRS-family LoRa") — a
       passive SDR identifies the <i>kind</i> of link, not the vendor. Manufacturer is a real
       OUI→vendor only for Wi-Fi signals once 802.11 beacon decode is validated against a
-      capture (shows — until then). Age = how long the signal has been present.</div>
+      capture (shows — until then). Age = how long the signal has been present.
+      <b>Click a column header to sort</b> (click again to flip direction); the arrow
+      shows the active sort.</div>
   </section>
   <aside class="panel">
     <div class="card">
@@ -226,86 +198,16 @@ function sortCol(col){
   renderTable();
 }
 
-// ---- waterfall canvas: scroll newest at bottom ----
-const cv = document.getElementById('wf');
-const ctx = cv.getContext('2d');
-const W = cv.width, H = cv.height;
-// each band keeps its own offscreen scroll buffer
-const buffers = {};
-function ensureBuffer(name){
-  if(!buffers[name]){
-    const c = document.createElement('canvas');
-    c.width = W; c.height = H;
-    buffers[name] = c;
-  }
-  return buffers[name];
-}
-function dbToColor(db){
-  // map relative dB (0 = band mean) to a thermal palette; clip -30..30 dB
-  const v = Math.max(-30, Math.min(30, db));
-  const t = (v + 30) / 60;   // 0..1
-  let r,g,b;
-  if(t < 0.25){ r=8;  g=20;  b=40;  }       // deep blue (quiet)
-  else if(t < 0.5){ const u=(t-0.25)/0.25; r=8+u*30; g=20+u*60; b=40+u*120; }
-  else if(t < 0.75){ const u=(t-0.5)/0.25; r=38+u*170; g=80+u*130; b=160-u*120; }
-  else { const u=(t-0.75)/0.25; r=208+u*47; g=210+u*45; b=40+u*115; } // yellow->red
-  return `rgb(${r|0},${g|0},${b|0})`;
-}
-function pushFrame(name, frame, freqs){
-  const buf = ensureBuffer(name);
-  const bctx = buf.getContext('2d');
-  // shift existing content up by 1px
-  const img = bctx.getImageData(0,0,W,H);
-  bctx.putImageData(img, 0, 1);
-  // draw the new frame as the bottom row (1px tall, stretched to W)
-  for(let x=0;x<W;x++){
-    const idx = Math.min(frame.length-1, Math.floor(x / W * frame.length));
-    bctx.fillStyle = dbToColor(frame[idx]);
-    bctx.fillRect(x, H-1, 1, 1);
-  }
-  // draw current band buffer onto main canvas
-  ctx.clearRect(0,0,W,H);
-  ctx.drawImage(buf, 0, 0);
-  // freq axis labels
-  ctx.fillStyle = "rgba(180,200,220,.55)";
-  ctx.font = "10px monospace";
-  const lo = (freqs[0]/1e9).toFixed(3), hi=(freqs[freqs.length-1]/1e9).toFixed(3);
-  ctx.fillText(lo+" GHz", 6, H-4);
-  ctx.fillText(hi+" GHz", W-44, H-4);
-}
-
 function el(id){ return document.getElementById(id); }
 
 function render(){
   if(!state) return;
-  const cycling = state.cycling;
   locked = state.locked_band;
-  const activeBand = locked || (state.bands && state.bands.find(b=>b.last_update===Math.max(...state.bands.map(x=>x.last_update)))?.name) || "2.4";
-  // tabs
-  const tabs = el('tabs');
-  tabs.innerHTML = '';
-  for(const b of state.bands){
-    const t = document.createElement('div');
-    t.className = 'tab' + (b.name===activeBand?' active':'') + (b.locked?' locked':'') + (b.present?' present':'') + (b.hopping?' hop':'');
-    t.innerHTML = `<span class="dot"></span>${b.name}${b.present? ' <span class="sig">+'+b.presence_db.toFixed(0)+'dB</span>':''}`;
-    t.onclick = () => {
-      if(b.locked){ lock(null); } else { lock(b.name); }
-    };
-    tabs.appendChild(t);
-  }
-  // lock / resume button
-  const lw = el('lockbtn-wrap');
-  lw.innerHTML = locked
-    ? `<button class="resume" onclick="lock(null)">Resume auto</button>`
-    : `<span class="live">● auto-cycling</span>`;
   // status
-  el('status').textContent = locked ? `locked on ${locked}` : 'auto-cycling 2.4 → 5.8 → sub-1G → 433';
+  el('status').textContent = 'scanning 2.4 → 5.8 → sub-1G → 433';
   // summary
   el('summary').textContent = state.summary || '—';
-  // waterfall label + detection panel
-  const activeB = state.bands.find(b=>b.name===activeBand) || state.bands[0];
-  el('wflabel').textContent = activeB.label + (locked? ' (locked)':'');
-  // detections (show the active band's, plus a global "all" line)
+  // detection panel (latest per band)
   const dets = el('dets');
   const items = [];
   for(const b of state.bands){
@@ -327,10 +229,6 @@ function render(){
           ${it.hop?'<span class="badge low">hop</span>':''}</div>
         <div class="p">${it.proto}<br><span class="sig">${it.band} · +${it.power.toFixed(1)} dB · ${it.note}</span></div>
       </div>`).join('');
-  }
-  // push waterfall frame for the active band
-  if(activeB && activeB.frame && activeB.frame.length){
-    pushFrame(activeBand, activeB.frame, activeB.freqs_frame);
   }
   // detections table
   renderTable();
@@ -387,13 +285,6 @@ async function setWindow(seconds){
   try{
     await fetch('/api/window', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({seconds: parseFloat(seconds)})});
-  }catch(e){ console.error(e); }
-}
-
-async function lock(band){
-  try{
-    await fetch('/api/lock', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({band: band})});
   }catch(e){ console.error(e); }
 }
 
