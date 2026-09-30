@@ -34,16 +34,64 @@ import numpy as np
 def lora_chirp(samples: np.ndarray, srate: float, sf: int = 7) -> tuple[float, str]:
     """Positively detect a LoRa/ELRS chirp (chirp matched-filter).
 
-    Returns (score 0..1, metric). score is a normalized dB measure: the
-    matched-filter peak-to-noise ratio mapped so that >=12 dB -> 1.0.
-    The raw dB is the metric (shown in the UI; this is the validated one).
+    Two gates (both required for a positive call):
+      1. PEAK: the matched-filter peak-to-noise ratio is high. A real LoRa
+         preamble scores ~35 dB; an OFDM short-symbol train or pure noise
+         scores only ~15-17 dB (their repetition is at the WRONG period).
+      2. PERIODICITY: the matched-filter peaks must repeat at the LoRa SYMBOL
+         PERIOD (2^sf samples = one base chirp). A real preamble has peaks
+         spaced exactly one symbol apart; an OFDM signal's matched-filter
+         response is a broad hump (peaks NOT at the symbol period).
+
+    This is the CAPTURE-VALIDATED detector: the chirp autocorrelation premise
+    is provable, and the symbol-periodic peak spacing is the positive tell
+    that separates a genuine LoRa preamble from a repetitive OFDM/noise
+    signal (which is what was causing the all-Wi-Fi-labels-as-LoRa bug).
+
+    Returns (score 0..1, metric).
     """
-    from .dronescan import lora_chirp_score
+    from .dronescan import lora_chirp_score, _fft_correlate
+    from .lora import _base_chirp
     db = lora_chirp_score(samples, srate, sf=sf)
     if db < -90:
         return 0.0, "no chirp"
-    score = min(1.0, max(0.0, (db - 6.0) / (12.0 - 6.0)))
-    return score, f"chirp {db:.0f}dB"
+    # gate 1: peak (a real preamble is ~35 dB; OFDM/noise ~15-17 dB)
+    # score ramps from 18 dB (0.0) to 34 dB (1.0)
+    peak_score = min(1.0, max(0.0, (db - 18.0) / (34.0 - 18.0)))
+    if peak_score <= 0.0:
+        return 0.0, f"chirp {db:.0f}dB (too weak)"
+    # gate 2: symbol-periodic peaks
+    nsym = 1 << sf
+    if len(samples) < 4 * nsym:
+        # can't resolve periodicity on such a short window
+        return peak_score * 0.5, f"chirp {db:.0f}dB (short win)"
+    ref = _base_chirp(sf).astype(np.complex128)
+    corr = np.abs(_fft_correlate(samples, ref))
+    if corr.size < 16:
+        return peak_score * 0.5, f"chirp {db:.0f}dB (short win)"
+    thr = corr.max() * 0.5
+    idx = np.where(corr > thr)[0]
+    if len(idx) < 3:
+        return peak_score * 0.5, f"chirp {db:.0f}dB (sparse peaks)"
+    d = np.diff(idx)
+    d = d[d > 0]
+    if d.size == 0:
+        return peak_score * 0.5, f"chirp {db:.0f}dB (no spacing)"
+    spacing = float(np.median(d))
+    # periodicity: median peak spacing should be ~1 symbol (nsym), within a
+    # factor of ~2 (allow for a few missing/merged peaks)
+    ratio = spacing / nsym
+    if 0.5 <= ratio <= 2.0:
+        period_score = 1.0
+    elif 0.25 <= ratio < 0.5 or 2.0 < ratio <= 4.0:
+        period_score = 0.5          # half-spacing (every-other peak) or 2x
+    else:
+        period_score = 0.0          # wrong period (OFDM hump / noise)
+    score = peak_score * (0.5 + 0.5 * period_score)
+    if period_score == 0.0:
+        # not symbol-periodic -> do NOT claim LoRa, even if the peak is high
+        return 0.0, f"chirp {db:.0f}dB spacing={spacing:.0f}≠{nsym}"
+    return min(1.0, score), f"chirp {db:.0f}dB spacing={spacing:.0f}≈{nsym}"
 
 
 # ============================================================================
