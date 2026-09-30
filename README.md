@@ -123,6 +123,58 @@ python -m elrs_sdr tx --rate 250Hz \
        --i-am-authorized-to-transmit               # only if you own the link
 ```
 
+### Drone presence + protocol scanner (multi-band)
+
+A first step up the stack: *is there a drone nearby, and what protocol is it
+using?* Sweeps the drone-relevant RF bands on the B205mini (all within its
+100 kHz–6 GHz range) and classifies each band's energy by RF signature.
+
+| Band | Range | Why |
+|---|---|---|
+| `2.4` | 2.40–2.48 GHz | ELRS, FrSky, Wi-Fi, most control links |
+| `5.8` | 5.725–5.875 GHz | analog FPV video, 5 GHz edge |
+| `sub1g` | 700–900 MHz | LoRa telemetry, 868/915 ELRS long-range, sub-1G RC |
+| `433` | 425–440 MHz | older FHSS, some FrSky, telemetry |
+
+**Tiered classifier** (honest about confidence):
+
+| Signature | Detector | Protocols | Confidence |
+|---|---|---|---|
+| LoRa chirp | FFT matched-filter vs SF7 base chirp (both IQ polarities) | ELRS / CRSF-LoRa / 915-LR | **high** |
+| OFDM / Wi-Fi | wide + multibin + known channel centers | DJI / consumer / FPV-WiFi | high/med |
+| Analog video | 5.8 GHz wide constant band | analog FPV video | high |
+| FHSS wideband | fast multi-bin hopping, non-OFDM, no chirp | FrSky-family / generic | med (family, not vendor) |
+| unknown | presence only | — | low |
+
+```bash
+# One-shot scan (all bands), prints a presence + protocol report
+python -m elrs_sdr dronescan
+
+# Only certain bands, more observation cycles
+python -m elrs_sdr dronescan --bands 2.4,5.8 --cycles 12 --dwell-s 0.2 --gain 35
+```
+
+### Live web dashboard (Kismet-style)
+
+A real-time multi-band waterfall with **click-to-lock** band tabs (auto-cycles
+2.4 → 5.8 → sub-1G → 433; click a band to lock on it, click again / "Resume"
+to release). Pure stdlib — no extra dependencies.
+
+```bash
+python -m elrs_sdr webui                 # http://localhost:8090
+python -m elrs_sdr webui --port 9000
+```
+
+Environment overrides: `ELRS_DEVICE` (default `type=b200`), `ELRS_GAIN`
+(default 30), `ELRS_DWELL` (default 0.15 s).
+
+> **Honest limits.** One B205mini can't sample all bands at once — the scanner
+> *time-slices* between them (cycling waterfall, not 4 simultaneous scopes).
+> Vendor-level ID (e.g. "it's definitely a DJI Mavic 3") is **not** claimed:
+> OFDM/Wi-Fi and FHSS are identified at the *protocol-family* level with a
+> confidence label, and LoRa/ELRS is the only high-confidence positive.
+> 5.8 GHz sits at the edge of the B205's range (works, noisier).
+
 ### Air rates (2.4 GHz, SX1280)
 
 | `--rate` | SF | BW | CR | OTA | interval |

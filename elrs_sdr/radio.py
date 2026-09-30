@@ -347,6 +347,38 @@ class RadioDevice:
         """RXMetadata for recv / inline error-code inspection (cmd_scan)."""
         return _make_rx_metadata()
 
+    # -- clean high-level RX API used by the drone scanner / webui --------
+    def open_stream(self):
+        """Open (and start) the RX stream once. Reuses an existing one."""
+        if getattr(self, "_stream_obj", None) is None:
+            self._stream_obj = self._open_rx_stream()
+        return self._stream_obj
+
+    def recv_block(self, buf, timeout_s: float = 0.2) -> int:
+        """Fill `buf` (complex64) with one RX block; return sample count.
+
+        High-level wrapper so callers (the drone scanner) don't touch the
+        private _recv/_open_rx_stream. Reuses the stream if already open.
+        """
+        stream = getattr(self, "_stream_obj", None)
+        if stream is None:
+            stream = self.open_stream()
+        return int(self._recv(stream, buf, timeout_s) or 0)
+
+    def tune2(self, freq_hz: float, sample_rate: float, gain: float):
+        """Tune + set rate + gain (binding-tolerant). For the scanner's
+        time-sliced band hops. Opens the stream if not already open."""
+        d = self._usrp
+        if hasattr(d, "set_rx_freq"):
+            d.set_rx_freq(freq_hz)
+            d.set_rx_rate(sample_rate)
+            d.set_rx_gain(gain)
+        else:
+            d.set_tune_request(uhd.tune_request(freq_hz), self.rx_channel)
+            d.set_sample_rate(sample_rate, self.rx_channel)
+            d.set_gain(gain, self.rx_channel)
+        self._freq, self._sample_rate, self._gain = freq_hz, sample_rate, gain
+
     def _open_rx_stream(self):
         """Activate the RX chain (once), then open a stream.
 

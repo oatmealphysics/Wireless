@@ -406,9 +406,71 @@ def cmd_tx(args):
     f = args.freq or dom.channel_freq(0)
     r.tx_tune(f, args.srate, args.gain, args.antenna)
     wf = lora.modulate_frame(rate, raw, args.srate)
-    print(f"TX {len(wf)} samples @ {f/1e6:.1f} MHz (rate={args.rate})", flush=True)
+    print(f"TX {len(wf)} samples @ {f/1e6:.1f} MHz (rate={rate.name})", flush=True)
     r.tx_stream(wf)
     print("transmit complete", flush=True)
+
+
+# ----------------------------------------------------------------------------
+# dronescan (CLI one-shot multi-band presence + protocol ID)
+# ----------------------------------------------------------------------------
+def cmd_dronescan(args):
+    """One-shot multi-band drone presence + protocol scan (no web UI).
+
+    Sweeps every band (or the --bands subset) for a few cycles and prints a
+    presence + classification report. For the live version use `webui`.
+    """
+    _need_uhd()
+    from . import dronescan as ds
+    r = _open_radio(args)
+    # which bands to scan
+    wanted = None
+    if getattr(args, "bands", None):
+        wanted = [x.strip() for x in args.bands.split(",") if x.strip()]
+    scanner = ds.DroneScanner(r, dwell_s=args.dwell_s, gain=args.gain)
+    if wanted:
+        # scan only the chosen bands by cycling through just them
+        ds.CYCLE_ORDER[:] = [b for b in ds.CYCLE_ORDER if b in wanted]
+    cycles = args.cycles
+    band_names = ds.CYCLE_ORDER
+    print(f"scanning {len(band_names)} band(s): {', '.join(band_names)} "
+          f"for {cycles} cycles each (dwell {args.dwell_s*1000:.0f} ms)…",
+          flush=True)
+    try:
+        for i in range(cycles):
+            st = scanner.step()
+            # light progress: per-cycle presence
+            pres = [b["name"] for b in st["bands"] if b["present"]]
+            print(f"  cycle {i+1:2d}: present -> {', '.join(pres) or '(none)'}",
+                  flush=True)
+    except KeyboardInterrupt:
+        print("\nstopped early.", flush=True)
+    # final report
+    st = scanner.state_dict()
+    print("\n" + "=" * 60)
+    print("DRONE RF SCAN REPORT")
+    print("=" * 60)
+    print("SUMMARY:", st["summary"])
+    print()
+    for b in st["bands"]:
+        flag = "ACTIVE" if b["present"] else "quiet "
+        hop = " (hopping)" if b["hopping"] else ""
+        print(f"[{flag}] {b['name']:6s} {b['lo_hz']/1e9:.3f}-{b['hi_hz']/1e9:.3f} GHz"
+              f"  peak +{b['presence_db']:.1f} dB{hop}")
+        for d in b["detections"][:3]:
+            print(f"          {d['freq_hz']/1e6:8.1f} MHz  {d['protocol']}"
+                  f"  [{d['confidence']}]  {d['note']}")
+    print()
+    print("confidence: high = strong signature match; medium = likely, verify; "
+          "low = best-effort/weak.")
+
+
+# ----------------------------------------------------------------------------
+# webui (live dashboard)
+# ----------------------------------------------------------------------------
+def cmd_webui(args):
+    from . import webui
+    webui.serve(args.host, args.port, block=True)
 
 
 # ----------------------------------------------------------------------------
@@ -478,6 +540,24 @@ def build_parser():
                     action="store_true",
                     help="required to enable TX; confirm authorization")
     sp.set_defaults(fn=cmd_tx)
+
+    sp = sub.add_parser("dronescan",
+                        help="multi-band drone presence + protocol ID (one-shot)")
+    sp.add_argument("--bands", default=None,
+                    help="comma list of bands to scan: 2.4,5.8,sub1g,433 "
+                         "(default: all)")
+    sp.add_argument("--cycles", type=int, default=8,
+                    help="observation cycles per band (default 8)")
+    sp.add_argument("--dwell-s", type=float, default=0.15,
+                    help="seconds per observation (default 0.15)")
+    sp.add_argument("--gain", type=float, default=30, help="RF gain dB")
+    sp.set_defaults(fn=cmd_dronescan)
+
+    sp = sub.add_parser("webui",
+                        help="live multi-band drone scanner dashboard")
+    sp.add_argument("--host", default="0.0.0.0")
+    sp.add_argument("--port", type=int, default=8090)
+    sp.set_defaults(fn=cmd_webui)
 
     return p
 

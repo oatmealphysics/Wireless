@@ -244,6 +244,120 @@ def test_lora_sync_detect():
           f"fwd_peak={fwd_peak:.1f} inv_peak={inv_peak:.1f}")
 
 
+def test_drone_classifier():
+    """Offline classifier verification: synthetic RF signatures must classify
+    correctly. This proves the detection logic WITHOUT a radio (the operator
+    is not our oracle for the classifier)."""
+    import numpy as np
+    from . import dronescan as ds
+
+    print("\n== drone classifier (offline synthetic fixtures) ==")
+    rng = np.random.default_rng(1234)
+    sr = 4e6
+    band24 = ds.band_by_name("2.4")
+    band58 = ds.band_by_name("5.8")
+
+    # --- 1) LoRa chirp: a REAL preamble = a train of identical SF7 up-chirp
+    #        symbols (each 128 samples), buried in noise ---
+    def make_chirp_block(n=8192, sf=7, snr_db=12):
+        from .lora import _base_chirp
+        sym = _base_chirp(sf)                    # 128-sample up-chirp
+        # tile identical symbols (a LoRa preamble)
+        reps = int(np.ceil(n / len(sym)))
+        chirp = np.tile(sym, reps)[:n].astype(np.complex128)
+        # normalize chirp to unit power, add noise at snr_db
+        chirp = chirp / np.sqrt((np.abs(chirp) ** 2).mean())
+        noise = (rng.standard_normal(n) + 1j * rng.standard_normal(n)) / np.sqrt(2)
+        noise = noise / np.sqrt((np.abs(noise) ** 2).mean())
+        pwr_sig = 1.0
+        pwr_noise = pwr_sig / (10 ** (snr_db / 10))
+        return chirp * np.sqrt(pwr_sig) + noise * np.sqrt(pwr_noise)
+
+    chirp_sig = make_chirp_block(snr_db=14)
+    lora_score = ds.lora_chirp_score(chirp_sig, sr)
+    check("LoRa chirp fixture scores HIGH on chirp detector",
+          lora_score > 12.0, f"score={lora_score:.1f} dB (need >12)")
+
+    # --- 2) OFDM / Wi-Fi: a REALISTIC OFDM burst — many flat subcarriers
+    #        filling the capture window (what a 2.4 GHz OFDM signal looks like
+    #        captured at band center). Wide + multibin + flat = OFDM. ---
+    def make_ofdm_block(n=8192, sr_=sr, nsub=32):
+        # subcarriers spread across the FULL positive band (0 .. sr/2)
+        # so the captured signal shows a wide, flat, multibin spectrum.
+        top = sr_ / 2.0
+        t = np.arange(n, dtype=np.float64) / sr_
+        sig = np.zeros(n, dtype=np.complex128)
+        for k in range(nsub):
+            f = top * (k + 0.5) / nsub
+            sig += np.exp(2j * np.pi * f * t) / np.sqrt(nsub)
+        sig += (rng.standard_normal(n) + 1j * rng.standard_normal(n)) / 40
+        return sig
+
+    ofdm_sig = make_ofdm_block()
+    freqs, pwrdb = ds.power_spectrum(ofdm_sig, sr)
+    floor = float(np.percentile(pwrdb, 20))
+    presence = pwrdb > (floor + 3)
+    ofdm_score, ofdm_reason = ds.ofdm_score(freqs, pwrdb, band24, presence)
+    check("OFDM fixture scores on OFDM detector (wide/multibin)",
+          ofdm_score > 0.4, f"score={ofdm_score:.2f} ({ofdm_reason})")
+    # and it should NOT be chirp-like (OFDM is flat-spectrum, not a chirp)
+    ofdm_lora = ds.lora_chirp_score(ofdm_sig, sr)
+    check("OFDM fixture is NOT chirp-like (discriminates LoRa vs OFDM)",
+          ofdm_lora < 12.0, f"ofdm chirp-score={ofdm_lora:.1f} dB (want <12)")
+
+    # --- 3) FHSS wideband hopping: a NARROW tone that HOPS to a new freq each
+    #        cycle. Use ONE scanner instance so its hop history accumulates. ---
+    band = ds.band_by_name("2.4")
+    center = (band.lo_hz + band.hi_hz) / 2.0
+    class _MiniScan:
+        _hop_hist = {"2.4": []}
+        def _track_hop(self, name, freqs, presence, pwrdb):
+            if not presence.any():
+                return False
+            pi = np.where(presence)[0]
+            strongest = pi[int(np.argmax(pwrdb[presence]))]
+            pf = float(freqs[strongest])
+            h = self._hop_hist[name]; h.append(pf); self._hop_hist[name] = h[-4:]
+            if len(h) < 3:
+                return False
+            return len({round(f/5e5) for f in h if f is not None}) >= 2
+    mini = _MiniScan()
+    hops = []
+    # hops land at distinct positions WITHIN the 2 MHz capture window
+    # (a fast-hopper observed at band center shows its hops in this window)
+    for k, foff in enumerate((0.1e6, 0.7e6, 1.3e6, 0.4e6, 1.7e6, 0.9e6)):
+        n = 4096
+        idx = np.arange(n, dtype=np.float64)
+        # baseband tone at offset foff from center
+        sig = np.exp(2j * np.pi * foff * idx / sr) + \
+              (rng.standard_normal(n) + 1j * rng.standard_normal(n)) / 60
+        freqs, pwrdb = ds.power_spectrum(sig, sr)
+        floor = float(np.percentile(pwrdb, 20))
+        presence = pwrdb > (floor + 8)
+        hops.append(mini._track_hop("2.4", freqs, presence, pwrdb))
+    check("FHSS hopping fixture detected as hopping across cycles",
+          any(hops), f"hop flags={hops}")
+
+    # --- 4) Analog video (5.8): a WIDE, CONSTANT occupied band (analog
+    #        FPV video, several MHz wide, present every cycle). ---
+    def make_video_block(n=8192, sr_=sr, nsub=24):
+        top = sr_ / 2.0
+        t = np.arange(n, dtype=np.float64) / sr_
+        sig = np.zeros(n, dtype=np.complex128)
+        for k in range(nsub):
+            f = top * (k + 0.5) / nsub
+            sig += np.exp(2j * np.pi * f * t) / np.sqrt(nsub)
+        sig += (rng.standard_normal(n) + 1j * rng.standard_normal(n)) / 40
+        return sig
+    vid = make_video_block()
+    freqs, pwrdb = ds.power_spectrum(vid, sr)
+    floor = float(np.percentile(pwrdb, 20))
+    presence = pwrdb > (floor + 3)
+    video_score = ds.analog_video_score(freqs, pwrdb, presence, band58)
+    check("5.8 analog-video fixture scores on video detector",
+          video_score > 0.5, f"score={video_score:.2f}")
+
+
 def main():
     print("elrs_sdr self-test\n===================")
     test_crc_vectors()
@@ -253,6 +367,7 @@ def main():
     test_channel_pack_unpack()
     test_fhss_lcg()
     test_lora_sync_detect()
+    test_drone_classifier()
     print("\n===================")
     if FAILS:
         print(f"FAILED: {len(FAILS)} check(s): {FAILS}")
