@@ -264,9 +264,15 @@ class BandState:
     # the full preamble+L-SIG; we accumulate several blocks so demod_lsig has
     # enough samples to find + decode a valid L-SIG). Capped in length.
     iq_buf: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.complex64))
-    # how many consecutive blocks the 802.11 L-SIG has been valid (for
-    # stability — a single valid hit is enough to confirm, but we track it).
+    # whether a valid 802.11 L-SIG has been decoded from the buffer (sticky:
+    # once confirmed, stays until the band is retuned / buffer reset).
     lsig_valid: bool = False
+    # the last decoded L-SIG rate index + length (for the row's metric).
+    lsig_rate: int | None = None
+    lsig_len: int | None = None
+    # cadence counter: how many blocks since the last L-SIG scan (so we scan
+    # on a fixed interval, not literally every block — bounded CPU).
+    _lsig_scan_count: int = 0
 
 
 # ----------------------------------------------------------------------------
@@ -446,6 +452,9 @@ class DroneScanner:
             # band's samples are not contiguous with the new band's)
             self.states[name].iq_buf = np.zeros(0, dtype=np.complex64)
             self.states[name].lsig_valid = False
+            self.states[name].lsig_rate = None
+            self.states[name].lsig_len = None
+            self.states[name]._lsig_scan_count = 0
         # grab a block
         cnt = self.radio.recv_block(self._buf, self.dwell_s)
         st = self.states[name]
@@ -604,31 +613,50 @@ class DroneScanner:
 
         # OFDM gate 2 (the POSITIVE 802.11 confirmation): run the L-SIG scan on
         # the ROLLING IQ buffer (accumulated across blocks — one 4096-sample
-        # block is too short for the full preamble+L-SIG). Only run it when
-        # gate 1 (OFDM timing) already fired, so we don't scan noise every
-        # block. A valid L-SIG decoded here means this band carries genuine
-        # 802.11, so it's classified the same as ELRS/LoRa (a confirmed row).
-        ofdm_timing = ofdm_score >= self._OFDM_CLAIM
-        if ofdm_timing and len(st.iq_buf) >= 8192:
+        # block is too short for the full preamble+L-SIG). As the signal comes
+        # in, each block is appended to the buffer and the L-SIG is checked on
+        # a fixed cadence (every ~40 blocks ≈ 40 ms at 4 Msps — a beacon is
+        # periodic ~100 ms, so this reliably catches its L-SIG without scanning
+        # literally every block). NOT gated on the current block's timing,
+        # because the buffer holds the beacon's L-SIG across blocks and the
+        # per-block timing is flaky. _lsig_scan is bounded (max_offsets +
+        # early-exit on first hit) so it's cheap.
+        st._lsig_scan_count += 1
+        scan_now = (len(st.iq_buf) >= 8192 and
+                    st._lsig_scan_count % 40 == 0)
+        if scan_now:
             lsig = self._lsig_scan(st.iq_buf, b.srate)
+            if lsig["valid"]:
+                st.lsig_valid = True
+                st.lsig_rate = lsig["rate"]
+                st.lsig_len = lsig["length"]
         else:
-            lsig = {"valid": False, "detail": "buffer warming up", "hits": 0,
+            lsig = None
+        # the sticky confirmed state (from a prior scan) keeps the row
+        # CONFIRMED between scans; it's cleared on band retune / buffer reset.
+        if st.lsig_valid:
+            lsig = {"valid": True, "detail": "valid (sticky from prior scan)",
+                    "hits": 1, "rate": st.lsig_rate, "length": st.lsig_len}
+        elif lsig is None:
+            lsig = {"valid": False, "detail": "scanning on cadence", "hits": 0,
                     "rate": None, "length": None}
-        st.lsig_valid = lsig["valid"]
 
         # candidate claimants: (score, signature, protocol, confirmed, metric)
         candidates = []
         if lora_score >= self._LORA_CLAIM:
             candidates.append((lora_score, "lora",
                                "ELRS-family LoRa (2.4/868/915)", True, lora_metric))
-        if ofdm_score >= self._OFDM_CLAIM:
-            # CONFIRMED 802.11 when a valid L-SIG was decoded from the rolling
-            # buffer (genuine 802.11 frame); UNCONFIRMED OFDM when only timing
-            # is present. Same row model as ELRS/LoRa.
-            if lsig["valid"]:
+        # 802.11 / OFDM: claimed when there's OFDM structure (timing) OR a
+        # valid L-SIG (the strongest signal — a valid L-SIG implies OFDM).
+        # CONFIRMED 802.11 when the L-SIG validated; UNCONFIRMED OFDM when only
+        # timing is present. Same row model as ELRS/LoRa.
+        ofdm_claims = (ofdm_score >= self._OFDM_CLAIM) or st.lsig_valid
+        if ofdm_claims:
+            if st.lsig_valid:
                 proto = ("Wi-Fi / 802.11 (DJI / consumer / FPV-WiFi)  "
-                         f"L-SIG rate={lsig['rate']} len={lsig['length']}")
-                metric = f"OFDM M={ofdm_metric} + 802.11 L-SIG valid ({lsig['hits']} hit(s))"
+                         f"L-SIG rate={st.lsig_rate} len={st.lsig_len}")
+                metric = (f"OFDM M={ofdm_metric} + 802.11 L-SIG valid "
+                          f"(rate={st.lsig_rate}, len={st.lsig_len})")
                 confirmed = True
                 score = 1.0          # a valid L-SIG is the strongest claim
             else:
