@@ -64,6 +64,12 @@ DASHBOARD = r"""<!DOCTYPE html>
      page height / pushes the waterfall or other elements around */
   .table-card { padding:0; }
   .table-card h2 { padding:11px 14px 0; }
+  .table-head { display:flex; align-items:center; justify-content:space-between;
+                padding:11px 14px 8px; gap:10px; }
+  .table-head h2 { margin:0; }
+  .win-label { font-size:12px; color:#7fa8c9; display:flex; align-items:center; gap:6px; }
+  .win-label select { background:#0d141b; color:#cdd6df; border:1px solid #223243;
+                      border-radius:6px; padding:4px 8px; font-size:12px; cursor:pointer; }
   .table-scroll { max-height:300px; overflow-y:auto; }
   .wf-label { position:absolute; top:8px; left:10px; font-size:12px;
               color:#7fa8c9; background:rgba(5,8,11,.6); padding:2px 8px;
@@ -121,17 +127,30 @@ DASHBOARD = r"""<!DOCTYPE html>
     <div class="hint">Auto-cycling through bands. <b>Click a band tab to lock</b> on it;
       click the <b>Resume</b> button (or click the locked tab) to release back to cycling.</div>
     <div class="card table-card" style="padding:0; margin-top:12px;">
-      <h2>Detections</h2>
+      <div class="table-head">
+        <h2>Detections <span class="sig">(all bands)</span></h2>
+        <label class="win-label">Window
+          <select id="win" onchange="setWindow(this.value)">
+            <option value="0">All time</option>
+            <option value="60">1 min</option>
+            <option value="300">5 min</option>
+            <option value="900">15 min</option>
+            <option value="3600">1 hour</option>
+            <option value="28800">8 hours</option>
+            <option value="86400">24 hours</option>
+          </select>
+        </label>
+      </div>
       <div class="table-scroll">
         <table class="dets">
           <thead>
             <tr>
               <th>Band</th><th>Freq (MHz)</th><th>Protocol</th>
               <th>Make / Model</th><th>Manufacturer</th><th>Type</th>
-              <th>Strength</th><th>Age</th><th>Conf</th>
+              <th>Strength</th><th>Age</th><th>Last seen</th><th>Conf</th>
             </tr>
           </thead>
-          <tbody id="dettbody"><tr><td colspan="9" class="quiet">no detections yet…</td></tr></tbody>
+          <tbody id="dettbody"><tr><td colspan="10" class="quiet">no detections yet…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -272,11 +291,14 @@ function renderTable(){
   const rows = state.detections;
   const tb = el('dettbody');
   if(!rows.length){
-    tb.innerHTML = '<tr><td colspan="9" class="quiet">no detections yet…</td></tr>';
+    tb.innerHTML = '<tr><td colspan="10" class="quiet">no detections yet…</td></tr>';
     return;
   }
   tb.innerHTML = rows.map(r=>{
     const manuf = r.manufacturer ? `<span class="manuf">${r.manufacturer}</span>` : '—';
+    const lastSeen = r.last_seen_s !== undefined
+      ? (r.last_seen_s < 1.5 ? 'now' : r.last_seen_s.toFixed(0)+'s ago')
+      : '—';
     return `<tr>
       <td>${r.band}</td>
       <td>${r.freq_mhz.toFixed(1)}</td>
@@ -286,9 +308,17 @@ function renderTable(){
       <td>${r.type}${r.hopping?' ⤴':''}</td>
       <td>+${r.strength_db.toFixed(1)} dB</td>
       <td class="age">${r.age_s.toFixed(1)}s <span class="sig">×${r.seen_count}</span></td>
+      <td class="age">${lastSeen}</td>
       <td><span class="conf-badge ${r.confidence}">${r.confidence}</span></td>
     </tr>`;
   }).join('');
+}
+
+async function setWindow(seconds){
+  try{
+    await fetch('/api/window', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({seconds: parseFloat(seconds)})});
+  }catch(e){ console.error(e); }
 }
 
 async function lock(band){
@@ -318,14 +348,21 @@ class _State:
     def __init__(self):
         self.scanner = None
         self.locked = None
+        self.window_s = 0.0
         self.error = None
         self.last_state = {"cycling": True, "locked_band": None,
+                           "window_s": 0.0, "detections": [],
                            "bands": [], "summary": "starting…"}
 
     def set_lock(self, band):
         self.locked = band
         if self.scanner:
             self.scanner.set_lock(band)
+
+    def set_window(self, seconds):
+        self.window_s = max(0.0, float(seconds))
+        if self.scanner:
+            self.scanner.set_window(seconds)
 
 
 STATE = _State()
@@ -406,7 +443,7 @@ def _scan_loop():
                                      lock=STATE.locked)
         while True:
             try:
-                STATE.last_state = STATE.scanner.step()
+                STATE.last_state = STATE.scanner.step(window_s=STATE.window_s)
             except Exception as e:  # one bad block shouldn't kill the UI
                 STATE.last_state = {**STATE.last_state, "last_step_error": repr(e)}
     except Exception as e:  # noqa: BLE001  (radio open failed)
@@ -469,6 +506,22 @@ def make_handler():
                 if STATE.scanner is not None:
                     STATE.last_state = STATE.scanner.state_dict()
                 self._json({"ok": True, "locked_band": band})
+            elif self.path == "/api/window":
+                n = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(n) if n else b"{}"
+                try:
+                    req = json.loads(body or b"{}")
+                except Exception:
+                    req = {}
+                ws = req.get("seconds", 0)
+                try:
+                    ws = float(ws)
+                except Exception:
+                    ws = 0.0
+                STATE.set_window(ws)
+                if STATE.scanner is not None:
+                    STATE.last_state = STATE.scanner.state_dict(window_s=STATE.window_s)
+                self._json({"ok": True, "window_s": STATE.window_s})
             else:
                 self._json({"error": "not found"}, 404)
 
