@@ -316,6 +316,105 @@ class DroneScanner:
         """Set the table's time window (seconds). 0/negative = all time."""
         self.window_s = max(0.0, float(seconds))
 
+    def confirm_80211(self, band_name: str, seconds: float = 3.0) -> dict:
+        """Capture `seconds` of IQ on `band_name` and positively confirm 802.11.
+
+        This is the live web-UI confirmation path: record a longer buffer than
+        the 4096-sample scan block (the full preamble + L-SIG needs several ms),
+        then run the L-SIG scan (brute-force demod_lsig across offsets) plus the
+        full positive-detector suite. Returns a structured result:
+          {band, srate, n_samples, lsig: {valid, rate, length, detail, hits},
+           ofdm: {score, metric}, lora: {score, metric},
+           confirmed, protocol}
+        'confirmed' is True ONLY if a valid 802.11 L-SIG was decoded (the
+        positive ID). Never returns a guess.
+        """
+        from . import wifi, positivedet
+        b = band_by_name(band_name)
+        seconds = max(0.2, min(15.0, float(seconds)))   # clamp 0.2..15 s
+        n_total = int(seconds * b.srate)
+        n_total = max(4096, (n_total // 4096) * 4096)    # multiple of a block
+        # capture in blocks (recv_block returns a block at a time)
+        buf = np.zeros(4096, dtype=np.complex64)
+        chunks = []
+        t_end = time.monotonic() + seconds
+        self.radio.tune2((b.lo_hz + b.hi_hz) / 2, b.srate, self.gain)
+        self.radio.recv_block(buf, 0.1)                  # settle, discard
+        while time.monotonic() < t_end and len(chunks) * 4096 < n_total:
+            cnt = self.radio.recv_block(buf, 0.5)
+            if cnt:
+                chunks.append(buf[:cnt].copy())
+        if not chunks:
+            return {"band": band_name, "srate": b.srate, "n_samples": 0,
+                    "lsig": {"valid": False, "detail": "no samples captured"},
+                    "ofdm": {"score": 0.0, "metric": ""},
+                    "lora": {"score": 0.0, "metric": ""},
+                    "confirmed": False, "protocol": "no capture"}
+        samples = np.concatenate(chunks)[:n_total]
+        n_samples = len(samples)
+        # run the full positive-detector suite on the capture
+        lora_score, lora_metric = positivedet.lora_chirp(samples, b.srate)
+        ofdm_score, ofdm_metric = positivedet.ofdm_preamble(samples, b.srate)
+        # L-SIG scan: brute-force demod_lsig across offsets to find a valid
+        # 802.11 L-SIG anywhere in the capture (the front-end sync may miss the
+        # exact offset, so we scan). This is the POSITIVE 802.11 confirmation.
+        lsig = self._lsig_scan(samples, b.srate)
+        confirmed = lsig["valid"]
+        if confirmed:
+            protocol = (f"Wi-Fi / 802.11 (CONFIRMED, rate idx {lsig['rate']}, "
+                        f"len {lsig['length']})")
+        elif lora_score >= self._LORA_CLAIM:
+            protocol = "ELRS-family LoRa (CONFIRMED)"
+        elif ofdm_score >= self._OFDM_CLAIM:
+            protocol = "Wi-Fi / OFDM (UNCONFIRMED — no valid L-SIG)"
+        else:
+            protocol = "Unidentified RF (no positive match)"
+        return {
+            "band": band_name, "srate": b.srate, "n_samples": n_samples,
+            "lsig": lsig,
+            "ofdm": {"score": ofdm_score, "metric": ofdm_metric},
+            "lora": {"score": lora_score, "metric": lora_metric},
+            "confirmed": confirmed, "protocol": protocol,
+        }
+
+    def _lsig_scan(self, samples: np.ndarray, srate: float) -> dict:
+        """Brute-force wifi.demod_lsig across offsets to find a valid 802.11
+        L-SIG. Returns {valid, hits, rate, length, detail, best_offset}."""
+        from . import wifi
+        sym = max(64, int(round(srate * 12.8e-6)))      # OFDM symbol period
+        # window = 2 L-SIG symbols + preamble margin
+        win = 4 * 64 + 2048
+        if len(samples) < win:
+            return {"valid": False, "hits": 0, "rate": None, "length": None,
+                    "detail": "capture too short for L-SIG scan", "best_offset": None}
+        step = max(1, int(srate * 0.1e-6))              # ~0.1 us granularity
+        n_scan = min(3000, (len(samples) - win) // step + 1)
+        hits = 0
+        best = {"valid": False, "hits": 0, "rate": None, "length": None,
+                "detail": "no valid L-SIG found", "best_offset": None}
+        for w in range(n_scan):
+            off = w * step
+            if off + win > len(samples):
+                break
+            try:
+                ok, detail = wifi.demod_lsig(samples[off:off + win], srate)
+            except Exception as e:
+                continue
+            if ok:
+                hits += 1
+                if not best["valid"]:
+                    best["valid"] = True
+                    best["best_offset"] = off
+                    best["detail"] = detail
+                    # parse rate/length from the detail ("rate=4 len=100 ...")
+                    import re
+                    m = re.search(r"rate=(\d+)", detail)
+                    l = re.search(r"len=(\d+)", detail)
+                    best["rate"] = int(m.group(1)) if m else None
+                    best["length"] = int(l.group(1)) if l else None
+        best["hits"] = hits
+        return best
+
     def step(self, window_s: float | None = None) -> dict:
         """Advance one observation. Returns the current state dict (for API)."""
         name = self._current_band_name()

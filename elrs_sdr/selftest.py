@@ -617,6 +617,21 @@ def test_detections_table():
     check("positive-ID hint explains the CONFIRMED vs UNCONFIRMED model",
           "Positive identification" in html and "no default-binned" in html.lower()
           or "default-binned" in html)
+    # (7) LIVE 802.11 confirmation: the UI has a Confirm-802.11 button + band
+    #     selector + result banner, the confirm80211 JS posts to /api/confirm,
+    #     and the scanner has confirm_80211() that runs the L-SIG scan.
+    check("dashboard has a 'Confirm 802.11' button",
+          "id=\"cfbtn\"" in html and "Confirm 802.11" in html)
+    check("dashboard has a confirm band selector",
+          "id=\"cfband\"" in html)
+    check("dashboard has a confirm result banner",
+          "id=\"cfresult\"" in html)
+    check("confirm80211 JS posts to /api/confirm",
+          "function confirm80211" in html and "/api/confirm" in html)
+    check("DroneScanner has confirm_80211() (live 802.11 confirmation)",
+          hasattr(DroneScanner, "confirm_80211"))
+    check("DroneScanner has _lsig_scan() (the L-SIG brute-force scan)",
+          hasattr(DroneScanner, "_lsig_scan"))
 
 
 def main():
