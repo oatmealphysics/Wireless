@@ -508,8 +508,14 @@ def test_detections_table():
     check("dashboard table labeled as all-bands", "(all bands)" in html)
     check("dashboard has no view-tabs anymore (table always visible)",
           "vt-table" not in html and "viewtabs" not in html)
-    check("dashboard table sits inside the waterfall section (below it)",
-          html.index('id="view-waterfall"') < html.index("dettbody"))
+    # the waterfall pane is REMOVED (user found it not useful) — no canvas,
+    # no band-lock tabs, no lock button
+    check("waterfall canvas removed", "<canvas" not in html and "id=\"wf\"" not in html)
+    check("no band-lock tabs / lock button remain",
+          "id=\"tabs\"" not in html and "lockbtn-wrap" not in html
+          and "function lock(" not in html)
+    check("table section is the main view (view-table)",
+          'id="view-table"' in html and html.index('id="view-table"') < html.index("dettbody"))
     check("dashboard has a fixed-height table scroll container (no reflow)",
           "table-scroll" in html and "max-height:300px" in html)
     # (5) anti-jitter + sorting: fixed table layout, colgroup widths, sortable
@@ -522,7 +528,8 @@ def test_detections_table():
           "onclick=\"sortCol(" in html and "function sortCol" in html)
     check("table has a stable default order by first_seen (no row jump)",
           "a.first_seen - b.first_seen" in html)
-    check("sort arrow indicator present in CSS/JS", ".arrow" in html)
+    check("sort arrow indicator present (shows active column + direction)",
+          ".arrow" in html and "textContent = sortDir" in html)
 
 
 def main():
