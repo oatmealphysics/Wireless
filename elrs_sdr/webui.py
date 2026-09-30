@@ -96,12 +96,30 @@ DASHBOARD = r"""<!DOCTYPE html>
   .resume:hover { background:#1c4059; }
   .sig { font-size:11px; color:#7fa8c9; }
 
-  table.dets { width:100%; border-collapse:collapse; font-size:12.5px; }
+  /* table-layout:fixed + explicit widths => columns NEVER resize when cell
+     content changes (no left/right jitter as values update) */
+  table.dets { width:100%; border-collapse:collapse; font-size:12.5px;
+               table-layout:fixed; }
   table.dets th { text-align:left; padding:6px 9px; color:#7fa8c9; font-weight:600;
                   border-bottom:1px solid #223243; position:sticky; top:0;
-                  background:#0d141b; }
-  table.dets td { padding:6px 9px; border-bottom:1px solid #16202b; color:#cdd6df; }
+                  background:#0d141b; cursor:pointer; user-select:none;
+                  white-space:nowrap; overflow:hidden; }
+  table.dets th:hover { background:#15202b; color:#cfe3f5; }
+  table.dets th .arrow { font-size:10px; color:#5fd07a; margin-left:3px; }
+  table.dets td { padding:6px 9px; border-bottom:1px solid #16202b; color:#cdd6df;
+                  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   table.dets tr:hover td { background:#101922; }
+  /* column widths (must match the 10 <th> in order) */
+  table.dets col.c-band   { width:64px; }
+  table.dets col.c-freq   { width:88px; }
+  table.dets col.c-proto  { width:150px; }
+  table.dets col.c-make   { width:150px; }
+  table.dets col.c-manuf  { width:110px; }
+  table.dets col.c-type   { width:100px; }
+  table.dets col.c-str    { width:92px; }
+  table.dets col.c-age    { width:90px; }
+  table.dets col.c-last   { width:88px; }
+  table.dets col.c-conf   { width:72px; }
   .conf-badge { padding:1px 7px; border-radius:9px; font-size:11px; font-weight:600; }
   .conf-badge.high { background:#12321f; color:#5fd07a; }
   .conf-badge.medium { background:#3a2f12; color:#ffb43c; }
@@ -143,11 +161,24 @@ DASHBOARD = r"""<!DOCTYPE html>
       </div>
       <div class="table-scroll">
         <table class="dets">
+          <colgroup>
+            <col class="c-band"><col class="c-freq"><col class="c-proto">
+            <col class="c-make"><col class="c-manuf"><col class="c-type">
+            <col class="c-str"><col class="c-age"><col class="c-last">
+            <col class="c-conf">
+          </colgroup>
           <thead>
             <tr>
-              <th>Band</th><th>Freq (MHz)</th><th>Protocol</th>
-              <th>Make / Model</th><th>Manufacturer</th><th>Type</th>
-              <th>Strength</th><th>Age</th><th>Last seen</th><th>Conf</th>
+              <th data-col="band" onclick="sortCol('band')">Band</th>
+              <th data-col="freq_mhz" onclick="sortCol('freq_mhz')">Freq (MHz)</th>
+              <th data-col="protocol" onclick="sortCol('protocol')">Protocol</th>
+              <th data-col="make_model" onclick="sortCol('make_model')">Make / Model</th>
+              <th data-col="manufacturer" onclick="sortCol('manufacturer')">Manufacturer</th>
+              <th data-col="type" onclick="sortCol('type')">Type</th>
+              <th data-col="strength_db" onclick="sortCol('strength_db')">Strength</th>
+              <th data-col="age_s" onclick="sortCol('age_s')">Age</th>
+              <th data-col="last_seen_s" onclick="sortCol('last_seen_s')">Last seen</th>
+              <th data-col="confidence" onclick="sortCol('confidence')">Conf</th>
             </tr>
           </thead>
           <tbody id="dettbody"><tr><td colspan="10" class="quiet">no detections yet…</td></tr></tbody>
@@ -175,6 +206,25 @@ DASHBOARD = r"""<!DOCTYPE html>
 const BAND_ORDER = ["2.4","5.8","sub1g","433"];
 let state = null;
 let locked = null;   // null = cycling (follow the auto band)
+// table sort: {col, dir} — dir 1 = asc, -1 = desc. null col = stable default
+// (by first_seen), so rows don't reorder as values tick (no vertical jitter).
+let sortCol_ = null;
+let sortDir = 1;
+const CONF_RANK = {high:0, medium:1, low:2};
+function sortCol(col){
+  if(sortCol_ === col){ sortDir = -sortDir; }   // toggle direction
+  else { sortCol_ = col; sortDir = 1; }
+  // mark the active column header
+  for(const th of document.querySelectorAll('table.dets th')){
+    th.querySelector('.arrow')?.remove();
+    if(th.dataset.col === col){
+      const a = document.createElement('span');
+      a.className = 'arrow'; a.textContent = sortDir === 1 ? '▲' : '▼';
+      th.appendChild(a);
+    }
+  }
+  renderTable();
+}
 
 // ---- waterfall canvas: scroll newest at bottom ----
 const cv = document.getElementById('wf');
@@ -288,8 +338,27 @@ function render(){
 
 function renderTable(){
   if(!state || !state.detections) return;
-  const rows = state.detections;
+  let rows = state.detections.slice();
   const tb = el('dettbody');
+  // STABLE order: by the active sort column if the user picked one, else by
+  // first_seen (a row's position is fixed once it appears, so rows don't jump
+  // as their strength/age values tick). first_seen is the tiebreaker either
+  // way, which makes the sort deterministic across polls.
+  if(sortCol_){
+    const col = sortCol_, dir = sortDir;
+    rows.sort((a,b)=>{
+      let va = a[col], vb = b[col];
+      if(col === 'confidence'){ va = CONF_RANK[va]??3; vb = CONF_RANK[vb]??3; }
+      if(typeof va === 'string' || typeof vb === 'string'){
+        va = (va==null?'':String(va)); vb = (vb==null?'':String(vb));
+        return va < vb ? -dir : va > vb ? dir : (a.first_seen - b.first_seen);
+      }
+      va = (va==null?-Infinity:va); vb = (vb==null?-Infinity:vb);
+      return (va - vb) * dir || (a.first_seen - b.first_seen);
+    });
+  } else {
+    rows.sort((a,b)=> a.first_seen - b.first_seen);
+  }
   if(!rows.length){
     tb.innerHTML = '<tr><td colspan="10" class="quiet">no detections yet…</td></tr>';
     return;

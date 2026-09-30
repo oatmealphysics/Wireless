@@ -512,6 +512,17 @@ def test_detections_table():
           html.index('id="view-waterfall"') < html.index("dettbody"))
     check("dashboard has a fixed-height table scroll container (no reflow)",
           "table-scroll" in html and "max-height:300px" in html)
+    # (5) anti-jitter + sorting: fixed table layout, colgroup widths, sortable
+    #     headers, and a stable default order (first_seen) so rows don't jump
+    check("table uses table-layout:fixed (no column-width jitter)",
+          "table-layout:fixed" in html)
+    check("table has a colgroup with fixed column widths",
+          "<colgroup>" in html and "c-band" in html and "c-conf" in html)
+    check("table headers are clickable to sort (sortCol wired)",
+          "onclick=\"sortCol(" in html and "function sortCol" in html)
+    check("table has a stable default order by first_seen (no row jump)",
+          "a.first_seen - b.first_seen" in html)
+    check("sort arrow indicator present in CSS/JS", ".arrow" in html)
 
 
 def main():
