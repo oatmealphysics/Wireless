@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+"""Console entry point: python -m elrs_sdr  or  ./elrs-sdr <subcommand>"""
+from elrs_sdr.cli import main
+
+if __name__ == "__main__":
+    main()

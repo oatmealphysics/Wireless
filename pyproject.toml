@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "elrs-sdr"
+version = "0.1.0"
+description = "Capture, decode, and (future) transmit ExpressLRS drone signals with Ettus SDRs"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+# UHD is installed system-wide (it's a C++ lib + python bindings), not via pip.
+# On the host with the radio, ensure `import uhd` works:
+#   sudo apt install uhd-host python3-uhd   (or build UHD with python bindings)
+radio = []
+
+[project.scripts]
+elrs-sdr = "elrs_sdr.cli:main"
+
+[tool.setuptools]
+packages = ["elrs_sdr"]
