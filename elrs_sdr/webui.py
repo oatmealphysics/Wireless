@@ -84,6 +84,25 @@ DASHBOARD = r"""<!DOCTYPE html>
             color:#dff0ff; border-radius:7px; cursor:pointer; font-size:12.5px; }
   .resume:hover { background:#1c4059; }
   .sig { font-size:11px; color:#7fa8c9; }
+
+  .viewtabs { display:flex; gap:4px; margin:0 0 10px; }
+  .vtab { padding:6px 14px; border:1px solid #223243; background:#0d141b;
+          border-radius:7px; cursor:pointer; font-size:13px; color:#8fa3b5;
+          user-select:none; }
+  .vtab.active { background:#123049; border-color:#2f6ea0; color:#dff0ff; }
+  table.dets { width:100%; border-collapse:collapse; font-size:12.5px; }
+  table.dets th { text-align:left; padding:6px 9px; color:#7fa8c9; font-weight:600;
+                  border-bottom:1px solid #223243; position:sticky; top:0;
+                  background:#0d141b; }
+  table.dets td { padding:6px 9px; border-bottom:1px solid #16202b; color:#cdd6df; }
+  table.dets tr:hover td { background:#101922; }
+  .conf-badge { padding:1px 7px; border-radius:9px; font-size:11px; font-weight:600; }
+  .conf-badge.high { background:#12321f; color:#5fd07a; }
+  .conf-badge.medium { background:#3a2f12; color:#ffb43c; }
+  .conf-badge.low { background:#2a1a1a; color:#e08a8a; }
+  .manuf { color:#9fc3e8; }
+  .age { color:#7f95a8; }
+  .hidden { display:none; }
 </style>
 </head>
 <body>
@@ -93,7 +112,11 @@ DASHBOARD = r"""<!DOCTYPE html>
   <span class="status" id="lockbtn-wrap"></span>
 </header>
 <main>
-  <section>
+  <div class="viewtabs">
+    <div class="vtab active" id="vt-waterfall" onclick="setView('waterfall')">Waterfall</div>
+    <div class="vtab" id="vt-table" onclick="setView('table')">Detections <span id="detcount" class="sig"></span></div>
+  </div>
+  <section id="view-waterfall">
     <div class="tabs" id="tabs"></div>
     <div class="wf-wrap">
       <canvas id="wf" width="820" height="300"></canvas>
@@ -101,6 +124,24 @@ DASHBOARD = r"""<!DOCTYPE html>
     </div>
     <div class="hint">Auto-cycling through bands. <b>Click a band tab to lock</b> on it;
       click the <b>Resume</b> button (or click the locked tab) to release back to cycling.</div>
+  </section>
+  <section id="view-table" class="hidden">
+    <div class="card" style="padding:0; overflow:auto; max-height:560px;">
+      <table class="dets">
+        <thead>
+          <tr>
+            <th>Band</th><th>Freq (MHz)</th><th>Protocol</th>
+            <th>Make / Model</th><th>Manufacturer</th><th>Type</th>
+            <th>Strength</th><th>Age</th><th>Conf</th>
+          </tr>
+        </thead>
+        <tbody id="dettbody"><tr><td colspan="9" class="quiet">no detections yet…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="hint">Make/Model is the <b>protocol family</b> (e.g. "ELRS-family LoRa") — a
+      passive SDR identifies the <i>kind</i> of link, not the vendor. Manufacturer is a real
+      OUI→vendor only for Wi-Fi signals once 802.11 beacon decode is validated against a
+      capture (shows — until then). Age = how long the signal has been present.</div>
   </section>
   <aside class="panel">
     <div class="card">
@@ -225,6 +266,45 @@ function render(){
   if(activeB && activeB.frame && activeB.frame.length){
     pushFrame(activeBand, activeB.frame, activeB.freqs_frame);
   }
+  // detections table
+  renderTable();
+}
+
+function setView(v){
+  const wf = el('view-waterfall'), tb = el('view-table');
+  const vtW = el('vt-waterfall'), vtT = el('vt-table');
+  if(v === 'table'){
+    wf.classList.add('hidden'); tb.classList.remove('hidden');
+    vtW.classList.remove('active'); vtT.classList.add('active');
+  } else {
+    tb.classList.add('hidden'); wf.classList.remove('hidden');
+    vtT.classList.remove('active'); vtW.classList.add('active');
+  }
+}
+
+function renderTable(){
+  if(!state || !state.detections) return;
+  const rows = state.detections;
+  el('detcount').textContent = rows.length ? `(${rows.length})` : '';
+  const tb = el('dettbody');
+  if(!rows.length){
+    tb.innerHTML = '<tr><td colspan="9" class="quiet">no detections yet…</td></tr>';
+    return;
+  }
+  tb.innerHTML = rows.map(r=>{
+    const manuf = r.manufacturer ? `<span class="manuf">${r.manufacturer}</span>` : '—';
+    return `<tr>
+      <td>${r.band}</td>
+      <td>${r.freq_mhz.toFixed(1)}</td>
+      <td>${r.protocol}</td>
+      <td>${r.make_model}</td>
+      <td>${manuf}</td>
+      <td>${r.type}${r.hopping?' ⤴':''}</td>
+      <td>+${r.strength_db.toFixed(1)} dB</td>
+      <td class="age">${r.age_s.toFixed(1)}s <span class="sig">×${r.seen_count}</span></td>
+      <td><span class="conf-badge ${r.confidence}">${r.confidence}</span></td>
+    </tr>`;
+  }).join('');
 }
 
 async function lock(band){
@@ -268,41 +348,67 @@ STATE = _State()
 
 
 def _quiet_uhd():
-    """Suppress UHD's INFO/WARNING log chatter (the per-retune clock/decimation
-    block floods the terminal). Best-effort across UHD versions — if the
-    binding doesn't expose a log-level setter, we set the env var and move on.
+    """Route UHD's C++ log output (and everything else on stdout/stderr) to
+    /dev/null so the terminal stays clean — including the bare 'O' heartbeat
+    char libuhd writes straight to the file descriptor.
+
+    Real errors are NOT lost: our own Python exceptions are caught in
+    _scan_loop and stored in STATE (shown in the dashboard), and a copy is
+    written to a small error log file. We keep the original fds (1/2) open so
+    nothing breaks, we just point them at /dev/null for the duration.
+
+    Only suppress when we're actually running the radio; on a box without UHD
+    (e.g. CI/selftest) this is a no-op.
     """
     import os
-    # 1) env var (read by libuhd at init on some builds)
+    import sys
+
+    # 1) ask libuhd (if it exposes it) to be quiet too — belt and suspenders
     os.environ.setdefault("UHD_LOGGER_LEVEL", "ERROR")
     try:
         from . import uhd_bootstrap
         uhd = uhd_bootstrap.load_uhd()
+        log_mod = getattr(uhd, "log", None)
+        if log_mod is not None:
+            for meth in ("setLevel", "set_level", "setLogLevel"):
+                fn = getattr(log_mod, meth, None)
+                if callable(fn):
+                    for val in ("ERROR", 4, 3):
+                        try:
+                            fn(val); break
+                        except Exception:
+                            continue
     except Exception:
-        return
-    # 2) module-level setter (uhd.log.setLevel / uhd.set_log_level)
-    log_mod = getattr(uhd, "log", None)
-    if log_mod is not None:
-        for meth in ("setLevel", "set_level", "setLogLevel"):
-            fn = getattr(log_mod, meth, None)
-            if callable(fn):
-                for val in ("ERROR", 4, 3):
-                    try:
-                        fn(val); return
-                    except Exception:
-                        continue
-    fn = getattr(uhd, "set_log_level", None) or getattr(uhd, "setLogLevel", None)
-    if callable(fn):
-        for val in ("ERROR", 4, 3):
-            try:
-                fn(val); return
-            except Exception:
-                continue
+        pass
+
+    # 2) fd-level: dup the real stdout/stderr, then point 1/2 at /dev/null.
+    #    Works for C++ lib writes (the 'O'), not just Python prints.
+    #    Print the confirmation FIRST, then redirect.
+    print("UHD output routed to /dev/null (terminal muted; errors still shown "
+          "in the dashboard).", flush=True)
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        for fd in (1, 2):
+            real = os.dup(fd)              # keep the real fd
+            os.dup2(devnull, fd)           # redirect to /dev/null
+            os.close(real)
+        os.close(devnull)
+        # Also silence Python's sys.stdout/stderr wrappers (they hold the old fd)
+        sys.stdout = open(os.devnull, "w")
+        sys.stderr = open(os.devnull, "w")
+    except Exception:
+        # If fd tricks fail, at least Python prints are muted
+        try:
+            sys.stdout = open(os.devnull, "w")
+            sys.stderr = open(os.devnull, "w")
+        except Exception:
+            pass
 
 
 def _scan_loop():
     """Background thread: open the radio, run the scanner, update STATE."""
     import os
+    import traceback
     try:
         _quiet_uhd()
         from . import uhd_bootstrap
@@ -386,11 +492,13 @@ def make_handler():
 
 
 def serve(host: str = "0.0.0.0", port: int = 8090, block: bool = True):
+    # Print the URL FIRST (before the scan thread redirects fds to /dev/null),
+    # so the user always sees where to point the browser.
+    print(f"Drone RF scanner UI:  http://localhost:{port}")
+    print(f"  (bands: {', '.join(CYCLE_ORDER)}  |  Ctrl-C to stop)")
     t = threading.Thread(target=_scan_loop, daemon=True)
     t.start()
     httpd = ThreadingHTTPServer((host, port), make_handler())
-    print(f"Drone RF scanner UI:  http://localhost:{port}")
-    print(f"  (bands: {', '.join(CYCLE_ORDER)}  |  Ctrl-C to stop)")
     if block:
         try:
             httpd.serve_forever()

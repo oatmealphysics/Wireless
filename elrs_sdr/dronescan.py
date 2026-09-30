@@ -33,6 +33,8 @@ import time
 import numpy as np
 from dataclasses import dataclass, field
 
+from . import wifi
+
 # ----------------------------------------------------------------------------
 # Band definitions
 # ----------------------------------------------------------------------------
@@ -229,6 +231,14 @@ class Detection:
     protocol: str            # human label (ELRS-family, Wi-Fi/DJI, ...)
     confidence: str          # high | medium | low
     note: str = ""
+    # --- best-effort identity (populated only when we actually have it) ---
+    manufacturer: str | None = None    # OUI->vendor (Wi-Fi) or None (else)
+    # --- persistence tracking (set by the scanner, not the classifier) ---
+    first_seen: float = 0.0            # monotonic time first observed
+    last_seen: float = 0.0             # monotonic time last re-observed
+    seen_count: int = 0                # how many scans it's been present
+    # a stable key so the same physical signal accumulates across cycles
+    track_key: str = ""
 
 
 @dataclass
@@ -277,6 +287,10 @@ class DroneScanner:
         self._hop_hist: dict[str, list] = {b.name: [] for b in BANDS}
         # which band we're physically tuned to right now
         self._tuned: str | None = None
+        # persistent detection registry: track_key -> (first_seen, last_seen, count)
+        # so the same physical signal accumulates age across cycles instead of
+        # spawning a fresh detection every scan.
+        self._tracked: dict[str, list] = {}
 
     def _current_band_name(self) -> str:
         if self.locked_band:
@@ -346,6 +360,25 @@ class DroneScanner:
             hop = self._track_hop(b.name, freqs, presence, db)
             det = self._classify(b, st, freqs, db, presence, peak_freq,
                                  lora_s, ofdm_s, ofdm_reason, video_s, hop)
+            # best-effort manufacturer: attempt real 802.11 beacon decode for
+            # OFDM signals on a Wi-Fi channel. Returns None (-> "—") until the
+            # RF front-end is validated against a real capture; never a guess.
+            if det.signature == "ofdm" and b.wifi_channels:
+                mac = wifi.decode_beacon_mac(samples, b.srate)
+                det.manufacturer = wifi.mac_to_oui_vendor(mac) if mac else None
+            # persistence: key this detection so the same signal accumulates
+            # age across cycles. 1 MHz freq bin + band + signature is stable
+            # enough to avoid duping a drifting/constant signal.
+            now = time.monotonic()
+            det.track_key = f"{b.name}:{round(peak_freq/1e6)}:{det.signature}"
+            rec = self._tracked.get(det.track_key)
+            if rec is None:
+                rec = [now, 0]
+                self._tracked[det.track_key] = rec
+            det.first_seen = rec[0]
+            det.last_seen = now
+            rec[1] += 1
+            det.seen_count = rec[1]
             # keep only the most recent few detections
             st.detections = [det] + st.detections
             st.detections = st.detections[:5]
@@ -430,6 +463,7 @@ class DroneScanner:
             "locked_band": locked,
             "bands": bands,
             "summary": self._summary(),
+            "detections": self.detections_table(),
         }
 
     def _summary(self) -> str:
@@ -443,3 +477,44 @@ class DroneScanner:
         if not hits:
             return "No drone-class signals detected (quiet or no RF)."
         return f"Likely drone signals: {len(hits)} — " + " | ".join(hits)
+
+    def detections_table(self) -> list[dict]:
+        """Flatten all band detections into one row-per-detection list for the
+        table view. Deduped by track_key (most recent wins), sorted by
+        confidence then strength. Includes age (how long it's been present)."""
+        now = time.monotonic()
+        best: dict[str, dict] = {}
+        for name in CYCLE_ORDER:
+            st = self.states[name]
+            for d in st.detections:
+                if not d.track_key:
+                    continue
+                row = {
+                    "band": name,
+                    "band_label": st.label,
+                    "freq_mhz": round(d.freq_hz / 1e6, 1),
+                    "protocol": d.protocol,
+                    "signature": d.signature,
+                    "make_model": d.protocol,          # protocol-family (honest)
+                    "manufacturer": d.manufacturer,    # OUI->vendor or None
+                    "confidence": d.confidence,
+                    "strength_db": round(d.power_db, 1),
+                    "hopping": st.hopping,
+                    "type": "control-link" if (st.hopping and d.signature != "video")
+                            else ("video" if d.signature == "video" else "static"),
+                    "note": d.note,
+                    "first_seen": d.first_seen,
+                    "last_seen": d.last_seen,
+                    "age_s": round(max(0.0, d.last_seen - d.first_seen), 1),
+                    "seen_count": d.seen_count,
+                }
+                # keep the most-recent row per track_key
+                prev = best.get(d.track_key)
+                if prev is None or d.last_seen > prev["last_seen"]:
+                    best[d.track_key] = row
+        rows = list(best.values())
+        # drop rows whose signal vanished > ~3s ago (stale) but keep for table
+        conf_rank = {"high": 0, "medium": 1, "low": 2}
+        rows.sort(key=lambda r: (conf_rank.get(r["confidence"], 3),
+                                 -r["strength_db"]))
+        return rows
