@@ -54,10 +54,15 @@ DASHBOARD = r"""<!DOCTYPE html>
   .win-label { font-size:12px; color:#7fa8c9; display:flex; align-items:center; gap:6px; }
   .win-label select { background:#0d141b; color:#cdd6df; border:1px solid #223243;
                       border-radius:6px; padding:4px 8px; font-size:12px; cursor:pointer; }
-  .table-scroll { max-height:300px; overflow-y:auto; }
+  /* table grows with its rows; the PAGE scrolls (native browser behavior).
+     no max-height / overflow cap => sticky header pins to the viewport. */
+  .table-scroll { }
   .hint { font-size:11.5px; color:#5a6b7a; margin-top:6px; }
 
-  .panel { display:flex; flex-direction:column; gap:12px; }
+  /* right panel: sticky to the viewport so it stays visible while a long
+     table scrolls past (native page scroll, no inner overflow box) */
+  .panel { display:flex; flex-direction:column; gap:12px;
+           position:sticky; top:14px; align-self:start; }
   .card { background:#0f151b; border:1px solid #1c2733; border-radius:8px; padding:12px 14px; }
   .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em;
              color:#7fa8c9; margin:0 0 8px; font-weight:600; }
