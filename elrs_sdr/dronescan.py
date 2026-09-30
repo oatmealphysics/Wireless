@@ -484,9 +484,14 @@ class DroneScanner:
             candidates.append((lora_score, "lora",
                                "ELRS-family LoRa (2.4/868/915)", True, lora_metric))
         if ofdm_score >= self._OFDM_CLAIM:
+            # OFDM is CONFIRMED only when the L-SIG actually decoded + validated
+            # (a genuine 802.11 frame), not just when OFDM timing is present.
+            lsig_valid = "L-SIG VALID" in ofdm_metric
             candidates.append((ofdm_score, "ofdm",
+                               "Wi-Fi / 802.11 (DJI / consumer / FPV-WiFi)"
+                               if lsig_valid else
                                "Wi-Fi / OFDM (DJI / consumer / FPV-WiFi)",
-                               False, ofdm_metric))
+                               lsig_valid, ofdm_metric))
         if b.name == "5.8" and video_score >= self._VIDEO_CLAIM:
             candidates.append((video_score, "video",
                                "Analog FPV video (5.8 GHz)", False, video_metric))

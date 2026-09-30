@@ -425,6 +425,72 @@ def test_wifi_phy():
     check("decode_beacon_mac returns None on random IQ (no fake MAC)",
           wifi.decode_beacon_mac(junk, 20e6) is None)
 
+    # --- 802.11a/g subcarrier map: exactly 48 data + 4 pilot ---
+    check("802.11a 20MHz has exactly 48 data subcarriers",
+          len(wifi.DATA_SUBCARRIERS) == 48,
+          f"got {len(wifi.DATA_SUBCARRIERS)}")
+    check("802.11a has exactly 4 pilot subcarriers",
+          len(wifi.PILOTS) == 4, f"got {len(wifi.PILOTS)}")
+
+    # --- L-SIG parity: deterministic, varies with input, in [0,15] ---
+    p_a = wifi.lsig_parity(4, 100)
+    p_b = wifi.lsig_parity(4, 100)
+    p_c = wifi.lsig_parity(4, 101)
+    check("L-SIG parity is deterministic (same input -> same parity)",
+          p_a == p_b, f"{p_a} != {p_b}")
+    check("L-SIG parity varies with the Length field",
+          p_a != p_c or wifi.lsig_parity(5, 100) != p_a,
+          f"parity(4,100)={p_a} parity(4,101)={p_c}")
+    check("L-SIG parity is a 4-bit value (0..15)",
+          0 <= p_a <= 15, f"parity={p_a}")
+
+    # --- L-SIG validator: a well-formed field validates ---
+    rate, length = 4, 100
+    parity = wifi.lsig_parity(rate, length, 0)
+    good = np.array([int(x) for x in format(rate, "04b")] +
+                    [int(x) for x in format(length, "012b")] +
+                    [0] + [int(x) for x in format(parity, "04b")] +
+                    [0, 0, 0], dtype=np.uint8)
+    ok, why = wifi.lsig_validate(good)
+    check("L-SIG validator accepts a well-formed field (rate/len/parity/tail)",
+          ok, f"rejected: {why}")
+    # --- rejects an invalid Rate (8 is not a 802.11a/g rate) ---
+    bad_rate = good.copy(); bad_rate[0:4] = [1, 0, 0, 0]   # rate=8
+    ok_r, why_r = wifi.lsig_validate(bad_rate)
+    check("L-SIG validator rejects an invalid Rate (rate=8)",
+          not ok_r, f"accepted rate=8: {why_r}")
+    # --- rejects a wrong Parity (the L-SIG 'CRC' check) ---
+    bad_par = good.copy(); bad_par[17:21] = 1 - good[17:21]
+    ok_p, why_p = wifi.lsig_validate(bad_par)
+    check("L-SIG validator rejects a wrong Parity (L-SIG CRC mismatch)",
+          not ok_p, f"accepted bad parity: {why_p}")
+    # --- rejects a nonzero Tail (the code must flush to state 0) ---
+    bad_tail = good.copy(); bad_tail[21:24] = [1, 1, 1]
+    ok_t, why_t = wifi.lsig_validate(bad_tail)
+    check("L-SIG validator rejects a nonzero Tail",
+          not ok_t, f"accepted bad tail: {why_t}")
+
+    # --- L-SIG interleave is a round-trip (encode->interleave->deinterleave) ---
+    lsig24 = np.array([int(x) for x in format(rate, "04b")] +
+                      [int(x) for x in format(length, "012b")] +
+                      [0] + [int(x) for x in format(parity, "04b")] +
+                      [0, 0, 0], dtype=np.uint8)
+    coded60 = wifi._cc_encode_bits(lsig24.astype(bool))
+    check("L-SIG CC 1/2 encode produces 60 coded bits",
+          len(coded60) == 60, f"got {len(coded60)}")
+    slots96 = wifi.lsig_interleave(coded60)
+    check("L-SIG interleave produces 96 subcarrier slots (2 symbols x 48)",
+          len(slots96) == 96, f"got {len(slots96)}")
+    back = wifi.lsig_deinterleave(slots96)
+    check("L-SIG deinterleave is the exact inverse (round-trip)",
+          list(back) == list(coded60), "interleave round-trip failed")
+    # --- the FULL L-SIG chain round-trips: 24 bits -> CC -> interleave ->
+    #     deinterleave -> Viterbi -> validate ---
+    dec = wifi.viterbi_decode(back)
+    ok_chain, why_chain = wifi.lsig_validate(dec[:24])
+    check("full L-SIG chain round-trips to a VALID L-SIG (24->CC->X->Viterbi)",
+          ok_chain, f"chain failed: {why_chain}")
+
 
 def test_detections_table():
     """Offline check: the scanner's detections_table() + the webui table markup.
