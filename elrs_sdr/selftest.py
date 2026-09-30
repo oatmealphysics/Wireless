@@ -502,8 +502,9 @@ def test_detections_table():
     contains the table markup + view-switch JS.
     """
     import numpy as np
+    import inspect
     from .dronescan import DroneScanner
-    from . import webui
+    from . import dronescan as ds, webui
 
     print("\n== detections table (offline) ==")
 
@@ -617,21 +618,19 @@ def test_detections_table():
     check("positive-ID hint explains the CONFIRMED vs UNCONFIRMED model",
           "Positive identification" in html and "no default-binned" in html.lower()
           or "default-binned" in html)
-    # (7) LIVE 802.11 confirmation: the UI has a Confirm-802.11 button + band
-    #     selector + result banner, the confirm80211 JS posts to /api/confirm,
-    #     and the scanner has confirm_80211() that runs the L-SIG scan.
-    check("dashboard has a 'Confirm 802.11' button",
-          "id=\"cfbtn\"" in html and "Confirm 802.11" in html)
-    check("dashboard has a confirm band selector",
-          "id=\"cfband\"" in html)
-    check("dashboard has a confirm result banner",
-          "id=\"cfresult\"" in html)
-    check("confirm80211 JS posts to /api/confirm",
-          "function confirm80211" in html and "/api/confirm" in html)
-    check("DroneScanner has confirm_80211() (live 802.11 confirmation)",
-          hasattr(DroneScanner, "confirm_80211"))
+    # (7) 802.11 is a FIRST-CLASS automatic classifier (same row model as
+    #     ELRS/LoRa): the scanner accumulates a rolling IQ buffer per band and
+    #     runs the L-SIG scan in the classify loop, so a real beacon shows up as
+    #     a "Wi-Fi / 802.11 (CONFIRMED)" row — NOT a separate confirm button.
+    check("BandState has a rolling iq_buf for the 802.11 L-SIG demod",
+          "iq_buf" in ds.BandState.__dataclass_fields__)
     check("DroneScanner has _lsig_scan() (the L-SIG brute-force scan)",
           hasattr(DroneScanner, "_lsig_scan"))
+    check("802.11 is classified in _classify_positive (automatic, not a button)",
+          "lsig" in inspect.getsource(DroneScanner._classify_positive))
+    # the confirm-button UI must be GONE (the user wants 802.11 as a normal row)
+    check("no separate 'Confirm 802.11' button in the UI (802.11 is a row)",
+          "cfbtn" not in html and "confirm80211" not in html)
 
 
 def main():

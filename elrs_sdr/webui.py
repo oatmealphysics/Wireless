@@ -49,18 +49,7 @@ DASHBOARD = r"""<!DOCTYPE html>
   .table-card { padding:0; }
   .table-card h2 { padding:11px 14px 0; }
   .table-head { display:flex; align-items:center; justify-content:space-between;
-                padding:11px 14px 8px; gap:10px; flex-wrap:wrap; }
-  .head-actions { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
-  .win-label button { background:#14324a; color:#cde6ff; border:1px solid #2b5578;
-                      border-radius:6px; padding:4px 10px; font-size:12px;
-                      cursor:pointer; font-weight:600; }
-  .win-label button:hover { background:#1b4a6b; }
-  .win-label button:disabled { opacity:0.5; cursor:wait; }
-  .cfresult { padding:0 14px 8px; font-size:12.5px; min-height:0; }
-  .cfresult:empty { display:none; }
-  .cfresult .ok { color:#5fd07a; }
-  .cfresult .no { color:#ffb43c; }
-  .cfresult .err { color:#ff7a7a; }
+                padding:11px 14px 8px; gap:10px; }
   .table-head h2 { margin:0; }
   .win-label { font-size:12px; color:#7fa8c9; display:flex; align-items:center; gap:6px; }
   .win-label select { background:#0d141b; color:#cdd6df; border:1px solid #223243;
@@ -139,7 +128,6 @@ DASHBOARD = r"""<!DOCTYPE html>
     <div class="card table-card" style="padding:0; margin-top:12px;">
       <div class="table-head">
         <h2>Detections <span class="sig">(all bands)</span></h2>
-        <div class="head-actions">
         <label class="win-label">Window
           <select id="win" onchange="setWindow(this.value)">
             <option value="0">All time</option>
@@ -151,18 +139,6 @@ DASHBOARD = r"""<!DOCTYPE html>
             <option value="86400">24 hours</option>
           </select>
         </label>
-        <label class="win-label" title="Capture a few seconds on this band and decode the 802.11 L-SIG to positively confirm Wi-Fi (not just OFDM shape)">
-          <select id="cfband">
-            <option value="2.4">2.4</option>
-            <option value="5.8">5.8</option>
-            <option value="sub1g">sub1g</option>
-            <option value="433">433</option>
-          </select>
-          <button id="cfbtn" onclick="confirm80211()">Confirm 802.11</button>
-        </label>
-        </div>
-      </div>
-      <div id="cfresult" class="cfresult"></div>
       </div>
       <div class="table-scroll">
         <table class="dets">
@@ -333,44 +309,6 @@ async function setWindow(seconds){
     await fetch('/api/window', {method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({seconds: parseFloat(seconds)})});
   }catch(e){ console.error(e); }
-}
-
-// LIVE 802.11 confirmation: capture a few seconds on the chosen band, decode
-// the 802.11 L-SIG (the positive ID), and show the result. A valid L-SIG means
-// the signal is GENUINELY 802.11 (Rate/Length/Parity/Tail consistent) — not
-// just OFDM-shaped.
-async function confirm80211(){
-  const band = el('cfband').value;
-  const btn = el('cfbtn');
-  const out = el('cfresult');
-  btn.disabled = true;
-  btn.textContent = 'Capturing…';
-  out.innerHTML = `<span class="no">Capturing ~3s on ${band} and decoding the 802.11 L-SIG…</span>`;
-  try{
-    const r = await fetch('/api/confirm', {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({band: band, seconds: 3})});
-    const d = await r.json();
-    if(d.error){ out.innerHTML = `<span class="err">error: ${d.error}</span>`; return; }
-    const lsig = d.lsig || {};
-    if(d.confirmed){
-      out.innerHTML = `<span class="ok">✓ 802.11 CONFIRMED on ${band}</span> — valid L-SIG decoded `+
-        `(rate idx ${lsig.rate}, length ${lsig.length}, ${lsig.hits} hit(s)). `+
-        `<span class="sig">${d.protocol}</span>`;
-    } else {
-      out.innerHTML = `<span class="no">✗ No valid 802.11 L-SIG on ${band}</span> — `+
-        `(${lsig.detail || 'no hits'}). OFDM timing score ${d.ofdm ? d.ofdm.score.toFixed(2):'—'}, `+
-        `LoRa ${d.lora ? d.lora.score.toFixed(2):'—'}. `+
-        `<span class="sig">${d.protocol}</span>. `+
-        `<span class="sig">If this IS a real beacon, the front-end sync/channel-est `+
-        `needs tuning — run: elrs-sdr capture --band ${band} && elrs-sdr validate &lt;file&gt;</span>`;
-    }
-  }catch(e){
-    out.innerHTML = `<span class="err">confirm failed: ${e}</span>`;
-  }finally{
-    btn.disabled = false;
-    btn.textContent = 'Confirm 802.11';
-  }
 }
 
 async function poll(){
@@ -567,37 +505,6 @@ def make_handler():
                 if STATE.scanner is not None:
                     STATE.last_state = STATE.scanner.state_dict(window_s=STATE.window_s)
                 self._json({"ok": True, "window_s": STATE.window_s})
-            elif self.path == "/api/confirm":
-                # LIVE 802.11 confirmation: capture a few seconds of IQ on the
-                # given band, run the L-SIG scan + positive detectors, and
-                # return whether a valid 802.11 L-SIG was decoded.
-                n = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(n) if n else b"{}"
-                try:
-                    req = json.loads(body or b"{}")
-                except Exception:
-                    req = {}
-                band = req.get("band")
-                if band is None:
-                    # default to the locked band (or 2.4 if not locked)
-                    band = STATE.locked or "2.4"
-                if band not in {b.name for b in dronescan.BANDS}:
-                    self._json({"error": f"unknown band {band!r}"}, 400)
-                    return
-                secs = req.get("seconds", 3.0)
-                try:
-                    secs = float(secs)
-                except Exception:
-                    secs = 3.0
-                if STATE.scanner is None:
-                    self._json({"error": "scanner not running"}, 503)
-                    return
-                try:
-                    result = STATE.scanner.confirm_80211(band, secs)
-                except Exception as e:
-                    self._json({"error": f"confirm failed: {e!r}"}, 500)
-                    return
-                self._json({"ok": True, **result})
             else:
                 self._json({"error": "not found"}, 404)
 
