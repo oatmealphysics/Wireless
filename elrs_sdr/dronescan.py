@@ -270,15 +270,19 @@ class DroneScanner:
 
     def __init__(self, radio, dwell_s: float = 0.15, lock: str | None = None,
                  min_above_floor_db: float = 8.0, gain: float = 30.0,
-                 dwell_per_band: int = 3):
+                 dwell_per_band: int = 3, dwell_s_per_band: float = 2.0):
         self.radio = radio
         self.dwell_s = dwell_s
         self.min_db = min_above_floor_db
         self.gain = gain
         self.dwell_per_band = max(1, dwell_per_band)
+        # wall-clock dwell: how long to stay on each band before cycling to the
+        # next (2s default). Takes precedence over the observation-count dwell.
+        self.dwell_s_per_band = max(0.1, float(dwell_s_per_band))
         self.locked_band = lock            # None = auto-cycle
         self._cycle_idx = 0
         self._steps_on_band = 0
+        self._band_entered_at = time.monotonic()   # when we last (re)tuned
         self.states: dict[str, BandState] = {b.name: BandState(
             b.name, b.label, b.lo_hz, b.hi_hz) for b in BANDS}
         self._buf = np.zeros(4096, dtype=np.complex64)
@@ -287,10 +291,13 @@ class DroneScanner:
         self._hop_hist: dict[str, list] = {b.name: [] for b in BANDS}
         # which band we're physically tuned to right now
         self._tuned: str | None = None
-        # persistent detection registry: track_key -> (first_seen, last_seen, count)
-        # so the same physical signal accumulates age across cycles instead of
-        # spawning a fresh detection every scan.
-        self._tracked: dict[str, list] = {}
+        # persistent detection registry: track_key -> {first_seen, last_seen,
+        # count, row} so the same physical signal accumulates age across cycles
+        # instead of spawning a fresh detection every scan, AND so the table
+        # can show a signal within a time window even when it's not present now.
+        self._tracked: dict[str, dict] = {}
+        # time-window for the table (seconds). 0 = "all time" (no filter).
+        self.window_s: float = 0.0
 
     def _current_band_name(self) -> str:
         if self.locked_band:
@@ -301,7 +308,11 @@ class DroneScanner:
         self.locked_band = band
         self._steps_on_band = 0          # reset dwell when (re)locking
 
-    def step(self) -> dict:
+    def set_window(self, seconds: float):
+        """Set the table's time window (seconds). 0/negative = all time."""
+        self.window_s = max(0.0, float(seconds))
+
+    def step(self, window_s: float | None = None) -> dict:
         """Advance one observation. Returns the current state dict (for API)."""
         name = self._current_band_name()
         b = band_by_name(name)
@@ -312,21 +323,22 @@ class DroneScanner:
             self.radio.recv_block(self._buf, 0.1)   # settle, discard
             self._tuned = name
             self._steps_on_band = 0
+            self._band_entered_at = time.monotonic()
         # grab a block
         cnt = self.radio.recv_block(self._buf, self.dwell_s)
         st = self.states[name]
         st.last_update = time.time()
         if cnt and cnt > 0:
             self._process_block(b, st, self._buf[:cnt])
-        # advance cycle ONLY after dwelling on this band for N observations
-        # (not every step — re-tuning every step re-prints UHD's clock block
-        #  and never lets hop history / a stable detection accumulate)
+        # advance the cycle once we've dwelled on this band for the configured
+        # wall-clock time (default 2s). Time-based (not observation-count) so
+        # the dwell is stable regardless of how fast blocks fill.
         if not self.locked_band:
             self._steps_on_band += 1
-            if self._steps_on_band >= self.dwell_per_band:
+            if time.monotonic() - self._band_entered_at >= self.dwell_s_per_band:
                 self._cycle_idx = (self._cycle_idx + 1) % len(CYCLE_ORDER)
                 self._steps_on_band = 0
-        return self.state_dict()
+        return self.state_dict(window_s=window_s)
 
     def _process_block(self, b: Band, st: BandState, samples: np.ndarray):
         freqs, db = power_spectrum(samples, b.srate)
@@ -368,17 +380,23 @@ class DroneScanner:
                 det.manufacturer = wifi.mac_to_oui_vendor(mac) if mac else None
             # persistence: key this detection so the same signal accumulates
             # age across cycles. 1 MHz freq bin + band + signature is stable
-            # enough to avoid duping a drifting/constant signal.
+            # enough to avoid duping a drifting/constant signal. We store the
+            # FULL latest row in the registry so the table can show a signal
+            # within a time window even if it's not present right now.
             now = time.monotonic()
             det.track_key = f"{b.name}:{round(peak_freq/1e6)}:{det.signature}"
+            row = self._row_from_detection(b, st, det, now)
             rec = self._tracked.get(det.track_key)
             if rec is None:
-                rec = [now, 0]
+                rec = {"first_seen": now, "last_seen": now, "count": 1, "row": row}
                 self._tracked[det.track_key] = rec
-            det.first_seen = rec[0]
+            else:
+                rec["last_seen"] = now
+                rec["count"] += 1
+                rec["row"] = row           # keep the latest classification
+            det.first_seen = rec["first_seen"]
             det.last_seen = now
-            rec[1] += 1
-            det.seen_count = rec[1]
+            det.seen_count = rec["count"]
             # keep only the most recent few detections
             st.detections = [det] + st.detections
             st.detections = st.detections[:5]
@@ -386,6 +404,25 @@ class DroneScanner:
         else:
             st.present = False
             st.detections = []
+
+    def _row_from_detection(self, b, st, det, now) -> dict:
+        """Build the table row for a detection (used for the persistent registry)."""
+        return {
+            "track_key": det.track_key,
+            "band": b.name,
+            "band_label": b.label,
+            "freq_mhz": round(det.freq_hz / 1e6, 1),
+            "protocol": det.protocol,
+            "signature": det.signature,
+            "make_model": det.protocol,
+            "manufacturer": det.manufacturer,
+            "confidence": det.confidence,
+            "strength_db": round(det.power_db, 1),
+            "hopping": st.hopping,
+            "type": "control-link" if (st.hopping and det.signature != "video")
+                    else ("video" if det.signature == "video" else "static"),
+            "note": det.note,
+        }
 
     def _track_hop(self, name: str, freqs: np.ndarray, presence: np.ndarray,
                    db: np.ndarray) -> bool:
@@ -437,7 +474,8 @@ class DroneScanner:
                          "low",
                          f"{ofdm_reason or 'weak'}{' hopping' if hop else ''}")
 
-    def state_dict(self) -> dict:
+    def state_dict(self, window_s: float | None = None) -> dict:
+        ws = window_s if window_s is not None else self.window_s
         bands = []
         for name in CYCLE_ORDER:
             st = self.states[name]
@@ -463,7 +501,8 @@ class DroneScanner:
             "locked_band": locked,
             "bands": bands,
             "summary": self._summary(),
-            "detections": self.detections_table(),
+            "window_s": ws,
+            "detections": self.detections_table(window_s=ws),
         }
 
     def _summary(self) -> str:
@@ -478,42 +517,29 @@ class DroneScanner:
             return "No drone-class signals detected (quiet or no RF)."
         return f"Likely drone signals: {len(hits)} — " + " | ".join(hits)
 
-    def detections_table(self) -> list[dict]:
-        """Flatten all band detections into one row-per-detection list for the
-        table view. Deduped by track_key (most recent wins), sorted by
-        confidence then strength. Includes age (how long it's been present)."""
+    def detections_table(self, window_s: float | None = None) -> list[dict]:
+        """Flatten the persistent detection registry into one row per signal,
+        across ALL bands (not just the viewed one).
+
+        `window_s` (seconds, default = self.window_s; 0 = all time) keeps only
+        signals whose `last_seen` is within the window. Each row carries the
+        latest classification + first/last/age/seen-count. Sorted by confidence
+        then strength.
+        """
+        ws = self.window_s if window_s is None else window_s
         now = time.monotonic()
-        best: dict[str, dict] = {}
-        for name in CYCLE_ORDER:
-            st = self.states[name]
-            for d in st.detections:
-                if not d.track_key:
-                    continue
-                row = {
-                    "band": name,
-                    "band_label": st.label,
-                    "freq_mhz": round(d.freq_hz / 1e6, 1),
-                    "protocol": d.protocol,
-                    "signature": d.signature,
-                    "make_model": d.protocol,          # protocol-family (honest)
-                    "manufacturer": d.manufacturer,    # OUI->vendor or None
-                    "confidence": d.confidence,
-                    "strength_db": round(d.power_db, 1),
-                    "hopping": st.hopping,
-                    "type": "control-link" if (st.hopping and d.signature != "video")
-                            else ("video" if d.signature == "video" else "static"),
-                    "note": d.note,
-                    "first_seen": d.first_seen,
-                    "last_seen": d.last_seen,
-                    "age_s": round(max(0.0, d.last_seen - d.first_seen), 1),
-                    "seen_count": d.seen_count,
-                }
-                # keep the most-recent row per track_key
-                prev = best.get(d.track_key)
-                if prev is None or d.last_seen > prev["last_seen"]:
-                    best[d.track_key] = row
-        rows = list(best.values())
-        # drop rows whose signal vanished > ~3s ago (stale) but keep for table
+        cutoff = now - ws if ws > 0 else float("-inf")
+        rows = []
+        for key, rec in self._tracked.items():
+            if rec["last_seen"] < cutoff:
+                continue
+            row = dict(rec["row"])
+            row["first_seen"] = rec["first_seen"]
+            row["last_seen"] = rec["last_seen"]
+            row["age_s"] = round(max(0.0, rec["last_seen"] - rec["first_seen"]), 1)
+            row["seen_count"] = rec["count"]
+            row["last_seen_s"] = round(max(0.0, now - rec["last_seen"]), 1)
+            rows.append(row)
         conf_rank = {"high": 0, "medium": 1, "low": 2}
         rows.sort(key=lambda r: (conf_rank.get(r["confidence"], 3),
                                  -r["strength_db"]))

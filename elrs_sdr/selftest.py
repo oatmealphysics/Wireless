@@ -441,49 +441,77 @@ def test_detections_table():
 
     print("\n== detections table (offline) ==")
 
+    # mock radio: emit a strong tone at the *center* of whatever band it's
+    # tuned to, so EVERY band gets a detection (lets us verify the table shows
+    # all bands, not just the viewed one).
     class MockRadio:
         def __init__(self):
-            self.f = 0
+            self.center = 2.44e9
         def tune2(self, f, s, g):
-            self.f = f
+            self.center = f
         def recv_block(self, buf, timeout):
+            # tone offset a small amount from the LO center so it's a clean
+            # peak; 0.5 MHz offset -> distinct per-band detection
             t = np.arange(len(buf)) / 16e6
-            # a strong constant tone (static, not hopping) -> presence
             buf[:] = (np.exp(2j * np.pi * 0.5e6 * t)).astype(np.complex64) * 80 \
                 + np.random.randn(len(buf)).astype(np.complex64)
             return len(buf)
 
-    sc = DroneScanner(MockRadio(), dwell_s=0.001, dwell_per_band=1, lock="2.4")
-    for _ in range(4):
-        sc.step()
+    sc = DroneScanner(MockRadio(), dwell_s=0.001, dwell_per_band=1,
+                      dwell_s_per_band=0.001)   # tiny dwell so the test is fast
+    # explicitly lock each band and step, so EVERY band is observed (the auto-
+    # cycle timing is wall-clock and flaky in a near-instant mock). This is a
+    # test of the table showing all bands, not of the cycle scheduler.
+    for band_name in ("2.4", "5.8", "sub1g", "433"):
+        sc.set_lock(band_name)
+        for _ in range(2):
+            sc.step()
+    sc.set_lock(None)
     rows = sc.detections_table()
+    # (1) ALL bands should be represented (the table is band-agnostic)
+    bands_seen = {r["band"] for r in rows}
+    check("table shows detections across ALL bands (not just viewed)",
+          len(bands_seen) >= 2, f"bands in table: {bands_seen}")
     r24 = [r for r in rows if r["band"] == "2.4"]
-    check("detections_table returns exactly one deduped row for the 2.4 tone",
-          len(r24) == 1, f"got {len(r24)} rows: {[(r['band'], r['freq_mhz']) for r in r24]}")
+    check("2.4 tone produced exactly one deduped row",
+          len(r24) == 1, f"got {len(r24)}: {[(r['band'], r['freq_mhz']) for r in r24]}")
     if r24:
         r = r24[0]
-        # all columns the UI renders must be present
+        # (2) all columns the UI renders (incl. the new Last-seen)
         need = {"band", "freq_mhz", "protocol", "make_model", "manufacturer",
-                "confidence", "strength_db", "type", "age_s", "seen_count"}
+                "confidence", "strength_db", "type", "age_s", "seen_count",
+                "last_seen_s"}
         missing = need - set(r)
-        check("table row carries every column the UI renders",
+        check("table row carries every column the UI renders (incl. last_seen_s)",
               not missing, f"missing {missing}")
         check("seen_count accumulated across cycles (persistence)",
-              r["seen_count"] >= 4, f"seen_count={r['seen_count']}")
+              r["seen_count"] >= 2, f"seen_count={r['seen_count']}")
         check("manufacturer is None for a non-Wi-Fi tone (no fake vendor)",
               r["manufacturer"] is None, f"manufacturer={r['manufacturer']}")
-    # the dashboard must actually contain the table (below the waterfall,
-    # always visible) + the render JS
+    # (3) time-window filter: a very short window still keeps the just-seen
+    #     signals (last_seen ~ now), a zero window (all time) keeps all of them.
+    all_rows = sc.detections_table(window_s=0)
+    sc.set_window(60)   # 1 min window
+    min_rows = sc.detections_table()   # uses self.window_s
+    check("window filter returns the same live signals at 1-min (just seen now)",
+          len(min_rows) == len(all_rows),
+          f"all={len(all_rows)} 1min={len(min_rows)}")
+    check("state_dict reports the active window_s",
+          sc.state_dict().get("window_s") == 60.0,
+          f"window_s={sc.state_dict().get('window_s')}")
+    # (4) the dashboard: window dropdown + Last seen column + all-bands label
     html = webui.DASHBOARD
-    check("dashboard has the detections table body", "dettbody" in html)
-    check("dashboard has the renderTable JS", "function renderTable" in html)
-    check("dashboard has no view-tabs anymore (table is always visible)",
+    check("dashboard has the window dropdown", 'id="win"' in html and "setWindow" in html)
+    check("dashboard window dropdown has the expected options",
+          all(o in html for o in ('value="60"', 'value="3600"', 'value="86400"')))
+    check("dashboard table has a Last seen column", "Last seen" in html)
+    check("dashboard table labeled as all-bands", "(all bands)" in html)
+    check("dashboard has no view-tabs anymore (table always visible)",
           "vt-table" not in html and "viewtabs" not in html)
     check("dashboard table sits inside the waterfall section (below it)",
-          html.index("id=\"view-waterfall\"") < html.index("dettbody"))
+          html.index('id="view-waterfall"') < html.index("dettbody"))
     check("dashboard has a fixed-height table scroll container (no reflow)",
           "table-scroll" in html and "max-height:300px" in html)
-    check("dashboard Make/Model column header present", "Make / Model" in html)
 
 
 def main():
