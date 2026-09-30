@@ -84,6 +84,25 @@ DASHBOARD = r"""<!DOCTYPE html>
             color:#dff0ff; border-radius:7px; cursor:pointer; font-size:12.5px; }
   .resume:hover { background:#1c4059; }
   .sig { font-size:11px; color:#7fa8c9; }
+
+  .viewtabs { display:flex; gap:4px; margin:0 0 10px; }
+  .vtab { padding:6px 14px; border:1px solid #223243; background:#0d141b;
+          border-radius:7px; cursor:pointer; font-size:13px; color:#8fa3b5;
+          user-select:none; }
+  .vtab.active { background:#123049; border-color:#2f6ea0; color:#dff0ff; }
+  table.dets { width:100%; border-collapse:collapse; font-size:12.5px; }
+  table.dets th { text-align:left; padding:6px 9px; color:#7fa8c9; font-weight:600;
+                  border-bottom:1px solid #223243; position:sticky; top:0;
+                  background:#0d141b; }
+  table.dets td { padding:6px 9px; border-bottom:1px solid #16202b; color:#cdd6df; }
+  table.dets tr:hover td { background:#101922; }
+  .conf-badge { padding:1px 7px; border-radius:9px; font-size:11px; font-weight:600; }
+  .conf-badge.high { background:#12321f; color:#5fd07a; }
+  .conf-badge.medium { background:#3a2f12; color:#ffb43c; }
+  .conf-badge.low { background:#2a1a1a; color:#e08a8a; }
+  .manuf { color:#9fc3e8; }
+  .age { color:#7f95a8; }
+  .hidden { display:none; }
 </style>
 </head>
 <body>
@@ -93,7 +112,11 @@ DASHBOARD = r"""<!DOCTYPE html>
   <span class="status" id="lockbtn-wrap"></span>
 </header>
 <main>
-  <section>
+  <div class="viewtabs">
+    <div class="vtab active" id="vt-waterfall" onclick="setView('waterfall')">Waterfall</div>
+    <div class="vtab" id="vt-table" onclick="setView('table')">Detections <span id="detcount" class="sig"></span></div>
+  </div>
+  <section id="view-waterfall">
     <div class="tabs" id="tabs"></div>
     <div class="wf-wrap">
       <canvas id="wf" width="820" height="300"></canvas>
@@ -101,6 +124,24 @@ DASHBOARD = r"""<!DOCTYPE html>
     </div>
     <div class="hint">Auto-cycling through bands. <b>Click a band tab to lock</b> on it;
       click the <b>Resume</b> button (or click the locked tab) to release back to cycling.</div>
+  </section>
+  <section id="view-table" class="hidden">
+    <div class="card" style="padding:0; overflow:auto; max-height:560px;">
+      <table class="dets">
+        <thead>
+          <tr>
+            <th>Band</th><th>Freq (MHz)</th><th>Protocol</th>
+            <th>Make / Model</th><th>Manufacturer</th><th>Type</th>
+            <th>Strength</th><th>Age</th><th>Conf</th>
+          </tr>
+        </thead>
+        <tbody id="dettbody"><tr><td colspan="9" class="quiet">no detections yet…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="hint">Make/Model is the <b>protocol family</b> (e.g. "ELRS-family LoRa") — a
+      passive SDR identifies the <i>kind</i> of link, not the vendor. Manufacturer is a real
+      OUI→vendor only for Wi-Fi signals once 802.11 beacon decode is validated against a
+      capture (shows — until then). Age = how long the signal has been present.</div>
   </section>
   <aside class="panel">
     <div class="card">
@@ -225,6 +266,45 @@ function render(){
   if(activeB && activeB.frame && activeB.frame.length){
     pushFrame(activeBand, activeB.frame, activeB.freqs_frame);
   }
+  // detections table
+  renderTable();
+}
+
+function setView(v){
+  const wf = el('view-waterfall'), tb = el('view-table');
+  const vtW = el('vt-waterfall'), vtT = el('vt-table');
+  if(v === 'table'){
+    wf.classList.add('hidden'); tb.classList.remove('hidden');
+    vtW.classList.remove('active'); vtT.classList.add('active');
+  } else {
+    tb.classList.add('hidden'); wf.classList.remove('hidden');
+    vtT.classList.remove('active'); vtW.classList.add('active');
+  }
+}
+
+function renderTable(){
+  if(!state || !state.detections) return;
+  const rows = state.detections;
+  el('detcount').textContent = rows.length ? `(${rows.length})` : '';
+  const tb = el('dettbody');
+  if(!rows.length){
+    tb.innerHTML = '<tr><td colspan="9" class="quiet">no detections yet…</td></tr>';
+    return;
+  }
+  tb.innerHTML = rows.map(r=>{
+    const manuf = r.manufacturer ? `<span class="manuf">${r.manufacturer}</span>` : '—';
+    return `<tr>
+      <td>${r.band}</td>
+      <td>${r.freq_mhz.toFixed(1)}</td>
+      <td>${r.protocol}</td>
+      <td>${r.make_model}</td>
+      <td>${manuf}</td>
+      <td>${r.type}${r.hopping?' ⤴':''}</td>
+      <td>+${r.strength_db.toFixed(1)} dB</td>
+      <td class="age">${r.age_s.toFixed(1)}s <span class="sig">×${r.seen_count}</span></td>
+      <td><span class="conf-badge ${r.confidence}">${r.confidence}</span></td>
+    </tr>`;
+  }).join('');
 }
 
 async function lock(band){

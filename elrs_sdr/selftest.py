@@ -358,6 +358,128 @@ def test_drone_classifier():
           video_score > 0.5, f"score={video_score:.2f}")
 
 
+def test_wifi_phy():
+    """Offline 802.11 PHY stage verification (Viterbi, PN23, OUI, frame parse).
+
+    These prove the *correct* parts of the Wi-Fi path work WITHOUT a capture.
+    The RF front-end (decode_beacon_mac) is validated only by a real capture;
+    we do not test it against fabricated IQ (that would be self-fulfilling).
+    """
+    import numpy as np
+    from . import wifi
+
+    print("\n== 802.11 PHY stages (offline) ==")
+    rng = np.random.default_rng(7)
+
+    # --- Viterbi CC 1/2 K=7 round-trip (the hard-coded FEC) ---
+    msg = (rng.integers(0, 2, 40)).astype(np.uint8)
+    coded = wifi._cc_encode_bits(msg)
+    decoded = wifi.viterbi_decode(coded)
+    check("Viterbi CC1/2 K=7 round-trips a clean codeword",
+          list(decoded) == list(msg),
+          f"got {list(decoded)} want {list(msg)}")
+
+    # Viterbi on a single-bit-flipped codeword should still recover (CC
+    # corrects single errors in most cases) — but not guaranteed for every
+    # position, so we just check it doesn't crash and stays close.
+    coded2 = coded.copy()
+    coded2[7] ^= 1
+    dec2 = wifi.viterbi_decode(coded2)
+    mismatches = int(np.sum(dec2 != msg))
+    check("Viterbi tolerates a single bit flip (corrects or near-corrects)",
+          mismatches <= 4, f"{mismatches} mismatched bits after 1 flip")
+
+    # --- PN23 scrambler is its own inverse (scramble then descramble = id) ---
+    bits = (rng.integers(0, 2, 64)).astype(np.uint8)
+    scrambled = wifi.pn23_descramble(bits)
+    check("PN23 keystream is nonzero and full-length",
+          len(scrambled) == 64 and scrambled.sum() > 0)
+    roundtrip = wifi.pn23_descramble(scrambled)
+    check("PN23 descramble is involutive (scramble twice = identity)",
+          list(roundtrip) == list(bits), "PN23 round-trip failed")
+
+    # --- OUI lookup ---
+    dji_mac = wifi.mac_to_bytes("147d53aabbcc")
+    check("DJI OUI maps to 'DJI'", wifi.mac_to_oui_vendor(dji_mac) == "DJI")
+    unknown_mac = wifi.mac_to_bytes("aabbccddeeff")
+    check("unknown OUI returns None (no fake vendor)",
+          wifi.mac_to_oui_vendor(unknown_mac) is None)
+
+    # --- frame parser: a synthetic beacon yields its BSSID ---
+    beacon = bytearray(24)
+    beacon[0:2] = (0x0080).to_bytes(2, "little")   # mgmt/beacon frame control
+    bssid = bytes.fromhex("a48e65123456")          # a DJI-ish MAC
+    beacon[10:16] = bssid                          # Source
+    beacon[16:22] = bssid                          # BSSID
+    got = wifi.parse_beacon_mac(bytes(beacon))
+    check("beacon frame-control 0x0080 -> BSSID extracted",
+          got == bssid, f"got {got.hex() if got else None}")
+    # a non-beacon (e.g. data frame fc=0x0008) must NOT parse
+    data_frame = bytearray(24)
+    data_frame[0:2] = (0x0008).to_bytes(2, "little")
+    check("non-beacon frame-control -> no MAC (None)",
+          wifi.parse_beacon_mac(bytes(data_frame)) is None)
+
+    # --- decode_beacon_mac returns None on junk (no fabricated MACs) ---
+    junk = (rng.standard_normal(512) + 1j * rng.standard_normal(512))
+    check("decode_beacon_mac returns None on random IQ (no fake MAC)",
+          wifi.decode_beacon_mac(junk, 20e6) is None)
+
+
+def test_detections_table():
+    """Offline check: the scanner's detections_table() + the webui table markup.
+
+    Drives a DroneScanner with a mock radio (a constant tone on 2.4 GHz) for
+    several steps and verifies: (1) the table has exactly one deduped row for
+    the 2.4 signal, (2) it carries all the columns the UI renders, (3) the
+    seen_count accumulates (persistence works), (4) the dashboard HTML actually
+    contains the table markup + view-switch JS.
+    """
+    import numpy as np
+    from .dronescan import DroneScanner
+    from . import webui
+
+    print("\n== detections table (offline) ==")
+
+    class MockRadio:
+        def __init__(self):
+            self.f = 0
+        def tune2(self, f, s, g):
+            self.f = f
+        def recv_block(self, buf, timeout):
+            t = np.arange(len(buf)) / 16e6
+            # a strong constant tone (static, not hopping) -> presence
+            buf[:] = (np.exp(2j * np.pi * 0.5e6 * t)).astype(np.complex64) * 80 \
+                + np.random.randn(len(buf)).astype(np.complex64)
+            return len(buf)
+
+    sc = DroneScanner(MockRadio(), dwell_s=0.001, dwell_per_band=1, lock="2.4")
+    for _ in range(4):
+        sc.step()
+    rows = sc.detections_table()
+    r24 = [r for r in rows if r["band"] == "2.4"]
+    check("detections_table returns exactly one deduped row for the 2.4 tone",
+          len(r24) == 1, f"got {len(r24)} rows: {[(r['band'], r['freq_mhz']) for r in r24]}")
+    if r24:
+        r = r24[0]
+        # all columns the UI renders must be present
+        need = {"band", "freq_mhz", "protocol", "make_model", "manufacturer",
+                "confidence", "strength_db", "type", "age_s", "seen_count"}
+        missing = need - set(r)
+        check("table row carries every column the UI renders",
+              not missing, f"missing {missing}")
+        check("seen_count accumulated across cycles (persistence)",
+              r["seen_count"] >= 4, f"seen_count={r['seen_count']}")
+        check("manufacturer is None for a non-Wi-Fi tone (no fake vendor)",
+              r["manufacturer"] is None, f"manufacturer={r['manufacturer']}")
+    # the dashboard must actually contain the table + view-switch wiring
+    html = webui.DASHBOARD
+    check("dashboard has the Detections view-tab", "vt-table" in html)
+    check("dashboard has the table body + setView + renderTable JS",
+          all(s in html for s in ("dettbody", "function setView", "function renderTable")))
+    check("dashboard Make/Model column header present", "Make / Model" in html)
+
+
 def main():
     print("elrs_sdr self-test\n===================")
     test_crc_vectors()
@@ -368,6 +490,8 @@ def main():
     test_fhss_lcg()
     test_lora_sync_detect()
     test_drone_classifier()
+    test_wifi_phy()
+    test_detections_table()
     print("\n===================")
     if FAILS:
         print(f"FAILED: {len(FAILS)} check(s): {FAILS}")
