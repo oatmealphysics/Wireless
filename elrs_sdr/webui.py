@@ -267,10 +267,44 @@ class _State:
 STATE = _State()
 
 
+def _quiet_uhd():
+    """Suppress UHD's INFO/WARNING log chatter (the per-retune clock/decimation
+    block floods the terminal). Best-effort across UHD versions — if the
+    binding doesn't expose a log-level setter, we set the env var and move on.
+    """
+    import os
+    # 1) env var (read by libuhd at init on some builds)
+    os.environ.setdefault("UHD_LOGGER_LEVEL", "ERROR")
+    try:
+        from . import uhd_bootstrap
+        uhd = uhd_bootstrap.load_uhd()
+    except Exception:
+        return
+    # 2) module-level setter (uhd.log.setLevel / uhd.set_log_level)
+    log_mod = getattr(uhd, "log", None)
+    if log_mod is not None:
+        for meth in ("setLevel", "set_level", "setLogLevel"):
+            fn = getattr(log_mod, meth, None)
+            if callable(fn):
+                for val in ("ERROR", 4, 3):
+                    try:
+                        fn(val); return
+                    except Exception:
+                        continue
+    fn = getattr(uhd, "set_log_level", None) or getattr(uhd, "setLogLevel", None)
+    if callable(fn):
+        for val in ("ERROR", 4, 3):
+            try:
+                fn(val); return
+            except Exception:
+                continue
+
+
 def _scan_loop():
     """Background thread: open the radio, run the scanner, update STATE."""
     import os
     try:
+        _quiet_uhd()
         from . import uhd_bootstrap
         uhd_bootstrap.load_uhd()
         from .radio import RadioDevice

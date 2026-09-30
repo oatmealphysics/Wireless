@@ -422,6 +422,8 @@ def cmd_dronescan(args):
     """
     _need_uhd()
     from . import dronescan as ds
+    from . import webui
+    webui._quiet_uhd()
     r = _open_radio(args)
     # which bands to scan
     wanted = None

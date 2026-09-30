@@ -52,7 +52,7 @@ BANDS: list[Band] = [
          wifi_channels=(2412e6, 2417e6, 2422e6, 2427e6, 2432e6,
                         2437e6, 2442e6, 2447e6, 2452e6, 2457e6, 2462e6)),
     Band("5.8",   "5.8 GHz (FPV video / 5GHz edge)",
-         5.725e9, 5.875e9, 6.0e6,
+         5.725e9, 5.875e9, 4.0e6,       # 4 Msps = even decimation (no CIC rolloff)
          wifi_channels=()),
     Band("sub1g", "700-900 MHz (LoRa/ELRS-LR/RC)",
          700e6, 900e6, 4.0e6,
@@ -259,13 +259,16 @@ class DroneScanner:
     """
 
     def __init__(self, radio, dwell_s: float = 0.15, lock: str | None = None,
-                 min_above_floor_db: float = 8.0, gain: float = 30.0):
+                 min_above_floor_db: float = 8.0, gain: float = 30.0,
+                 dwell_per_band: int = 3):
         self.radio = radio
         self.dwell_s = dwell_s
         self.min_db = min_above_floor_db
         self.gain = gain
+        self.dwell_per_band = max(1, dwell_per_band)
         self.locked_band = lock            # None = auto-cycle
         self._cycle_idx = 0
+        self._steps_on_band = 0
         self.states: dict[str, BandState] = {b.name: BandState(
             b.name, b.label, b.lo_hz, b.hi_hz) for b in BANDS}
         self._buf = np.zeros(4096, dtype=np.complex64)
@@ -282,6 +285,7 @@ class DroneScanner:
 
     def set_lock(self, band: str | None):
         self.locked_band = band
+        self._steps_on_band = 0          # reset dwell when (re)locking
 
     def step(self) -> dict:
         """Advance one observation. Returns the current state dict (for API)."""
@@ -293,15 +297,21 @@ class DroneScanner:
             self.radio.tune2(center, b.srate, self.gain)
             self.radio.recv_block(self._buf, 0.1)   # settle, discard
             self._tuned = name
+            self._steps_on_band = 0
         # grab a block
         cnt = self.radio.recv_block(self._buf, self.dwell_s)
         st = self.states[name]
         st.last_update = time.time()
         if cnt and cnt > 0:
             self._process_block(b, st, self._buf[:cnt])
-        # advance cycle if not locked
+        # advance cycle ONLY after dwelling on this band for N observations
+        # (not every step — re-tuning every step re-prints UHD's clock block
+        #  and never lets hop history / a stable detection accumulate)
         if not self.locked_band:
-            self._cycle_idx = (self._cycle_idx + 1) % len(CYCLE_ORDER)
+            self._steps_on_band += 1
+            if self._steps_on_band >= self.dwell_per_band:
+                self._cycle_idx = (self._cycle_idx + 1) % len(CYCLE_ORDER)
+                self._steps_on_band = 0
         return self.state_dict()
 
     def _process_block(self, b: Band, st: BandState, samples: np.ndarray):
