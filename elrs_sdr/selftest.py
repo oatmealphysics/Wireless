@@ -491,6 +491,36 @@ def test_wifi_phy():
     check("full L-SIG chain round-trips to a VALID L-SIG (24->CC->X->Viterbi)",
           ok_chain, f"chain failed: {why_chain}")
 
+    # --- 802.11 DATA front-end helpers (the finished decode_beacon_mac path) ---
+    # data interleaver (4x12, 20 MHz) is a permutation -> round-trips exactly
+    rngd = np.random.default_rng(13)
+    bits48 = rngd.integers(0, 2, 48).astype(np.uint8)
+    slots = wifi.data_interleave(bits48)
+    back48 = wifi.data_deinterleave(slots)
+    check("802.11 data interleaver is the exact inverse (round-trip)",
+          list(back48) == list(bits48), "data interleave round-trip failed")
+    check("data interleaver is a non-identity permutation (it actually shuffles)",
+          list(slots) != list(bits48), "data interleave is identity (no shuffle)")
+    # BPSK/QPSK decisions: the 802.11 bit->constellation convention
+    check("BPSK decision: bit 0 -> +1, bit 1 -> -1 (real part)",
+          wifi._bpsk_decide(complex(+1.0, 0)) == 0 and
+          wifi._bpsk_decide(complex(-1.0, 0)) == 1)
+    check("QPSK decision: (I,Q) -> (b0,b1), each 0->+1/1->-1",
+          wifi._qpsk_decide(complex(+1.0, +1.0)) == (0, 0) and
+          wifi._qpsk_decide(complex(-1.0, +1.0)) == (1, 0) and
+          wifi._qpsk_decide(complex(+1.0, -1.0)) == (0, 1) and
+          wifi._qpsk_decide(complex(-1.0, -1.0)) == (1, 1))
+    # the rate->mod map: 6/9/12/18/24 Mbps are BPSK/QPSK (the decodable set)
+    check("rate->mod map: 6 Mbps=BPSK, 9/12 Mbps=QPSK (the decodable rates)",
+          wifi._RATE_MOD[0] == ("bpsk", 1) and
+          wifi._RATE_MOD[1] == ("qpsk", 2) and
+          wifi._RATE_MOD[2] == ("qpsk", 2))
+    # the full decode_beacon_mac is a NO-OP on junk (never a fake MAC) — the
+    # L-SIG gate must refuse before any data demod
+    junk = (rngd.standard_normal(8192) + 1j * rngd.standard_normal(8192)).astype(np.complex64)
+    check("decode_beacon_mac is None on a larger noise block (L-SIG gate refuses)",
+          wifi.decode_beacon_mac(junk, 20e6) is None)
+
 
 def test_detections_table():
     """Offline check: the scanner's detections_table() + the webui table markup.
