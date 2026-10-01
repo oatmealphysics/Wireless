@@ -93,22 +93,24 @@ def wifi24_freq(ch: int) -> float:
         return 2484.0e6
     raise ValueError(f"invalid 2.4 GHz channel {ch} (1-14)")
 
-# 5 GHz: ch N (36-177) = 5180 + 5*(N-36) MHz  (ch 36 = 5180, ch 100 = 5500,
-# ch 149 = 5745)
+# 5 GHz: ch N (36-199) = 5180 + 5*(N-36) MHz  (ch 36 = 5180, ch 100 = 5500,
+# ch 149 = 5745, ch 165 = 5825, ch 177 = 5885)
 def wifi5_freq(ch: int) -> float:
-    """5 GHz Wi-Fi channel center (Hz). ch 36-177 -> 5180 + 5*(N-36) MHz."""
-    if 36 <= ch <= 177:
+    """5 GHz Wi-Fi channel center (Hz). ch 36-199 -> 5180 + 5*(N-36) MHz.
+    Covers UNII-1/2a/2b/3 plus the 5.8 GHz FPV/unlicensed band (ch 149-177 =
+    5745-5885 MHz)."""
+    if 36 <= ch <= 199:
         return (5180.0 + 5.0 * (ch - 36)) * 1e6
-    raise ValueError(f"invalid 5 GHz channel {ch} (36-177)")
+    raise ValueError(f"invalid 5 GHz channel {ch} (36-199)")
 
 def wifi_channel_freq(ch: int) -> float:
     """Map a Wi-Fi channel number to its center frequency (Hz).
-    1-14 -> 2.4 GHz band, 36-177 -> 5 GHz band (airodump-style)."""
+    1-14 -> 2.4 GHz band, 36-199 -> 5 GHz / 5.8 GHz band (airodump-style)."""
     if 1 <= ch <= 14:
         return wifi24_freq(ch)
-    if 36 <= ch <= 177:
+    if 36 <= ch <= 199:
         return wifi5_freq(ch)
-    raise ValueError(f"unknown Wi-Fi channel {ch} (use 1-14 or 36-177)")
+    raise ValueError(f"unknown Wi-Fi channel {ch} (use 1-14 or 36-199)")
 
 # The 2.4 GHz channels worth scanning (non-overlapping + the rest). airodump
 # defaults to 1,6,11; we scan all 1-13 for completeness (fast at low dwell).
