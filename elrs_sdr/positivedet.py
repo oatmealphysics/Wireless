@@ -159,11 +159,17 @@ def ofdm_preamble(iq: np.ndarray, srate: float) -> tuple[float, str]:
         m_peak = min(1.0, float(m_peak))
         m_off = min(1.0, float(m_at(int(tau * 1.25))))
         sharp = m_peak / (m_off + 1e-9)
+        # A real 802.11 L-STF is 10 IDENTICAL short symbols -> M near 1.0 at
+        # the symbol period AND very sharp (the metric drops off a cliff just
+        # past the period). Broadband noise / a wideband blob gives M ~ 0.3-0.7
+        # with low sharpness and it FLICKERS block-to-block, which was creating
+        # spurious "Wi-Fi/OFDM" rows on the 2026-10-01 laptop capture. So
+        # require a strong M AND a sharp peak before scoring.
         score = 0.0
-        if m_peak > 0.4:
-            score += 0.6 * min(1.0, (m_peak - 0.4) / 0.4)
-        if sharp > 1.5:
-            score += 0.4 * min(1.0, (sharp - 1.5) / 3.0)
+        if m_peak > 0.6:
+            score += 0.6 * min(1.0, (m_peak - 0.6) / 0.4)
+        if sharp > 2.0:
+            score += 0.4 * min(1.0, (sharp - 2.0) / 3.0)
         if score > best:
             best = score
             best_label = label
@@ -284,16 +290,33 @@ def fhss_hop(freq_track: list[float]) -> tuple[float, str]:
     f = np.array(freq_track, dtype=np.float64)
     q = np.round(f / 500_000.0).astype(int)
     distinct = int(len(np.unique(q)))
-    if distinct < 2:
-        return 0.0, "single_freq"
+    # A real FHSS link hops among SEVERAL discrete frequencies (FrSky, ELRS
+    # non-LoRa, etc. use 5-10+). Just 2-3 frequencies is a drifting/bipolar
+    # carrier or broadband interference, NOT hopping — the 2026-10-01 laptop
+    # capture showed "2freqs reg=0.5" firing on noise, so require >=4.
+    if distinct < 4:
+        return 0.0, f"{distinct}freqs (need >=4 for real FHSS)"
     if distinct > 16:
         return 0.0, f"{distinct} freqs (too many)"
     counts = np.bincount(q - q.min())
-    mean_c = counts.mean()
-    reg = max(0.0, 1.0 - (counts.std() / (mean_c + 1e-9)))
+    # regularity over the OCCUPIED bins only (the distinct freqs that appear).
+    # bincount pads with zeros across the full frequency span, and including
+    # those empty bins would drown the regularity (mean/std dominated by
+    # zeros) — a real 8-freq hop spread over 480 500-kHz bins would read
+    # reg=0 otherwise.
+    occ = counts[counts > 0]
+    mean_c = occ.mean()
+    reg = max(0.0, 1.0 - (occ.std() / (mean_c + 1e-9)))
+    # Both gates must hold: enough distinct freqs AND a regular cadence. A
+    # broadband blob wanders among a few freqs with LOW regularity (reg~0.5);
+    # a real hop pattern is regular (reg > 0.6).
     score = 0.0
-    score += 0.5 * min(1.0, distinct / 4.0)
-    score += 0.5 * reg
+    score += 0.5 * min(1.0, (distinct - 3) / 5.0)      # 4->0, 9+->full
+    if reg > 0.6:
+        score += 0.5 * min(1.0, (reg - 0.6) / 0.4)
+    # if the cadence isn't regular, do NOT claim FHSS even if freqs are distinct
+    if reg <= 0.6:
+        score = 0.0
     return min(1.0, score), f"{distinct}freqs reg={reg:.2f}"
 
 

@@ -248,8 +248,10 @@ def test_drone_classifier():
     """Offline classifier verification: synthetic RF signatures must classify
     correctly. This proves the detection logic WITHOUT a radio (the operator
     is not our oracle for the classifier)."""
+    import inspect
     import numpy as np
     from . import dronescan as ds
+    from .dronescan import DroneScanner
 
     print("\n== drone classifier (offline synthetic fixtures) ==")
     rng = np.random.default_rng(1234)
@@ -337,6 +339,33 @@ def test_drone_classifier():
         hops.append(mini._track_hop("2.4", freqs, presence, pwrdb))
     check("FHSS hopping fixture detected as hopping across cycles",
           any(hops), f"hop flags={hops}")
+
+    # --- 3b) FHSS/OFDM noise-rejection (regression: the 2026-10-01 laptop
+    #         capture showed "2freqs reg=0.5" and "3freqs reg=0.29" firing as
+    #         spurious FHSS, and OFDM timing flickering on broadband noise.
+    #         These must be rejected; a real multi-freq regular hop must work.) ---
+    from . import positivedet as _pd
+    # 2 distinct freqs, alternating (the user's spurious "2freqs reg=0.5")
+    f2 = [2.40e9, 2.42e9] * 12
+    check("FHSS rejects a 2-frequency signal (not a real hop)",
+          _pd.fhss_hop(f2)[0] < 0.5, f"score={_pd.fhss_hop(f2)[0]:.2f}")
+    # 3 distinct freqs, irregular (the user's "3freqs reg=0.29")
+    f3 = [2.4e9 + (k % 3) * 10e6 for k in range(30)]
+    check("FHSS rejects a 3-frequency signal (not a real hop)",
+          _pd.fhss_hop(f3)[0] < 0.5, f"score={_pd.fhss_hop(f3)[0]:.2f}")
+    # real 8-freq regular hop -> must still fire (reg calc over occupied bins)
+    freqs8 = [2.4e9 + k * 20e6 for k in range(8)]
+    hops8 = [freqs8[k] for rep in range(20) for k in range(8)]
+    check("FHSS still detects a real 8-freq regular hop",
+          _pd.fhss_hop(hops8)[0] >= 0.5, f"score={_pd.fhss_hop(hops8)[0]:.2f}")
+    # OFDM: the Schmidl-Cox timing metric saturates to M~1.0 for white noise /
+    # any stationary signal, so the DETECTOR alone can't reject it (it returns
+    # a score). The PROTECTION is in the classifier: it only claims a Wi-Fi row
+    # when the L-SIG validated, never on timing alone. Verify that gate.
+    check("OFDM classifier requires the L-SIG (timing alone must NOT claim)",
+          "st.lsig_valid" in inspect.getsource(DroneScanner._classify_positive)
+          and "ofdm_score >= self._OFDM_CLAIM" not in inspect.getsource(
+              DroneScanner._classify_positive))
 
     # --- 4) Analog video (5.8): a WIDE, CONSTANT occupied band (analog
     #        FPV video, several MHz wide, present every cycle). ---

@@ -735,25 +735,21 @@ class DroneScanner:
             candidates.append((lora_score, "lora",
                                "LoRa (ELRS / Meshtastic / sub-1G telemetry)",
                                True, lora_metric))
-        # 802.11 / OFDM: claimed when there's OFDM structure (timing) OR a
-        # valid L-SIG (the strongest signal — a valid L-SIG implies OFDM).
-        # CONFIRMED 802.11 when the L-SIG validated; UNCONFIRMED OFDM when only
-        # timing is present. Same row model as ELRS/LoRa.
-        ofdm_claims = (ofdm_score >= self._OFDM_CLAIM) or st.lsig_valid
-        if ofdm_claims:
-            if st.lsig_valid:
-                proto = ("Wi-Fi / 802.11 (DJI / consumer / FPV-WiFi)  "
-                         f"L-SIG rate={st.lsig_rate} len={st.lsig_len}")
-                metric = (f"OFDM M={ofdm_metric} + 802.11 L-SIG valid "
-                          f"(rate={st.lsig_rate}, len={st.lsig_len})")
-                confirmed = True
-                score = 1.0          # a valid L-SIG is the strongest claim
-            else:
-                proto = "Wi-Fi / OFDM (DJI / consumer / FPV-WiFi)"
-                metric = f"OFDM timing {ofdm_metric} (L-SIG: {lsig['detail']})"
-                confirmed = False
-                score = ofdm_score
-            candidates.append((score, "ofdm", proto, confirmed, metric))
+        # 802.11 / OFDM: the Schmidl-Cox timing metric ALONE is NOT a reliable
+        # discriminator — it saturates to M~1.0 for white noise / any
+        # stationary signal (verified against real captures), so timing alone
+        # would claim "Wi-Fi/OFDM" on broadband interference. The POSITIVE 802.11
+        # confirmation is the decoded + validated L-SIG (Rate/Length/Parity/
+        # Tail). So: only claim a Wi-Fi row when the L-SIG validated. The
+        # timing score is kept diagnostic (shown in the metric) but never
+        # claims on its own. This is the "positive ID only, no default-binning"
+        # principle: no L-SIG -> no Wi-Fi claim -> "Unidentified RF".
+        if st.lsig_valid:
+            proto = ("Wi-Fi / 802.11 (DJI / consumer / FPV-WiFi)  "
+                     f"L-SIG rate={st.lsig_rate} len={st.lsig_len}")
+            metric = (f"802.11 L-SIG valid (rate={st.lsig_rate}, len={st.lsig_len}) "
+                      f"OFDM M={ofdm_metric}")
+            candidates.append((1.0, "ofdm", proto, True, metric))
         # DJI OcuSync / Lightbridge: proprietary OFDM with a DISTINCT symbol
         # period (~2 us) vs 802.11 (~4 us). Claimed on the OFDM bands (2.4 /
         # 5 GHz) when the OcuSync PHY detector fires AND the 802.11 L-SIG did
