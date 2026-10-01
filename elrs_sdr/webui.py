@@ -58,6 +58,11 @@ DASHBOARD = r"""<!DOCTYPE html>
   .pausebtn.paused { background:#3a2f12; color:#ffd27c; border-color:#7a5a1a; }
   .pauseflag { margin:0 14px 8px; padding:6px 10px; background:#3a2f12; color:#ffd27c;
                border:1px solid #7a5578; border-radius:6px; font-size:12px; font-weight:600; }
+  .capresult { margin:0 14px 8px; padding:8px 10px; background:#12281a; color:#9fe8b4;
+               border:1px solid #2b6b3a; border-radius:6px; font-size:12px; line-height:1.5; }
+  .capresult code { background:#0d1a12; padding:1px 5px; border-radius:4px;
+                    font-family:monospace; color:#c8f5d4; }
+  .capresult.err { background:#2a1414; color:#ffb4b4; border-color:#7a2a2a; }
   .table-head h2 { margin:0; }
   .win-label { font-size:12px; color:#7fa8c9; display:flex; align-items:center; gap:6px; }
   .win-label select { background:#0d141b; color:#cdd6df; border:1px solid #223243;
@@ -152,8 +157,20 @@ DASHBOARD = r"""<!DOCTYPE html>
         </label>
         <button id="pausebtn" class="pausebtn" onclick="togglePause()"
           title="Freeze the table so you can select + copy rows (Space also toggles)">⏸ Pause</button>
+        <label class="win-label" title="Save raw baseband IQ on this band to open in GNU Radio / SDR++ / IQT (and to send back to tune the detectors)">
+          <select id="capband">
+            <option value="2.4">2.4</option>
+            <option value="5.8">5.8</option>
+            <option value="5ghz">5 GHz</option>
+            <option value="sub1g">sub1g</option>
+            <option value="1.2">1.2</option>
+            <option value="433">433</option>
+          </select>
+          <button id="capbtn" class="pausebtn" onclick="captureRaw()">💾 Save IQ</button>
+        </label>
         </div>
       </div>
+      <div id="capresult" class="capresult" hidden></div>
       <div id="pauseflag" class="pauseflag" hidden>⏸ PAUSED — table frozen for copy/paste (press Space or Resume to resume)</div>
       <div class="table-scroll">
         <table class="dets">
@@ -378,6 +395,36 @@ document.addEventListener('keydown', (e) => {
   if(e.code === 'Space'){ e.preventDefault(); togglePause(); }
   else if(e.key === 'Escape' && paused){ togglePause(); }
 });
+
+// ---- Save raw IQ (open in GNU Radio / SDR++ / IQT; or send back to tune) ----
+async function captureRaw(){
+  const band = el('capband').value;
+  const btn = el('capbtn');
+  const out = el('capresult');
+  btn.disabled = true; btn.textContent = '⏳ Capturing…';
+  out.hidden = false; out.classList.remove('err');
+  out.textContent = `Recording ~3s of raw IQ on ${band}…`;
+  try{
+    const r = await fetch('/api/capture', {method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({band: band, seconds: 3})});
+    const d = await r.json();
+    if(d.error){ out.classList.add('err'); out.textContent = 'error: '+d.error; return; }
+    const p = d.paths || {};
+    out.innerHTML =
+      `✓ Saved <b>${d.n_samples}</b> IQ samples on ${d.band} ` +
+      `@ ${(d.srate/1e6).toFixed(2)} MS/s → <code>${p.cf32}</code><br>` +
+      `Open <code>.cf32</code> in <b>GNU Radio</b> (IQ File Source, complex, ` +
+      `sample_rate=${(d.srate/1e6).toFixed(2)}e6) or <b>SDR++</b> / <b>IQT</b>.<br>` +
+      `Also saved <code>${p.complex8}</code> (for ` +
+      `<code>elrs-sdr validate</code>) + <code>${p.meta}</code> (metadata).<br>` +
+      `<span class="sig">Send these files back to tune the protocol detectors.</span>`;
+  }catch(e){
+    out.classList.add('err'); out.textContent = 'capture failed: '+e;
+  }finally{
+    btn.disabled = false; btn.textContent = '💾 Save IQ';
+  }
+}
 </script>
 </body>
 </html>
@@ -547,6 +594,35 @@ def make_handler():
                 if STATE.scanner is not None:
                     STATE.last_state = STATE.scanner.state_dict()
                 self._json({"ok": True, "locked_band": band})
+            elif self.path == "/api/capture":
+                # Save raw baseband IQ on a band (CF32 + .complex8 + .meta) so
+                # the user can open it in GNU Radio / SDR++ / IQT, and so they
+                # can send it back to tune the ID detectors.
+                n = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(n) if n else b"{}"
+                try:
+                    req = json.loads(body or b"{}")
+                except Exception:
+                    req = {}
+                band = req.get("band") or STATE.locked or "2.4"
+                if band not in {b.name for b in dronescan.BANDS}:
+                    self._json({"error": f"unknown band {band!r}"}, 400)
+                    return
+                secs = req.get("seconds", 3.0)
+                try:
+                    secs = float(secs)
+                except Exception:
+                    secs = 3.0
+                out_dir = req.get("out_dir") or "."
+                if STATE.scanner is None:
+                    self._json({"error": "scanner not running"}, 503)
+                    return
+                try:
+                    result = STATE.scanner.capture_raw(band, secs, out_dir)
+                except Exception as e:
+                    self._json({"error": f"capture failed: {e!r}"}, 500)
+                    return
+                self._json(result)
             elif self.path == "/api/window":
                 n = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(n) if n else b"{}"

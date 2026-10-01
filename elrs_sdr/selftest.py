@@ -626,6 +626,21 @@ def test_detections_table():
           "function togglePause" in html and "if(!paused){ render(); }" in html)
     check("Space key toggles pause (copy/paste shortcut)",
           "e.code === 'Space'" in html)
+    # (save raw IQ feature): a Save-IQ button captures baseband IQ on a band
+    # and writes it in CF32 (GNU Radio / SDR++ / IQT) + complex8 + meta, so the
+    # user can look at the drone protocol data and send it back to tune.
+    check("dashboard has a Save-IQ button (raw signal capture)",
+          'id="capbtn"' in html and "Save IQ" in html)
+    check("dashboard has a capture band selector", 'id="capband"' in html)
+    check("captureRaw() JS posts to /api/capture",
+          "function captureRaw" in html and "/api/capture" in html)
+    from . import radio as _radio
+    check("radio.write_cf32 exists (GNU Radio / SDR++ / IQT format)",
+          hasattr(_radio, "write_cf32"))
+    check("radio.write_capture_bundle writes CF32 + complex8 + meta",
+          hasattr(_radio, "write_capture_bundle"))
+    check("DroneScanner has capture_raw() (the live raw-IQ save)",
+          hasattr(DroneScanner, "capture_raw"))
     check("dashboard table labeled as all-bands", "(all bands)" in html)
     check("dashboard has no view-tabs anymore (table always visible)",
           "vt-table" not in html and "viewtabs" not in html)

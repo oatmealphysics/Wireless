@@ -401,6 +401,49 @@ class DroneScanner:
             "confirmed": confirmed, "protocol": protocol,
         }
 
+    def capture_raw(self, band_name: str, seconds: float = 3.0,
+                    out_dir: str = ".") -> dict:
+        """Record `seconds` of raw baseband IQ on `band_name` and save it in
+        every useful format (CF32 for GNU Radio/SDR++/IQT, .complex8 for our
+        `validate`, + a .meta.txt sidecar). This is the "save the raw signal so
+        I can look at the drone protocol data" path.
+
+        Returns {ok, paths:{cf32,complex8,meta}, band, srate, n_samples,
+        center_hz, out_dir} or {ok:False, error:...} on failure.
+        """
+        from . import radio as _radio
+        b = band_by_name(band_name)
+        seconds = max(0.5, min(30.0, float(seconds)))
+        center = (b.lo_hz + b.hi_hz) / 2.0
+        buf = np.zeros(4096, dtype=np.complex64)
+        chunks = []
+        t_end = time.monotonic() + seconds
+        try:
+            self.radio.tune2(center, b.srate, self.gain)
+            self.radio.recv_block(buf, 0.1)   # settle, discard
+            while time.monotonic() < t_end:
+                cnt = self.radio.recv_block(buf, 0.5)
+                if cnt:
+                    chunks.append(buf[:cnt].copy())
+        except Exception as e:
+            return {"ok": False, "error": f"capture failed: {e!r}"}
+        if not chunks:
+            return {"ok": False, "error": "no samples captured"}
+        samples = np.concatenate(chunks)
+        # timestamped base path so captures don't collide
+        import os
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        base = os.path.join(out_dir, f"elrs_{band_name}_{stamp}")
+        try:
+            paths = _radio.write_capture_bundle(
+                samples, base, b.srate, band_name, center,
+                note="live webui raw capture")
+        except Exception as e:
+            return {"ok": False, "error": f"write failed: {e!r}"}
+        return {"ok": True, "paths": paths, "band": band_name,
+                "srate": b.srate, "n_samples": len(samples),
+                "center_hz": center, "out_dir": out_dir}
+
     def _lsig_scan(self, samples: np.ndarray, srate: float,
                    max_offsets: int = 256) -> dict:
         """Brute-force wifi.demod_lsig across offsets to find a valid 802.11
