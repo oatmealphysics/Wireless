@@ -645,6 +645,40 @@ def test_detections_table():
     # the confirm-button UI must be GONE (the user wants 802.11 as a normal row)
     check("no separate 'Confirm 802.11' button in the UI (802.11 is a row)",
           "cfbtn" not in html and "confirm80211" not in html)
+    # (8) Extended protocol catalog (scope A): the full band set, the OcuSync
+    #     PHY detector, the corrected LoRa family label, and the honest
+    #     "MAVLink/Meshtastic are payload-layer, not RF-ID-able" note.
+    from . import positivedet as pd
+    band_names = {b.name for b in ds.BANDS}
+    check("band list includes the 1.2 GHz legacy-video band",
+          "1.2" in band_names, f"bands={band_names}")
+    check("band list includes the 5 GHz OcuSync band",
+          "5ghz" in band_names, f"bands={band_names}")
+    check("CYCLE_ORDER sweeps all six bands",
+          set(ds.CYCLE_ORDER) == {"2.4", "5.8", "5ghz", "sub1g", "1.2", "433"},
+          f"order={ds.CYCLE_ORDER}")
+    check("OcuSync PHY detector exists in positivedet",
+          hasattr(pd, "ocusync_phy"))
+    # the OcuSync detector runs without error on a noise + an OFDM-like fixture
+    # and returns a (score, metric) tuple with score in [0,1]
+    rng = np.random.default_rng(11)
+    noise = (rng.standard_normal(8192) + 1j * rng.standard_normal(8192)).astype(np.complex64)
+    ocus_s, ocus_m = pd.ocusync_phy(noise, 4e6)
+    check("OcuSync detector runs on noise without error (score in [0,1])",
+          isinstance(ocus_s, float) and 0.0 <= ocus_s <= 1.0,
+          f"score={ocus_s!r}")
+    check("OcuSync detector is UNCONFIRMED in the classifier (confirmed=False)",
+          "DJI OcuSync / Lightbridge" in inspect.getsource(DroneScanner._classify_positive)
+          and inspect.getsource(DroneScanner._classify_positive).count(
+              "DJI OcuSync / Lightbridge (proprietary OFDM)\"") >= 1)
+    # the LoRa label is the FAMILY (not "ELRS" alone) so Meshtastic isn't
+    # mislabeled, and the UI hint explains MAVLink/Meshtastic are payload-layer
+    check("LoRa row is labeled as the family (ELRS/Meshtastic/sub-1G), not 'ELRS' alone",
+          "ELRS / Meshtastic / sub-1G telemetry" in inspect.getsource(DroneScanner._classify_positive))
+    check("UI hint marks MAVLink/Meshtastic as payload-layer (not RF-ID-able)",
+          "MAVLink" in html and "Meshtastic" in html and "payload" in html.lower())
+    check("UI hint mentions OcuSync is UNCONFIRMED until capture-validated",
+          "OcuSync" in html and "UNCONFIRMED" in html)
 
 
 def main():

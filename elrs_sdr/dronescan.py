@@ -50,23 +50,31 @@ class Band:
     wifi_channels: tuple = ()
 
 BANDS: list[Band] = [
-    Band("2.4",   "2.4 GHz (ELRS/FrSky/Wi-Fi)",
+    Band("2.4",   "2.4 GHz (ELRS/FrSky/Wi-Fi/OcuSync)",
          2.400e9, 2.480e9, 4.0e6,
          wifi_channels=(2412e6, 2417e6, 2422e6, 2427e6, 2432e6,
                         2437e6, 2442e6, 2447e6, 2452e6, 2457e6, 2462e6)),
-    Band("5.8",   "5.8 GHz (FPV video / 5GHz edge)",
+    Band("5.8",   "5.8 GHz (FPV analog video / 5GHz edge)",
          5.725e9, 5.875e9, 4.0e6,       # 4 Msps = even decimation (no CIC rolloff)
+         wifi_channels=()),
+    Band("5ghz",  "5 GHz (DJI OcuSync O3/O4 / Lightbridge)",
+         5.150e9, 5.350e9, 4.0e6,
          wifi_channels=()),
     Band("sub1g", "700-900 MHz (LoRa/ELRS-LR/RC)",
          700e6, 900e6, 4.0e6,
+         wifi_channels=()),
+    Band("1.2",   "1.2 GHz (legacy FPV analog video)",
+         1.240e9, 1.300e9, 4.0e6,
          wifi_channels=()),
     Band("433",   "433 MHz (old FHSS/telemetry)",
          425e6, 440e6, 2.0e6,
          wifi_channels=()),
 ]
 
-# Order the auto-cycle sweeps in (2.4 first — highest drone relevance)
-CYCLE_ORDER = ["2.4", "5.8", "sub1g", "433"]
+# Order the auto-cycle sweeps in (2.4 first — highest drone relevance). The
+# new bands (5 GHz OcuSync, 1.2 GHz legacy video) are added so the full
+# protocol catalog is covered.
+CYCLE_ORDER = ["2.4", "5.8", "5ghz", "sub1g", "1.2", "433"]
 
 
 def band_by_name(name: str) -> Band:
@@ -594,6 +602,9 @@ class DroneScanner:
     _OFDM_CLAIM = 0.6      # Schmidl-Cox M peak (synthetic-calibrated)
     _VIDEO_CLAIM = 0.6     # line-rate prominence (synthetic-calibrated)
     _FHSS_CLAIM = 0.5      # discrete-freq hopping regularity (synthetic-calib)
+    _OCUSYNC_CLAIM = 0.6   # OcuSync PHY (distinct ~2us OFDM symbol period),
+                           #   synthetic-calibrated — UNCONFIRMED until a real
+                           #   OcuSync capture validates the symbol period.
 
     def _classify_positive(self, b, st, samples, freqs, db, presence,
                            peak_freq) -> Detection:
@@ -652,8 +663,14 @@ class DroneScanner:
         # candidate claimants: (score, signature, protocol, confirmed, metric)
         candidates = []
         if lora_score >= self._LORA_CLAIM:
+            # LoRa is a PHYSICAL-LAYER family: ELRS, Meshtastic, and sub-1G
+            # LoRa telemetry are ALL LoRa (the distinction is payload, not RF).
+            # We label it as the family, not "ELRS," so we don't mislabel
+            # Meshtastic. (Payload-level Meshtastic/MAVLink ID is a separate,
+            # capture-gated demod pipeline — not an RF signature.)
             candidates.append((lora_score, "lora",
-                               "ELRS-family LoRa (2.4/868/915)", True, lora_metric))
+                               "LoRa (ELRS / Meshtastic / sub-1G telemetry)",
+                               True, lora_metric))
         # 802.11 / OFDM: claimed when there's OFDM structure (timing) OR a
         # valid L-SIG (the strongest signal — a valid L-SIG implies OFDM).
         # CONFIRMED 802.11 when the L-SIG validated; UNCONFIRMED OFDM when only
@@ -673,9 +690,23 @@ class DroneScanner:
                 confirmed = False
                 score = ofdm_score
             candidates.append((score, "ofdm", proto, confirmed, metric))
-        if b.name == "5.8" and video_score >= self._VIDEO_CLAIM:
+        # DJI OcuSync / Lightbridge: proprietary OFDM with a DISTINCT symbol
+        # period (~2 us) vs 802.11 (~4 us). Claimed on the OFDM bands (2.4 /
+        # 5 GHz) when the OcuSync PHY detector fires AND the 802.11 L-SIG did
+        # NOT validate (OcuSync is OFDM but not 802.11). UNCONFIRMED until a
+        # real OcuSync capture validates the symbol period + preamble.
+        if b.name in ("2.4", "5ghz") and not st.lsig_valid:
+            ocus_score, ocus_metric = positivedet.ocusync_phy(samples, b.srate)
+            if ocus_score >= self._OCUSYNC_CLAIM:
+                candidates.append((ocus_score, "ocusync",
+                                   "DJI OcuSync / Lightbridge (proprietary OFDM)",
+                                   False, ocus_metric))
+        # Analog FPV video: wide, constant, line-rate-modulated AM. Fires on
+        # BOTH the 5.8 GHz and the 1.2 GHz legacy-video bands.
+        if b.name in ("5.8", "1.2") and video_score >= self._VIDEO_CLAIM:
             candidates.append((video_score, "video",
-                               "Analog FPV video (5.8 GHz)", False, video_metric))
+                               f"Analog FPV video ({b.label.split()[0]} GHz)",
+                               False, video_metric))
         if fhss_score >= self._FHSS_CLAIM and presence.sum() > 4:
             candidates.append((fhss_score, "fhss",
                                "FHSS wideband (FrSky-family / generic)",

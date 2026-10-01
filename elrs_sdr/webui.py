@@ -175,10 +175,17 @@ DASHBOARD = r"""<!DOCTYPE html>
       <i>own</i> detector fires — nothing is default-binned by elimination.
       <span class="status-badge confirmed">CONFIRMED</span> = capture-validated detector
       (LoRa chirp). <span class="status-badge unconfirmed">UNCONFIRMED</span> = correct
-      structure but synthetic-calibrated threshold (OFDM / analog video / FHSS) — the
-      Detector-metric column shows the raw number a real capture can tune. To confirm an
-      UNCONFIRMED protocol, run <code>python3 -m elrs_sdr capture --band 2.4</code> with the
-      signal present; the saved IQ tunes that detector's threshold.
+      structure but synthetic-calibrated threshold (802.11 OFDM / OcuSync / analog video /
+      FHSS) — the Detector-metric column shows the raw number a real capture can tune. To
+      confirm an UNCONFIRMED protocol, run <code>python3 -m elrs_sdr capture --band 2.4</code>
+      with the signal present; the saved IQ tunes that detector's threshold.
+      <br><b>Not RF-identifiable:</b> <b>MAVLink</b> and <b>Meshtastic</b> have no RF
+      signature of their own — they are application-layer payloads that ride on a physical
+      layer (LoRa, 2.4 GHz, Wi-Fi). The tool shows the <i>physical layer</i> they're on
+      (e.g. "LoRa"), but telling "this LoRa is Meshtastic" or "this link carries MAVLink"
+      requires demodulating that layer and parsing the payload — a separate, capture-gated
+      pipeline, not an RF detector. OcuSync / Lightbridge are detected at the PHY level
+      (distinct OFDM symbol period) but are UNCONFIRMED until a real capture validates it.
       <b>Click a column header to sort</b> (click again to flip direction); the arrow
       shows the active sort.</div>
   </section>
