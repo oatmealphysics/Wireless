@@ -616,6 +616,16 @@ def test_detections_table():
     check("dashboard table has a MAC column (Wi-Fi BSSID/Source MAC)",
           'data-col="mac"' in html and "MAC" in html)
     check("dashboard row template renders the MAC cell", "r.mac" in html)
+    # (pause feature): a Pause/Resume button freezes the table for copy/paste —
+    # the button + banner are in the HTML, togglePause() is in the JS, and
+    # poll() skips render() while paused so the DOM stays selectable.
+    check("dashboard has a Pause button (freeze table for copy/paste)",
+          'id="pausebtn"' in html and "Pause" in html)
+    check("dashboard has a PAUSED banner", 'id="pauseflag"' in html and "PAUSED" in html)
+    check("togglePause() JS freezes the table (poll skips render when paused)",
+          "function togglePause" in html and "if(!paused){ render(); }" in html)
+    check("Space key toggles pause (copy/paste shortcut)",
+          "e.code === 'Space'" in html)
     check("dashboard table labeled as all-bands", "(all bands)" in html)
     check("dashboard has no view-tabs anymore (table always visible)",
           "vt-table" not in html and "viewtabs" not in html)
