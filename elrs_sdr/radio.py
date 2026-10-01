@@ -561,27 +561,58 @@ class RadioDevice:
                 yield buf[:count].copy()
 
     def capture(self, n_samples: int, path: str | None = None,
-                ctype: str = "fc32", log_every: int = 1 << 20):
+                ctype: str = "fc32", log_every: int = 1 << 20,
+                save_partial: bool = True):
         """Capture a fixed number of IQ samples. Returns np.complex64.
 
-        If `path` is given, also writes a .complex8 file (SDR#, GQRtx format).
+        If `path` is given, writes a .complex8 file (SDR#, GQRtx format).
+        If Ctrl-C (KeyboardInterrupt) is received, and `save_partial` is True,
+        the samples captured SO FAR are written to `path` instead of being
+        discarded — so a long capture interrupted by the user still yields a
+        usable file. A warning is printed if the actual sample rate falls far
+        below the configured rate (e.g. USB 2.0 bandwidth limiting a high
+        requested rate), because that stretches the frequency/time scaling.
         """
         stream = self._open_rx_stream()
         out = np.empty(n_samples, dtype=np.complex64)
         got = 0
         buf = np.zeros(min(4096, n_samples), dtype=np.complex64)
         t0 = time.time()
-        while got < n_samples:
-            n = self._recv(stream, buf, 0.5)
-            if n == 0:
-                continue
-            take = min(n, n_samples - got)
-            out[got:got + take] = buf[:take]
-            got += take
-            if (got // log_every) != ((got - take) // log_every):
-                rate = got / max(time.time() - t0, 1e-9)
-                print(f"  captured {got}/{n_samples} @ {rate/1e6:.2f} MS/s",
-                      flush=True)
+        # warn if the sustained rate is far below the configured sample rate
+        configured_srate = getattr(self, "_sample_rate", 0.0)
+        warned_rate = False
+        try:
+            while got < n_samples:
+                n = self._recv(stream, buf, 0.5)
+                if n == 0:
+                    continue
+                take = min(n, n_samples - got)
+                out[got:got + take] = buf[:take]
+                got += take
+                if (got // log_every) != ((got - take) // log_every):
+                    rate = got / max(time.time() - t0, 1e-9)
+                    print(f"  captured {got}/{n_samples} @ {rate/1e6:.2f} MS/s",
+                          flush=True)
+                    # one-time warning if the actual rate is <80% of configured
+                    if (not warned_rate and got > 2 * log_every
+                            and configured_srate and rate < 0.8 * configured_srate):
+                        print(f"  !! WARNING: actual rate {rate/1e6:.2f} MS/s is below "
+                              f"configured {configured_srate/1e6:.2f} MS/s "
+                              f"(likely USB 2.0 bandwidth limit). The capture is "
+                              f"frequency/time-stretched by ~"
+                              f"{configured_srate/max(rate,1e-9):.2f}x. Use a lower "
+                              f"--srate (e.g. 8e6) for accurate scaling.", flush=True)
+                        warned_rate = True
+        except KeyboardInterrupt:
+            print(f"\n  interrupted at {got}/{n_samples} samples", flush=True)
+            if got == 0:
+                print("  (nothing captured)", flush=True)
+                return out[:0]
+            out = out[:got]
+            if path and save_partial:
+                _write_complex8(out, path)
+                print(f"  wrote PARTIAL capture: {path} ({got} samples)", flush=True)
+            return out
         if path:
             _write_complex8(out, path)
             print(f"  wrote {path}", flush=True)
