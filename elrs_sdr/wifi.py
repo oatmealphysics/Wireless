@@ -241,6 +241,13 @@ def mac_to_bytes(hexstr: str) -> bytes:
     return bytes.fromhex(h)
 
 
+def mac_to_str(mac: bytes | None) -> str | None:
+    """6-byte MAC -> 'aa:bb:cc:dd:ee:ff' (for the MAC column). None -> None."""
+    if mac is None or len(mac) != 6:
+        return None
+    return ":".join(f"{b:02x}" for b in mac)
+
+
 # ============================================================================
 # Stage 4 — frame parser (management frame / beacon)
 # ============================================================================

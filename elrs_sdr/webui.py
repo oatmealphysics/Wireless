@@ -98,6 +98,7 @@ DASHBOARD = r"""<!DOCTYPE html>
   table.dets col.c-proto  { width:150px; }
   table.dets col.c-make   { width:150px; }
   table.dets col.c-manuf  { width:110px; }
+  table.dets col.c-mac    { width:150px; }   /* 802.11 BSSID/Source MAC (aa:bb:cc:dd:ee:ff) */
   table.dets col.c-type   { width:100px; }
   table.dets col.c-str    { width:92px; }
   table.dets col.c-age    { width:90px; }
@@ -114,6 +115,7 @@ DASHBOARD = r"""<!DOCTYPE html>
   .conf-badge.medium { background:#3a2f12; color:#ffb43c; }
   .conf-badge.low { background:#2a1a1a; color:#e08a8a; }
   .manuf { color:#9fc3e8; }
+  .mac { color:#8fd6b0; font-family:monospace; font-size:11.5px; letter-spacing:.3px; }
   .age { color:#7f95a8; }
   .hidden { display:none; }
 </style>
@@ -144,7 +146,7 @@ DASHBOARD = r"""<!DOCTYPE html>
         <table class="dets">
           <colgroup>
             <col class="c-band"><col class="c-freq"><col class="c-proto">
-            <col class="c-make"><col class="c-manuf"><col class="c-type">
+            <col class="c-make"><col class="c-manuf"><col class="c-mac"><col class="c-type">
             <col class="c-str"><col class="c-age"><col class="c-last">
             <col class="c-conf"><col class="c-status"><col class="c-metric">
           </colgroup>
@@ -155,6 +157,7 @@ DASHBOARD = r"""<!DOCTYPE html>
               <th data-col="protocol" onclick="sortCol('protocol')">Protocol</th>
               <th data-col="make_model" onclick="sortCol('make_model')">Make / Model</th>
               <th data-col="manufacturer" onclick="sortCol('manufacturer')">Manufacturer</th>
+              <th data-col="mac" onclick="sortCol('mac')" title="802.11 BSSID / Source MAC (only when a beacon is actually decoded; — otherwise)">MAC</th>
               <th data-col="type" onclick="sortCol('type')">Type</th>
               <th data-col="strength_db" onclick="sortCol('strength_db')">Strength</th>
               <th data-col="age_s" onclick="sortCol('age_s')">Age</th>
@@ -164,7 +167,7 @@ DASHBOARD = r"""<!DOCTYPE html>
               <th data-col="metric" onclick="sortCol('metric')">Detector metric</th>
             </tr>
           </thead>
-          <tbody id="dettbody"><tr><td colspan="12" class="quiet">no detections yet…</td></tr></tbody>
+          <tbody id="dettbody"><tr><td colspan="13" class="quiet">no detections yet…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -172,10 +175,17 @@ DASHBOARD = r"""<!DOCTYPE html>
       <i>own</i> detector fires — nothing is default-binned by elimination.
       <span class="status-badge confirmed">CONFIRMED</span> = capture-validated detector
       (LoRa chirp). <span class="status-badge unconfirmed">UNCONFIRMED</span> = correct
-      structure but synthetic-calibrated threshold (OFDM / analog video / FHSS) — the
-      Detector-metric column shows the raw number a real capture can tune. To confirm an
-      UNCONFIRMED protocol, run <code>python3 -m elrs_sdr capture --band 2.4</code> with the
-      signal present; the saved IQ tunes that detector's threshold.
+      structure but synthetic-calibrated threshold (802.11 OFDM / OcuSync / analog video /
+      FHSS) — the Detector-metric column shows the raw number a real capture can tune. To
+      confirm an UNCONFIRMED protocol, run <code>python3 -m elrs_sdr capture --band 2.4</code>
+      with the signal present; the saved IQ tunes that detector's threshold.
+      <br><b>Not RF-identifiable:</b> <b>MAVLink</b> and <b>Meshtastic</b> have no RF
+      signature of their own — they are application-layer payloads that ride on a physical
+      layer (LoRa, 2.4 GHz, Wi-Fi). The tool shows the <i>physical layer</i> they're on
+      (e.g. "LoRa"), but telling "this LoRa is Meshtastic" or "this link carries MAVLink"
+      requires demodulating that layer and parsing the payload — a separate, capture-gated
+      pipeline, not an RF detector. OcuSync / Lightbridge are detected at the PHY level
+      (distinct OFDM symbol period) but are UNCONFIRMED until a real capture validates it.
       <b>Click a column header to sort</b> (click again to flip direction); the arrow
       shows the active sort.</div>
   </section>
@@ -276,11 +286,12 @@ function renderTable(){
     rows.sort((a,b)=> a.first_seen - b.first_seen);
   }
   if(!rows.length){
-    tb.innerHTML = '<tr><td colspan="12" class="quiet">no detections yet…</td></tr>';
+    tb.innerHTML = '<tr><td colspan="13" class="quiet">no detections yet…</td></tr>';
     return;
   }
   tb.innerHTML = rows.map(r=>{
     const manuf = r.manufacturer ? `<span class="manuf">${r.manufacturer}</span>` : '—';
+    const mac = r.mac ? `<span class="mac">${r.mac}</span>` : '—';
     const lastSeen = r.last_seen_s !== undefined
       ? (r.last_seen_s < 1.5 ? 'now' : r.last_seen_s.toFixed(0)+'s ago')
       : '—';
@@ -293,6 +304,7 @@ function renderTable(){
       <td>${r.protocol}</td>
       <td>${r.make_model}</td>
       <td>${manuf}</td>
+      <td>${mac}</td>
       <td>${r.type}${r.hopping?' ⤴':''}</td>
       <td>+${r.strength_db.toFixed(1)} dB</td>
       <td class="age">${r.age_s.toFixed(1)}s <span class="sig">×${r.seen_count}</span></td>

@@ -514,6 +514,7 @@ def cmd_validate(args):
     lora_s, lora_m = run(positivedet.lora_chirp, samples, srate)
     ofdm_s, ofdm_m = run(positivedet.ofdm_preamble, samples, srate)
     video_s, video_m = run(positivedet.analog_video, samples, srate)
+    ocus_s, ocus_m = run(positivedet.ocusync_phy, samples, srate)
     # FHSS needs a freq track: approximate from a few sub-windows' peaks
     from .dronescan import power_spectrum
     track = []
@@ -552,6 +553,7 @@ def cmd_validate(args):
     rows = [
         ("LoRa / ELRS  (CONFIRMED)",  lora_s,  lora_m,  ds.DroneScanner._LORA_CLAIM),
         ("OFDM / Wi-Fi (UNCONFIRMED)",ofdm_s,  ofdm_m,  ds.DroneScanner._OFDM_CLAIM),
+        ("OcuSync      (UNCONFIRMED)",ocus_s,  ocus_m,  ds.DroneScanner._OCUSYNC_CLAIM),
         ("Analog video (UNCONFIRMED)",video_s, video_m, ds.DroneScanner._VIDEO_CLAIM),
         ("FHSS         (UNCONFIRMED)",fhss_s,  fhss_m,  ds.DroneScanner._FHSS_CLAIM),
     ]
@@ -615,7 +617,7 @@ def build_parser():
     sp = sub.add_parser("capture", help="capture IQ to a .complex8 file")
     add_common(sp)
     sp.add_argument("--band", default=None,
-                    choices=["2.4", "5.8", "sub1g", "433"],
+                    choices=["2.4", "5.8", "5ghz", "sub1g", "1.2", "433"],
                     help="capture at this band's center with its sample rate "
                          "(overrides --freq/--srate)")
     sp.add_argument("--samples", type=int, default=1 << 20,

@@ -259,3 +259,79 @@ def fhss_hop(freq_track: list[float]) -> tuple[float, str]:
     score += 0.5 * min(1.0, distinct / 4.0)
     score += 0.5 * reg
     return min(1.0, score), f"{distinct}freqs reg={reg:.2f}"
+
+
+# ============================================================================
+# DJI OcuSync (O3/O4) / Lightbridge — PROPRIETARY OFDM, distinct symbol period
+# ============================================================================
+def ocusync_phy(iq: np.ndarray, srate: float) -> tuple[float, str]:
+    """Positively detect a DJI OcuSync / Lightbridge link (proprietary OFDM).
+
+    The PHYSICAL-LAYER tell (distinct from 802.11): OcuSync O3/O4 is a
+    256-FFT OFDM with a ~2 us symbol period, whereas 802.11a is 64-FFT with a
+    4 us data symbol (and 12.8 us total). So the Schmidl-Cox timing metric
+    M(tau) peaks at the OFDM symbol period — for OcuSync that's ~2 us, NOT at
+    the 802.11 symbol periods (0.8/4/12.8 us). We score on the prominence of
+    a M-peak near 2 us that is NOT one of the 802.11 periods.
+
+    HONESTY: this is a PHY-shape detector, NOT a validated OcuSync decoder.
+    It is reported UNCONFIRMED until validated against a real OcuSync capture
+    (the exact symbol period + preamble must be confirmed). It keys on a
+    distinct OFDM symbol period so it can separate OcuSync from 802.11 at the
+    RF layer — but it is a hypothesis, not a proof, until capture-validated.
+    """
+    n = len(iq)
+    if n < 4096:
+        return 0.0, "too_short"
+    power = np.abs(iq) ** 2
+    csum = np.concatenate([[0.0], np.cumsum(power)])
+
+    def rp(a, b):
+        a = max(0, a); b = min(n, b)
+        return float(csum[b] - csum[a]) if b > a else 0.0
+
+    # Schmidl-Cox M(tau) at candidate OFDM symbol periods. OcuSync ~2 us;
+    # 802.11a ~4 us (data) / 12.8 us (total) / 0.8 us (short). We want a peak
+    # near 2 us that is distinctly higher than the 802.11 lags.
+    def m_at(tau):
+        # R(tau) = sum |x[n]|^2 |x[n+tau]|^2 over the overlap
+        tau = int(tau)
+        if tau <= 0 or tau >= n:
+            return 0.0
+        # use the first ~2*tau samples for R, and the next 2*tau for P
+        # (Schmidl-Cox normalization)
+        r = 0.0
+        p1 = 0.0
+        p2 = 0.0
+        # vectorized over a window
+        win = min(n - tau, 2048)
+        x = power[:win]
+        r = float(np.sum(x * power[tau:tau + win]))
+        p1 = float(np.sum(power[:win]))
+        p2 = float(np.sum(power[tau:tau + win]))
+        if p1 <= 0 or p2 <= 0:
+            return 0.0
+        return r / np.sqrt(p1 * p2)
+
+    # candidate lags in samples
+    tau_ocusync = int(srate * 2.0e-6)    # ~2 us (OcuSync symbol)
+    tau_80211a = int(srate * 4.0e-6)     # 4 us (802.11a data symbol)
+    tau_80211s = int(srate * 0.8e-6)     # 0.8 us (802.11 short symbol)
+    tau_total = int(srate * 12.8e-6)     # 12.8 us (802.11 total symbol)
+    if tau_ocusync < 8:
+        return 0.0, "srate_too_low"
+
+    m_ocusync = m_at(tau_ocusync)
+    m_80211 = max(m_at(tau_80211a), m_at(tau_80211s), m_at(tau_total))
+    # a flat noise M is ~1.0; a real OFDM timing peak is >> 1.0 at the symbol
+    # period. Score: OcuSync peak high AND clearly above the 802.11 lags.
+    if m_ocusync < 1.5:
+        return 0.0, f"no OFDM peak@2us (M={m_ocusync:.2f})"
+    # prominence over the 802.11 lags: OcuSync should be the dominant period
+    prom = m_ocusync / (m_80211 + 1e-9)
+    score = 0.0
+    score += 0.6 * min(1.0, (m_ocusync - 1.5) / 2.0)
+    if prom > 1.2:
+        score += 0.4 * min(1.0, (prom - 1.2) / 2.0)
+    return min(1.0, score), (f"OcuSync? M@2us={m_ocusync:.2f} "
+                             f"vs 802.11={m_80211:.2f} (prom={prom:.2f})")

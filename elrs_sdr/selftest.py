@@ -546,7 +546,7 @@ def test_detections_table():
         r = r24[0]
         # (2) all columns the UI renders (incl. the new Last-seen)
         need = {"band", "freq_mhz", "protocol", "make_model", "manufacturer",
-                "confidence", "strength_db", "type", "age_s", "seen_count",
+                "mac", "confidence", "strength_db", "type", "age_s", "seen_count",
                 "last_seen_s"}
         missing = need - set(r)
         check("table row carries every column the UI renders (incl. last_seen_s)",
@@ -555,6 +555,17 @@ def test_detections_table():
               r["seen_count"] >= 2, f"seen_count={r['seen_count']}")
         check("manufacturer is None for a non-Wi-Fi tone (no fake vendor)",
               r["manufacturer"] is None, f"manufacturer={r['manufacturer']}")
+        check("mac is None for a non-Wi-Fi tone (no fake MAC)",
+              r["mac"] is None, f"mac={r['mac']}")
+    # mac_to_str: formats a 6-byte MAC as aa:bb:cc:dd:ee:ff (the MAC column
+    # value). The dashboard MAC <th> check lives in section (4) where `html`
+    # is defined.
+    from . import wifi as _wifi
+    check("mac_to_str formats a MAC as aa:bb:cc:dd:ee:ff",
+          _wifi.mac_to_str(bytes.fromhex("147d53aabbcc")) == "14:7d:53:aa:bb:cc",
+          f"got {_wifi.mac_to_str(bytes.fromhex('147d53aabbcc'))}")
+    check("mac_to_str returns None for a None/short input",
+          _wifi.mac_to_str(None) is None and _wifi.mac_to_str(b"\x01") is None)
     # (3) time-window filter: a very short window still keeps the just-seen
     #     signals (last_seen ~ now), a zero window (all time) keeps all of them.
     all_rows = sc.detections_table(window_s=0)
@@ -572,6 +583,9 @@ def test_detections_table():
     check("dashboard window dropdown has the expected options",
           all(o in html for o in ('value="60"', 'value="3600"', 'value="86400"')))
     check("dashboard table has a Last seen column", "Last seen" in html)
+    check("dashboard table has a MAC column (Wi-Fi BSSID/Source MAC)",
+          'data-col="mac"' in html and "MAC" in html)
+    check("dashboard row template renders the MAC cell", "r.mac" in html)
     check("dashboard table labeled as all-bands", "(all bands)" in html)
     check("dashboard has no view-tabs anymore (table always visible)",
           "vt-table" not in html and "viewtabs" not in html)
@@ -631,6 +645,40 @@ def test_detections_table():
     # the confirm-button UI must be GONE (the user wants 802.11 as a normal row)
     check("no separate 'Confirm 802.11' button in the UI (802.11 is a row)",
           "cfbtn" not in html and "confirm80211" not in html)
+    # (8) Extended protocol catalog (scope A): the full band set, the OcuSync
+    #     PHY detector, the corrected LoRa family label, and the honest
+    #     "MAVLink/Meshtastic are payload-layer, not RF-ID-able" note.
+    from . import positivedet as pd
+    band_names = {b.name for b in ds.BANDS}
+    check("band list includes the 1.2 GHz legacy-video band",
+          "1.2" in band_names, f"bands={band_names}")
+    check("band list includes the 5 GHz OcuSync band",
+          "5ghz" in band_names, f"bands={band_names}")
+    check("CYCLE_ORDER sweeps all six bands",
+          set(ds.CYCLE_ORDER) == {"2.4", "5.8", "5ghz", "sub1g", "1.2", "433"},
+          f"order={ds.CYCLE_ORDER}")
+    check("OcuSync PHY detector exists in positivedet",
+          hasattr(pd, "ocusync_phy"))
+    # the OcuSync detector runs without error on a noise + an OFDM-like fixture
+    # and returns a (score, metric) tuple with score in [0,1]
+    rng = np.random.default_rng(11)
+    noise = (rng.standard_normal(8192) + 1j * rng.standard_normal(8192)).astype(np.complex64)
+    ocus_s, ocus_m = pd.ocusync_phy(noise, 4e6)
+    check("OcuSync detector runs on noise without error (score in [0,1])",
+          isinstance(ocus_s, float) and 0.0 <= ocus_s <= 1.0,
+          f"score={ocus_s!r}")
+    check("OcuSync detector is UNCONFIRMED in the classifier (confirmed=False)",
+          "DJI OcuSync / Lightbridge" in inspect.getsource(DroneScanner._classify_positive)
+          and inspect.getsource(DroneScanner._classify_positive).count(
+              "DJI OcuSync / Lightbridge (proprietary OFDM)\"") >= 1)
+    # the LoRa label is the FAMILY (not "ELRS" alone) so Meshtastic isn't
+    # mislabeled, and the UI hint explains MAVLink/Meshtastic are payload-layer
+    check("LoRa row is labeled as the family (ELRS/Meshtastic/sub-1G), not 'ELRS' alone",
+          "ELRS / Meshtastic / sub-1G telemetry" in inspect.getsource(DroneScanner._classify_positive))
+    check("UI hint marks MAVLink/Meshtastic as payload-layer (not RF-ID-able)",
+          "MAVLink" in html and "Meshtastic" in html and "payload" in html.lower())
+    check("UI hint mentions OcuSync is UNCONFIRMED until capture-validated",
+          "OcuSync" in html and "UNCONFIRMED" in html)
 
 
 def main():
