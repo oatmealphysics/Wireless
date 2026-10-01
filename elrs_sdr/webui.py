@@ -49,7 +49,15 @@ DASHBOARD = r"""<!DOCTYPE html>
   .table-card { padding:0; }
   .table-card h2 { padding:11px 14px 0; }
   .table-head { display:flex; align-items:center; justify-content:space-between;
-                padding:11px 14px 8px; gap:10px; }
+                padding:11px 14px 8px; gap:10px; flex-wrap:wrap; }
+  .head-actions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  .pausebtn { background:#14324a; color:#cde6ff; border:1px solid #2b5578;
+              border-radius:6px; padding:4px 12px; font-size:12px; cursor:pointer;
+              font-weight:600; }
+  .pausebtn:hover { background:#1b4a6b; }
+  .pausebtn.paused { background:#3a2f12; color:#ffd27c; border-color:#7a5a1a; }
+  .pauseflag { margin:0 14px 8px; padding:6px 10px; background:#3a2f12; color:#ffd27c;
+               border:1px solid #7a5578; border-radius:6px; font-size:12px; font-weight:600; }
   .table-head h2 { margin:0; }
   .win-label { font-size:12px; color:#7fa8c9; display:flex; align-items:center; gap:6px; }
   .win-label select { background:#0d141b; color:#cdd6df; border:1px solid #223243;
@@ -130,6 +138,7 @@ DASHBOARD = r"""<!DOCTYPE html>
     <div class="card table-card" style="padding:0; margin-top:12px;">
       <div class="table-head">
         <h2>Detections <span class="sig">(all bands)</span></h2>
+        <div class="head-actions">
         <label class="win-label">Window
           <select id="win" onchange="setWindow(this.value)">
             <option value="0">All time</option>
@@ -141,7 +150,11 @@ DASHBOARD = r"""<!DOCTYPE html>
             <option value="86400">24 hours</option>
           </select>
         </label>
+        <button id="pausebtn" class="pausebtn" onclick="togglePause()"
+          title="Freeze the table so you can select + copy rows (Space also toggles)">⏸ Pause</button>
+        </div>
       </div>
+      <div id="pauseflag" class="pauseflag" hidden>⏸ PAUSED — table frozen for copy/paste (press Space or Resume to resume)</div>
       <div class="table-scroll">
         <table class="dets">
           <colgroup>
@@ -210,6 +223,9 @@ let locked = null;   // null = cycling (follow the auto band)
 let sortCol_ = null;
 let sortDir = 1;
 const CONF_RANK = {high:0, medium:1, low:2};
+// pause state (freeze the table for copy/paste); declared up top so poll() can
+// read it before the toggle function below is defined.
+let paused = false;
 function sortCol(col){
   if(sortCol_ === col){ sortDir = -sortDir; }   // toggle direction
   else { sortCol_ = col; sortDir = 1; }
@@ -327,11 +343,41 @@ async function poll(){
   try{
     const r = await fetch('/api/state');
     state = await r.json();
-    render();
-  }catch(e){ el('status').textContent = 'server error: '+e; }
+    // When PAUSED, keep the state current (so the data isn't stale when we
+    // resume) but DO NOT re-render the DOM — the table stays frozen so the
+    // user can select + copy rows.
+    if(!paused){ render(); }
+  }catch(e){ if(!paused){ el('status').textContent = 'server error: '+e; } }
   setTimeout(poll, 350);
 }
 poll();
+
+// ---- Pause / Resume (freeze the table for copy/paste) ----
+function togglePause(){
+  paused = !paused;
+  const btn = el('pausebtn');
+  const flag = el('pauseflag');
+  if(paused){
+    btn.textContent = '▶ Resume';
+    btn.classList.add('paused');
+    flag.hidden = false;
+    el('status').textContent = 'PAUSED — table frozen for copy/paste';
+  } else {
+    btn.textContent = '⏸ Pause';
+    btn.classList.remove('paused');
+    flag.hidden = true;
+    // re-render immediately so the table jumps back to the latest state
+    if(state){ render(); }
+  }
+}
+// Space toggles pause (unless focus is in a form control, so typing/selection
+// in inputs isn't hijacked). Escape also resumes.
+document.addEventListener('keydown', (e) => {
+  const tag = (e.target && e.target.tagName) || '';
+  if(tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+  if(e.code === 'Space'){ e.preventDefault(); togglePause(); }
+  else if(e.key === 'Escape' && paused){ togglePause(); }
+});
 </script>
 </body>
 </html>
