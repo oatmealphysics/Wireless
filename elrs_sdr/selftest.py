@@ -479,6 +479,23 @@ def test_wifi_phy():
     junk = (rng.standard_normal(512) + 1j * rng.standard_normal(512))
     check("decode_beacon_mac returns None on random IQ (no fake MAC)",
           wifi.decode_beacon_mac(junk, 20e6) is None)
+    # the L-STF matched-filter sync (the proven 802.11a timing method) must
+    # NOT saturate on white noise — this was the core bug (Schmidl-Cox M
+    # saturates to 1.0 on any stationary signal). The real L-STF gives a high
+    # corr; white noise gives a low one.
+    ref = wifi._ll_stf_ref()
+    n_sync = 4096
+    rng2 = np.random.default_rng(7)
+    sig = (rng2.standard_normal(n_sync) + 1j * rng2.standard_normal(n_sync)) * 0.05
+    sig[500:500 + len(ref)] += ref * 5.0
+    tau_real, corr_real = wifi._ll_stf_sync(sig)
+    check("L-STF matched-filter finds a real preamble (corr > 0.3, tau~500)",
+          corr_real > 0.3 and 495 <= tau_real <= 505,
+          f"corr={corr_real:.2f} tau={tau_real}")
+    wnoise = (rng2.standard_normal(n_sync) + 1j * rng2.standard_normal(n_sync)) * 0.5
+    _, corr_noise = wifi._ll_stf_sync(wnoise)
+    check("L-STF matched-filter does NOT saturate on white noise (corr < 0.25)",
+          corr_noise < 0.25, f"corr={corr_noise:.3f}")
 
     # --- 802.11a/g subcarrier map: exactly 48 data + 4 pilot ---
     check("802.11a 20MHz has exactly 48 data subcarriers",
