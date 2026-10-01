@@ -345,6 +345,66 @@ def cmd_capture(args):
 
 
 # ----------------------------------------------------------------------------
+# spectrum — quick RF diagnostic: dump the real power spectrum on a channel,
+# check DC offset + occupancy. Tells us if the B205 is even receiving RF.
+# ----------------------------------------------------------------------------
+def cmd_spectrum(args):
+    _need_uhd()
+    import numpy as np
+    from .dronescan import power_spectrum
+    from .radio import RadioDevice
+    freq = args.freq
+    srate = args.srate
+    r = _open_radio(args)
+    r.tune(freq, srate, args.gain, args.antenna)
+    r.recv_block  # settle
+    # capture a 0.5s snippet
+    n = int(srate * 0.5)
+    buf = np.zeros(8192, dtype=np.complex64)
+    chunks = []
+    import time as _t
+    t0 = _t.time()
+    while _t.time() - t0 < 0.5:
+        if r.recv_block(buf, 0.02):
+            chunks.append(buf.copy())
+    iq = np.concatenate(chunks) if chunks else buf
+    print(f"\nspectrum @ {freq/1e6:.1f} MHz, {srate/1e6:.1f} Msps "
+          f"({len(iq):,} samples = {len(iq)/srate*1000:.0f} ms), gain={args.gain} dB")
+    # DC offset (a large DC offset = receiver problem / saturated)
+    dc = float(np.mean(iq))
+    dc_db = 20 * np.log10(abs(dc) + 1e-12)
+    ac_db = 20 * np.log10(float(np.std(iq)) + 1e-12)
+    print(f"  DC offset: {dc_db:.1f} dB (relative to 1.0)  "
+          f"[should be < -20 dB; high = receiver/DC problem]")
+    print(f"  AC (signal+noise) std: {ac_db:.1f} dB")
+    # power spectrum (average over several blocks for stability)
+    f, db = power_spectrum(iq[:min(len(iq), 8192*64)], srate)
+    floor = float(np.percentile(db, 20))
+    peak_idx = int(np.argmax(db))
+    peak = float(db[peak_idx] - floor)
+    pres = db > (floor + 8)
+    occ = float(pres.mean())
+    print(f"  noise floor (20th pct): {floor:.1f} dB")
+    print(f"  peak: {peak:.1f} dB above floor at {f[peak_idx]/1e6:+.2f} MHz offset")
+    print(f"  occupancy (above floor+8 dB): {occ*100:.1f}%  "
+          f"[a real AP would be ~30-100%; noise is <5%]")
+    # top 8 peaks
+    order = np.argsort(db)[::-1][:8]
+    print("  top spectral peaks (offset from center, dB above floor):")
+    for k in sorted(order):
+        print(f"    {f[k]/1e6:+7.2f} MHz   {db[k]-floor:6.1f} dB")
+    if peak < 8:
+        print("\n  -> NO clear carrier. Either no signal in range, or the B205")
+        print("     isn't receiving well (try lower gain, check antenna).")
+    elif occ > 0.3:
+        print(f"\n  -> STEADY signal present! Peak at {f[peak_idx]/1e6:+.2f} MHz.")
+        print(f"     This is a real carrier — capture it and we can ID it.")
+    else:
+        print(f"\n  -> Peak present but low occupancy ({occ*100:.0f}%) — a weak or")
+        print("     intermittent signal (or a narrow carrier).")
+
+
+# ----------------------------------------------------------------------------
 # survey — airodump-style channel survey (dwell N seconds on each channel)
 # ----------------------------------------------------------------------------
 def cmd_survey(args):
@@ -742,6 +802,18 @@ def build_parser():
     sp.add_argument("--gain", type=float, default=30)
     sp.add_argument("--antenna", default=None)
     sp.set_defaults(fn=cmd_scan)
+
+    sp = sub.add_parser("spectrum",
+                        help="quick RF diagnostic: dump the power spectrum on a "
+                             "channel (DC offset, peak, occupancy) — tells us if "
+                             "the B205 is receiving RF")
+    sp.add_argument("--freq", type=float, default=5.24e9,
+                    help="center frequency Hz (default 5240 MHz = 5 GHz ch 48; "
+                         "set to your phone hotspot's channel)")
+    sp.add_argument("--srate", type=float, default=8e6)
+    sp.add_argument("--gain", type=float, default=40)
+    sp.add_argument("--antenna", default=None)
+    sp.set_defaults(fn=cmd_spectrum)
 
     sp = sub.add_parser("survey",
                         help="airodump-style channel survey (dwell N s on each "
