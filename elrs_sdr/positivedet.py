@@ -188,11 +188,15 @@ def analog_video(iq: np.ndarray, srate: float) -> tuple[float, str]:
     Positively detect 5.8 GHz analog FPV video (NTSC/PAL).
 
     The tell: analog video is AM; its ENVELOPE is modulated at the video line
-    rate (NTSC ~60 Hz, PAL ~50 Hz). A "wide constant blob" (any wideband tx)
-    has a FLAT envelope spectrum; real video shows a spectral peak at 50/60 Hz.
-
-    We take the envelope |IQ|, its spectrum, and score on the prominence of a
-    50/60 Hz peak above the 1 kHz baseline. metric reports the prominence.
+    rate (NTSC ~60 Hz, PAL ~50 Hz) AROUND A STEADY CARRIER. Two gates:
+      1) CONTINUITY: real video is a continuous AM carrier — the signal is
+         present (above the noise floor) for a HIGH fraction of the window.
+         Impulsive noise (radar/spikes/clicks) is present only a few % of the
+         time, so this rejects the false positives the 2026-10-01 capture
+         exposed (17 sub-ms pulses tripped the line-rate check).
+      2) LINE-RATE: a narrow 50/60 Hz peak in the envelope spectrum, well
+         above a flat baseline (a real video line rate is a stable line, not
+         broadband impulse energy).
     """
     n = len(iq)
     if n < 4096:
@@ -200,17 +204,35 @@ def analog_video(iq: np.ndarray, srate: float) -> tuple[float, str]:
     env = np.abs(iq) - np.mean(np.abs(iq))
     if env.std() < 1e-9:
         return 0.0, "flat_envelope"
-    # 50/60 Hz line rate needs ~1/50 Hz freq resolution = >=0.1s of envelope.
-    # At 4 Msps a 4096-sample block is only ~1 ms (500 Hz resolution), so we
-    # can only resolve the line rate if the block is long. If the block is too
-    # short, report "need_longer_window" (honest) rather than a false 0.
     dur_s = n / srate
     if dur_s < 0.05:
         return 0.0, f"need_longer_window({dur_s*1000:.0f}ms<50ms)"
+
+    # --- GATE 1: continuity (real video is a steady carrier, not impulses) ---
+    # the signal must be present (above a robust noise floor) for most of the
+    # window. Use a running window so a few gaps don't kill a real carrier,
+    # but a mostly-quiet capture (impulsive noise) fails this. The floor is
+    # peak-relative (not percentile) so a sparse impulsive signal — where the
+    # 30th percentile is near zero and would mark everything "present" — is
+    # correctly seen as low-presence.
+    mag = np.abs(iq)
+    peak = float(mag.max()) + 1e-12
+    floor = 0.1 * peak          # present = at least 10% of the peak envelope
+    win = max(64, int(srate * 1e-3))          # ~1 ms sub-windows
+    nb = n // win
+    if nb < 10:
+        return 0.0, f"need_more_blocks({nb})"
+    sub_rms = np.array([float(np.sqrt(np.mean(mag[i*win:(i+1)*win]**2)))
+                        for i in range(nb)])
+    present_frac = float((sub_rms > floor).mean())
+    if present_frac < 0.5:
+        # mostly quiet -> impulsive, not a steady AM video carrier
+        return 0.0, f"not_continuous(present={present_frac*100:.0f}%<50%)"
+
+    # --- GATE 2: narrow 50/60 Hz line-rate peak ---
     nfft = 1 << int(np.ceil(np.log2(n)))
     spec = np.abs(np.fft.rfft(env, nfft))
     freqs = np.fft.rfftfreq(nfft, 1.0 / srate)
-    # 50 Hz and 60 Hz line-rate peaks
     def peak_in(lo, hi):
         m = (freqs >= lo) & (freqs <= hi)
         return float(spec[m].max()) if m.any() else 0.0
@@ -219,12 +241,26 @@ def analog_video(iq: np.ndarray, srate: float) -> tuple[float, str]:
     base_mask = (freqs > 1) & (freqs < 1000) & ~((freqs >= 40) & (freqs <= 80))
     baseline = float(np.median(spec[base_mask])) if base_mask.any() else 0.0
     prominence = line_peak / (baseline + 1e-12)
+    # the line-rate peak must be a narrow LINE: measure how many adjacent bins
+    # are also high (a real line is 1-2 bins; broadband impulse energy is many)
+    def peak_width(lo, hi):
+        m = (freqs >= lo) & (freqs <= hi)
+        seg = spec[m]
+        if seg.max() <= 0:
+            return 0
+        thr = seg.max() * 0.5
+        return int((seg > thr).sum())
+    lw = max(peak_width(45, 65), peak_width(55, 75))
     score = 0.0
     if prominence > 2.0:
         score += 0.6 * min(1.0, (prominence - 2.0) / 10.0)
     if prominence > 4.0:
         score += 0.4
-    return min(1.0, score), f"line_prom={prominence:.1f}"
+    # a narrow line (<=4 bins at half-max) is the real deal; wide = impulse
+    if lw > 6:
+        score *= 0.3
+    return min(1.0, score), (f"line_prom={prominence:.1f} "
+                             f"present={present_frac*100:.0f}% linew={lw}")
 
 
 # ============================================================================

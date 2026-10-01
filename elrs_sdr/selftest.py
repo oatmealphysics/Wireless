@@ -357,6 +357,32 @@ def test_drone_classifier():
     check("5.8 analog-video fixture scores on video detector",
           video_score > 0.5, f"score={video_score:.2f}")
 
+    # The IQ-based analog_video detector (positivedet) — the one in the live
+    # loop — must (a) still detect a real continuous AM video carrier, and
+    # (b) REJECT impulsive noise (the 2026-10-01 capture's 17 sub-ms pulses
+    # used to false-positive via the line-rate check; the continuity + line-
+    # width gates now reject them).
+    from . import positivedet as _pd
+    # (a) real continuous AM video: carrier + 60 Hz line-rate modulation
+    nv = int(sr * 0.5)
+    tv = np.arange(nv) / sr
+    line = 1.0 + 0.8 * np.sin(2*np.pi*60*tv) + 0.3*np.sin(2*np.pi*120*tv)
+    vid_iq = (line + 0.05*rng.standard_normal(nv)).astype(np.complex64)
+    vs, vm = _pd.analog_video(vid_iq, sr)
+    check("analog_video detector still detects a real AM video carrier",
+          vs >= 0.6, f"score={vs:.2f} ({vm})")
+    # (b) impulsive noise (sparse, sub-ms pulses) must NOT fire it
+    nimp = int(sr * 0.5)
+    imp = (0.02 * (rng.standard_normal(nimp) + 1j*rng.standard_normal(nimp))).astype(np.complex64)
+    # add 17 brief sub-ms impulses (like the real capture)
+    for k in range(17):
+        start = int(k * (nimp / 20))
+        length = max(32, int(sr * 0.0002))
+        imp[start:start+length] += (rng.standard_normal(length) + 1j*rng.standard_normal(length))
+    is_, im = _pd.analog_video(imp, sr)
+    check("analog_video detector REJECTS impulsive noise (no false positive)",
+          is_ < 0.6, f"score={is_:.2f} ({im})")
+
 
 def test_wifi_phy():
     """Offline 802.11 PHY stage verification (Viterbi, PN23, OUI, frame parse).
