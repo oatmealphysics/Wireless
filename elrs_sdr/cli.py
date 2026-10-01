@@ -263,17 +263,55 @@ def cmd_scan(args):
 # ----------------------------------------------------------------------------
 def cmd_capture(args):
     _need_uhd()
-    # if --band given, capture at the band's center with its sample rate
-    if getattr(args, "band", None):
-        from .dronescan import band_by_name
+    from .dronescan import (band_by_name, wifi_channel_freq, wifi_scan_channels,
+                            DroneScanner)
+    # --- resolve the capture frequency ---
+    # Priority: --channel (airodump-style) > --band > --freq
+    scan_first = getattr(args, "scan", False)
+    if getattr(args, "channel", None):
+        ch = int(args.channel)
+        args.freq = wifi_channel_freq(ch)
+        # a 20 MHz Wi-Fi channel needs a wider capture than 4 Msps; default to
+        # 8 Msps (USB2-sustainable) unless the user overrode it.
+        if not getattr(args, "_srate_set", False):
+            args.srate = 8e6
+        print(f"channel {ch} -> {args.freq/1e6:.1f} MHz", flush=True)
+    elif getattr(args, "band", None):
         b = band_by_name(args.band)
         args.freq = (b.lo_hz + b.hi_hz) / 2
         args.srate = b.srate
+
     r = _open_radio(args)
+
+    # --- optional: scan first, find the strongest channel, capture on it ---
+    if scan_first:
+        band = "2.4" if (getattr(args, "channel", None) and
+                         1 <= int(args.channel) <= 14) else (
+                 "5.8" if (getattr(args, "channel", None) and
+                           int(args.channel) >= 36) else "2.4")
+        scanner = DroneScanner(r, dwell_s=0.05, gain=args.gain)
+        chans = (wifi_scan_channels(band) if not getattr(args, "channel", None)
+                 else [int(args.channel)])
+        print(f"scanning {len(chans)} channel(s) on {band}...", flush=True)
+        results = scanner.wifi_scan(band=band, srate=args.srate, channels=chans)
+        print("\nchannel  freq(MHz)  peak(dB)  occupancy", flush=True)
+        for res in results:
+            marker = "  <-- strongest" if res is results[0] else ""
+            print(f"  {res['channel']:>4}   {res['freq_mhz']:>8.1f}  "
+                  f"{res['peak_db']:>7.1f}  {res['occupancy']*100:>5.0f}%{marker}",
+                  flush=True)
+        # capture on the strongest channel
+        best = results[0]
+        args.freq = best["freq_hz"]
+        r.tune(args.freq, args.srate, args.gain, args.antenna)
+        print(f"\ncapturing on strongest channel {best['channel']} "
+              f"({best['freq_mhz']:.1f} MHz)", flush=True)
+
     r.tune(args.freq, args.srate, args.gain, args.antenna)
     bandnote = f" (band {args.band})" if getattr(args, "band", None) else ""
+    chnote = f" (ch {args.channel})" if getattr(args, "channel", None) else ""
     print(f"capturing {args.samples:,} IQ samples @ {args.freq/1e6:.1f} MHz, "
-          f"{args.srate/1e3:.0f} ksps{bandnote} -> {args.out}", flush=True)
+          f"{args.srate/1e3:.0f} ksps{chnote}{bandnote} -> {args.out}", flush=True)
     t0 = time.time()
     r.capture(args.samples, args.out)
     print(f"done in {time.time()-t0:.1f}s", flush=True)
@@ -616,10 +654,17 @@ def build_parser():
 
     sp = sub.add_parser("capture", help="capture IQ to a .complex8 file")
     add_common(sp)
+    sp.add_argument("--channel", type=int, default=None,
+                    help="Wi-Fi channel NUMBER (airodump-style): 1-14 for "
+                         "2.4 GHz, 36-177 for 5 GHz. Overrides --freq. e.g. "
+                         "--channel 6 -> 2437 MHz")
+    sp.add_argument("--scan", action="store_true",
+                    help="sweep the band's channels first, report the strongest, "
+                         "then capture on it (airodump-style 'find it first')")
     sp.add_argument("--band", default=None,
                     choices=["2.4", "5.8", "5ghz", "sub1g", "1.2", "433"],
                     help="capture at this band's center with its sample rate "
-                         "(overrides --freq/--srate)")
+                         "(overrides --freq/--srate; --channel takes priority)")
     sp.add_argument("--samples", type=int, default=1 << 20,
                     help="number of IQ samples (default 1M)")
     sp.add_argument("--out", default="capture.complex8")
@@ -680,7 +725,12 @@ def build_parser():
 
 
 def main(argv=None):
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    # detect whether the user explicitly set --srate (so --channel's sensible
+    # 8 Msps default doesn't clobber an explicit choice)
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    args = parser.parse_args(argv)
+    args._srate_set = ("--srate" in argv)
     args.fn(args)
 
 
