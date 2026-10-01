@@ -508,52 +508,69 @@ class DroneScanner:
 
     def wifi_scan(self, band: str = "2.4", dwell_ms: int = 40,
                   srate: float = 4e6,
-                  channels: list | None = None) -> list[dict]:
+                  channels: list | None = None,
+                  dwell_s: float | None = None,
+                  verbose: bool = True) -> list[dict]:
         """Sweep the Wi-Fi channels of a band and report per-channel signal
         strength (airodump-style). Returns a list of
-        {channel, freq_hz, peak_db, presence_db, occupancy} sorted by strength.
+        {channel, freq_hz, peak_db, occupancy, mean_db} sorted by strength.
 
         This is "scan instead of setting a freq" — find which channel(s) have
-        energy (a router beacon, a drone link) before capturing. The per-channel
-        metric is the peak power above the noise floor + the occupancy fraction
-        (a steady AP is ~100% occupied; impulsive noise is a few %).
+        a STEADY signal (a router beacon / drone link) before capturing.
+
+        - dwell_s: how long to dwell on each channel (e.g. 5.0 s for a proper
+          survey). If None, uses the legacy quick 40 ms scan.
+        - occupancy: the fraction of the dwell window where the channel is
+          active (above the noise floor). A steady AP is ~100%; impulsive noise
+          or the B205's DC artifact is a few %.
+        - peak_db / mean_db: peak and mean power above the noise floor.
         """
-        from . import wifi as _wifi
         if channels is None:
             channels = wifi_scan_channels(band)
-        buf = np.zeros(4096, dtype=np.complex64)
+        buf = np.zeros(8192, dtype=np.complex64)
         results = []
-        for ch in channels:
+        # total dwell per channel (seconds)
+        per_ch_s = dwell_s if dwell_s else (dwell_ms * (len(range(4)) + len(range(8))) / 1000.0)
+        for ci, ch in enumerate(channels):
             try:
                 freq = wifi_channel_freq(ch)
             except ValueError:
                 continue
             self.radio.tune2(freq, srate, self.gain)
-            self.radio.recv_block(buf, 0.05)   # settle
-            # grab a few blocks for a stable measurement
-            f, db = power_spectrum(buf, srate)
-            for _ in range(4):
-                if self.radio.recv_block(buf, 0.05):
-                    f2, db2 = power_spectrum(buf, srate)
-                    db = np.maximum(db, db2)
-            floor = float(np.percentile(db, 20))
-            peak = float(db.max() - floor)
-            # occupancy: fraction of the capture window where the channel is
-            # active (above floor+6 dB). Steady AP ~1.0; impulsive noise low.
-            occ = 0.0
-            for _ in range(8):
-                if self.radio.recv_block(buf, 0.05):
-                    f3, db3 = power_spectrum(buf, srate)
-                    occ += float((db3 > (np.percentile(db3, 20) + 6)).mean())
-            occ /= 8.0
-            results.append({
+            self.radio.recv_block(buf, 0.05)   # settle after retune
+            # dwell for per_ch_s seconds, measuring occupancy + peak
+            t0 = time.time()
+            peak_db = 0.0
+            mean_db = 0.0
+            active_blocks = 0
+            total_blocks = 0
+            floor_db = 0.0
+            while time.time() - t0 < per_ch_s:
+                if not self.radio.recv_block(buf, 0.02):
+                    continue
+                f, db = power_spectrum(buf, srate)
+                fl = float(np.percentile(db, 20))
+                floor_db = fl if floor_db == 0 else floor_db * 0.9 + fl * 0.1  # smooth
+                peak_db = max(peak_db, float(db.max() - fl))
+                mean_db += float(np.mean(db - fl))
+                active_blocks += int((db > (fl + 6)).mean() > 0.5)
+                total_blocks += 1
+            occ = (active_blocks / total_blocks) if total_blocks else 0.0
+            mean_db = mean_db / total_blocks if total_blocks else 0.0
+            res = {
                 "channel": ch,
                 "freq_hz": freq,
-                "peak_db": round(peak, 1),
-                "occupancy": round(occ, 2),
                 "freq_mhz": round(freq / 1e6, 1),
-            })
-        results.sort(key=lambda r: r["peak_db"], reverse=True)
+                "peak_db": round(peak_db, 1),
+                "mean_db": round(mean_db, 1),
+                "occupancy": round(occ, 2),
+            }
+            results.append(res)
+            if verbose:
+                bar = "#" * int(occ * 30)
+                print(f"  ch {ch:>2}  {freq/1e6:7.1f} MHz  peak {peak_db:5.1f} dB  "
+                      f"occ {occ*100:4.0f}% {bar}", flush=True)
+        results.sort(key=lambda r: (r["occupancy"], r["peak_db"]), reverse=True)
         return results
 
     def _lsig_scan(self, samples: np.ndarray, srate: float,

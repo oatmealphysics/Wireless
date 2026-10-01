@@ -345,6 +345,62 @@ def cmd_capture(args):
 
 
 # ----------------------------------------------------------------------------
+# survey — airodump-style channel survey (dwell N seconds on each channel)
+# ----------------------------------------------------------------------------
+def cmd_survey(args):
+    _need_uhd()
+    from .dronescan import (DroneScanner, wifi_scan_channels, BANDS)
+    band = args.band
+    # pick the sample rate for the band (8 Msps for 2.4/5 GHz Wi-Fi width)
+    if band == "2.4":
+        srate = 8e6
+        channels = list(range(1, 12))   # ch 1-11 (the 2.4 GHz set)
+    elif band == "5.8":
+        srate = 8e6
+        channels = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112,
+                    116, 120, 124, 128, 132, 136, 140, 149, 153, 157, 161, 165]
+    else:
+        b = next((b for b in BANDS if b.name == band), None)
+        srate = b.srate if b else 4e6
+        channels = wifi_scan_channels(band) if band in ("2.4", "5.8") else []
+    r = _open_radio(args)
+    scanner = DroneScanner(r, dwell_s=0.05, gain=args.gain)
+    total = len(channels) * args.dwell
+    print(f"surveying {len(channels)} channels on {band} "
+          f"({args.dwell}s dwell each, ~{total:.0f}s total)", flush=True)
+    print(f"{'ch':>3}  {'freq(MHz)':>9}  {'peak(dB)':>8}  {'mean(dB)':>8}  "
+          f"{'occupancy':>9}  signal", flush=True)
+    print("-" * 60, flush=True)
+    results = scanner.wifi_scan(band=band, srate=srate, channels=channels,
+                                dwell_s=args.dwell, verbose=False)
+    for res in results:
+        # label: a steady AP has high occupancy; impulsive/DC artifact low
+        if res["occupancy"] > 0.7 and res["peak_db"] > 15:
+            sig = "** STEADY SIGNAL (likely a real AP/link) **"
+        elif res["occupancy"] > 0.3:
+            sig = "intermittent"
+        elif res["peak_db"] > 15:
+            sig = "impulsive (likely DC artifact / noise)"
+        else:
+            sig = "quiet"
+        bar = "#" * int(res["occupancy"] * 25)
+        print(f"{res['channel']:>3}  {res['freq_mhz']:>9.1f}  "
+              f"{res['peak_db']:>8.1f}  {res['mean_db']:>8.1f}  "
+              f"{res['occupancy']*100:>7.0f}%   {bar:<25} {sig}", flush=True)
+    print("-" * 60, flush=True)
+    # recommendation: the channel with the highest occupancy+peak is the target
+    best = results[0]
+    print(f"\nbest channel: {best['channel']} ({best['freq_mhz']:.1f} MHz) "
+          f"occ={best['occupancy']*100:.0f}% peak={best['peak_db']:.1f} dB", flush=True)
+    if best["occupancy"] > 0.3 and best["peak_db"] > 15:
+        print(f"-> to capture it:  elrs-sdr capture --channel {best['channel']}",
+              flush=True)
+    else:
+        print("-> no steady signal found on any channel. Make sure a 2.4 GHz", flush=True)
+        print("   Wi-Fi AP / drone link is in range, then re-survey.", flush=True)
+
+
+# ----------------------------------------------------------------------------
 # decode (offline, from a .complex8 file)
 # ----------------------------------------------------------------------------
 def cmd_decode(args):
@@ -676,6 +732,19 @@ def build_parser():
     sp.add_argument("--gain", type=float, default=30)
     sp.add_argument("--antenna", default=None)
     sp.set_defaults(fn=cmd_scan)
+
+    sp = sub.add_parser("survey",
+                        help="airodump-style channel survey (dwell N s on each "
+                             "channel, report occupancy/peak per channel)")
+    sp.add_argument("--band", default="2.4",
+                    choices=["2.4", "5.8"],
+                    help="which band to survey (default 2.4 = ch 1-11)")
+    sp.add_argument("--dwell", type=float, default=5.0,
+                    help="seconds to dwell on each channel (default 5.0; "
+                         "11 channels x 5s = 55s total)")
+    sp.add_argument("--gain", type=float, default=40)
+    sp.add_argument("--antenna", default=None)
+    sp.set_defaults(fn=cmd_survey)
 
     sp = sub.add_parser("capture", help="capture IQ to a .complex8 file")
     add_common(sp)

@@ -794,11 +794,16 @@ def test_detections_table():
           len(ds.wifi_scan_channels("2.4")) == 13)
     check("DroneScanner has wifi_scan() (airodump-style channel sweep)",
           hasattr(DroneScanner, "wifi_scan"))
+    check("wifi_scan supports a dwell_s survey (seconds per channel)",
+          "dwell_s" in inspect.getsource(DroneScanner.wifi_scan))
     from . import cli as _cli
     _p = _cli.build_parser()
     _a = _p.parse_args(["capture", "--channel", "6", "--scan"])
     check("capture --channel 6 --scan parses (channel=6, scan=True)",
           _a.channel == 6 and _a.scan is True)
+    _s = _p.parse_args(["survey", "--dwell", "5"])
+    check("survey command parses (default band 2.4, dwell 5s)",
+          _s.band == "2.4" and _s.dwell == 5.0 and hasattr(_s, "fn"))
     # (8) Extended protocol catalog (scope A): the full band set, the OcuSync
     #     PHY detector, the corrected LoRa family label, and the honest
     #     "MAVLink/Meshtastic are payload-layer, not RF-ID-able" note.
