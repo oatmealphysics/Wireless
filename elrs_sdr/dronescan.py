@@ -237,6 +237,9 @@ class Detection:
     metric: str = ""         # raw detector metric (chirp dB / OFDM M / line-rate / hop)
     # --- best-effort identity (populated only when we actually have it) ---
     manufacturer: str | None = None    # OUI->vendor (Wi-Fi) or None (else)
+    mac: str | None = None             # the 802.11 BSSID/Source MAC (hex) when
+                                       #   a beacon is actually decoded; else None
+                                       #   (shown as "—" in the MAC column)
     # --- persistence tracking (set by the scanner, not the classifier) ---
     first_seen: float = 0.0            # monotonic time first observed
     last_seen: float = 0.0             # monotonic time last re-observed
@@ -506,12 +509,16 @@ class DroneScanner:
             # reported as UNCONFIRMED with their raw metric.
             det = self._classify_positive(b, st, samples, freqs, db, presence,
                                           peak_freq)
-            # best-effort manufacturer: attempt real 802.11 beacon decode for
-            # OFDM signals on a Wi-Fi channel. Returns None (-> "—") until the
-            # RF front-end is validated against a real capture; never a guess.
+            # best-effort Wi-Fi identity: attempt a real 802.11 beacon decode
+            # for OFDM/802.11 signals. Returns None (-> "—" in the MAC column)
+            # until the RF front-end is validated against a real capture; never
+            # a guess. We try whenever the signature is OFDM (the L-SIG path)
+            # and the band has a Wi-Fi channel range.
             if det.signature == "ofdm" and b.wifi_channels:
                 mac = wifi.decode_beacon_mac(samples, b.srate)
-                det.manufacturer = wifi.mac_to_oui_vendor(mac) if mac else None
+                if mac is not None:
+                    det.mac = wifi.mac_to_str(mac)      # e.g. "14:7d:53:aa:bb:cc"
+                    det.manufacturer = wifi.mac_to_oui_vendor(mac)
             # persistence: key this detection so the same signal accumulates
             # age across cycles. 1 MHz freq bin + band + signature is stable
             # enough to avoid duping a drifting/constant signal. We store the
@@ -550,6 +557,7 @@ class DroneScanner:
             "signature": det.signature,
             "make_model": det.protocol,
             "manufacturer": det.manufacturer,
+            "mac": det.mac,             # 802.11 BSSID/Source MAC (hex) or None
             "confidence": det.confidence,
             "confirmed": det.confirmed,
             "metric": det.metric,

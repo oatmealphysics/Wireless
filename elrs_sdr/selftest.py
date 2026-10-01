@@ -546,7 +546,7 @@ def test_detections_table():
         r = r24[0]
         # (2) all columns the UI renders (incl. the new Last-seen)
         need = {"band", "freq_mhz", "protocol", "make_model", "manufacturer",
-                "confidence", "strength_db", "type", "age_s", "seen_count",
+                "mac", "confidence", "strength_db", "type", "age_s", "seen_count",
                 "last_seen_s"}
         missing = need - set(r)
         check("table row carries every column the UI renders (incl. last_seen_s)",
@@ -555,6 +555,17 @@ def test_detections_table():
               r["seen_count"] >= 2, f"seen_count={r['seen_count']}")
         check("manufacturer is None for a non-Wi-Fi tone (no fake vendor)",
               r["manufacturer"] is None, f"manufacturer={r['manufacturer']}")
+        check("mac is None for a non-Wi-Fi tone (no fake MAC)",
+              r["mac"] is None, f"mac={r['mac']}")
+    # mac_to_str: formats a 6-byte MAC as aa:bb:cc:dd:ee:ff (the MAC column
+    # value). The dashboard MAC <th> check lives in section (4) where `html`
+    # is defined.
+    from . import wifi as _wifi
+    check("mac_to_str formats a MAC as aa:bb:cc:dd:ee:ff",
+          _wifi.mac_to_str(bytes.fromhex("147d53aabbcc")) == "14:7d:53:aa:bb:cc",
+          f"got {_wifi.mac_to_str(bytes.fromhex('147d53aabbcc'))}")
+    check("mac_to_str returns None for a None/short input",
+          _wifi.mac_to_str(None) is None and _wifi.mac_to_str(b"\x01") is None)
     # (3) time-window filter: a very short window still keeps the just-seen
     #     signals (last_seen ~ now), a zero window (all time) keeps all of them.
     all_rows = sc.detections_table(window_s=0)
@@ -572,6 +583,9 @@ def test_detections_table():
     check("dashboard window dropdown has the expected options",
           all(o in html for o in ('value="60"', 'value="3600"', 'value="86400"')))
     check("dashboard table has a Last seen column", "Last seen" in html)
+    check("dashboard table has a MAC column (Wi-Fi BSSID/Source MAC)",
+          'data-col="mac"' in html and "MAC" in html)
+    check("dashboard row template renders the MAC cell", "r.mac" in html)
     check("dashboard table labeled as all-bands", "(all bands)" in html)
     check("dashboard has no view-tabs anymore (table always visible)",
           "vt-table" not in html and "viewtabs" not in html)
