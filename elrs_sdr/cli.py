@@ -357,8 +357,18 @@ def cmd_survey(args):
         channels = list(range(1, 12))   # ch 1-11 (the 2.4 GHz set)
     elif band == "5.8":
         srate = 8e6
-        channels = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112,
-                    116, 120, 124, 128, 132, 136, 140, 149, 153, 157, 161, 165]
+        # Full 5 GHz + 5.8 GHz survey. 5 GHz Wi-Fi (5150-5725 MHz) PLUS the
+        # 5.8 GHz FPV/unlicensed band (5725-5900 MHz) where analog FPV video +
+        # 5 GHz Wi-Fi ch 149-177 live. ch 149-177 = 5745-5885 MHz covers the
+        # common 5.8 GHz FPV video channels (5760/5785/5810/5835/5850 MHz) and
+        # the higher UNII-3 channels.
+        channels = [
+            # 5 GHz UNII-1/2a/2b/3 (5150-5725 MHz)
+            36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112,
+            116, 120, 124, 128, 132, 136, 140,
+            # 5.8 GHz FPV/unlicensed (5725-5900 MHz): ch 149-177
+            149, 153, 157, 161, 165, 169, 173, 177,
+        ]
     else:
         b = next((b for b in BANDS if b.name == band), None)
         srate = b.srate if b else 4e6
