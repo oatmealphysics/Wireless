@@ -656,3 +656,54 @@ def read_complex8(path: str) -> np.complex64:
     i = raw[0::2].astype(np.float32) / 32767.0
     q = raw[1::2].astype(np.float32) / 32767.0
     return (i + 1j * q).astype(np.complex64)
+
+
+# ----------------------------------------------------------------------------
+# CF32 (complex float32) export — the standard "IQ file" format that GNU Radio,
+# SDR++, IQT and most SDR analysis tools read directly. Little-endian, I,Q
+# interleaved, float32. We also write a .meta.txt sidecar with the sample rate
+# + band + center freq + timestamp, since a raw IQ file has no header.
+# ----------------------------------------------------------------------------
+def write_cf32(samples: np.complex64, path: str):
+    """Write complex float32 (I,Q interleaved, little-endian) to `path`. This
+    is the format GNU Radio's IQ File Source / SDR++ / IQT expect."""
+    samples.astype("<c8").tofile(path)   # <c8 = little-endian complex64
+
+
+def write_capture_bundle(samples: np.complex64, base_path: str,
+                         srate: float, band_name: str, center_hz: float,
+                         note: str = "") -> dict:
+    """Write a raw IQ capture in EVERY useful format + a metadata sidecar.
+
+    Produces (from base_path, e.g. "drone_2026..."):
+      <base>.cf32      complex float32  (GNU Radio / SDR++ / IQT — the main one)
+      <base>.complex8  int16 I,Q        (SDR# / our own `validate`/`load`)
+      <base>.meta.txt  sample rate, band, center freq, n_samples, timestamp, note
+
+    Returns a dict of the written paths (for the UI to tell the user what to
+    open in which tool).
+    """
+    import time as _time
+    cf32_path = base_path + ".cf32"
+    c8_path = base_path + ".complex8"
+    meta_path = base_path + ".meta.txt"
+    write_cf32(samples, cf32_path)
+    _write_complex8(samples, c8_path)
+    meta = (
+        "# elrs-sdr raw IQ capture\n"
+        f"timestamp_utc: {_time.strftime('%Y-%m-%dT%H:%M:%SZ', _time.gmtime())}\n"
+        f"band: {band_name}\n"
+        f"center_freq_hz: {center_hz:.6g}\n"
+        f"sample_rate_hz: {srate:.6g}\n"
+        f"n_samples: {len(samples)}\n"
+        f"format: cf32 (little-endian complex float32, I,Q interleaved)\n"
+        f"note: {note}\n"
+        "# open <base>.cf32 in GNU Radio (IQ File Source, type=complex, "
+        "sample_rate from above) or SDR++ / IQT.\n"
+        "# open <base>.complex8 with: python3 -m elrs_sdr validate <base>.complex8 "
+        "--srate {srate:.6g}\n"
+    )
+    with open(meta_path, "w") as f:
+        f.write(meta)
+    return {"cf32": cf32_path, "complex8": c8_path, "meta": meta_path,
+            "n_samples": len(samples)}
