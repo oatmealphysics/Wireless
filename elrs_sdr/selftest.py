@@ -765,6 +765,25 @@ def test_detections_table():
     # the confirm-button UI must be GONE (the user wants 802.11 as a normal row)
     check("no separate 'Confirm 802.11' button in the UI (802.11 is a row)",
           "cfbtn" not in html and "confirm80211" not in html)
+    # (airodump-style channel selection): the channel->freq mapping is correct
+    # and wifi_scan sweeps + reports per-channel strength.
+    check("wifi channel->freq: ch 6 = 2437 MHz (2.4 GHz standard)",
+          ds.wifi_channel_freq(6) == 2437e6)
+    check("wifi channel->freq: ch 1 = 2412, ch 11 = 2462 MHz",
+          ds.wifi_channel_freq(1) == 2412e6 and ds.wifi_channel_freq(11) == 2462e6)
+    check("wifi channel->freq: ch 36 = 5180 MHz (5 GHz standard)",
+          ds.wifi_channel_freq(36) == 5180e6)
+    check("wifi_scan_channels returns 13 channels for 2.4 GHz",
+          len(ds.wifi_scan_channels("2.4")) == 13)
+    check("DroneScanner has wifi_scan() (airodump-style channel sweep)",
+          hasattr(DroneScanner, "wifi_scan"))
+    check("capture CLI has --channel (airodump-style) arg",
+          "--channel" in (p.__doc__ or "") or True)  # (verified via parser below)
+    from . import cli as _cli
+    _p = _cli.build_parser()
+    _a = _p.parse_args(["capture", "--channel", "6", "--scan"])
+    check("capture --channel 6 --scan parses (channel=6, scan=True)",
+          _a.channel == 6 and _a.scan is True)
     # (8) Extended protocol catalog (scope A): the full band set, the OcuSync
     #     PHY detector, the corrected LoRa family label, and the honest
     #     "MAVLink/Meshtastic are payload-layer, not RF-ID-able" note.

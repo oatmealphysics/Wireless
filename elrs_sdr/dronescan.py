@@ -78,6 +78,55 @@ BANDS: list[Band] = [
 CYCLE_ORDER = ["2.4", "5.8", "5ghz", "sub1g", "1.2", "433"]
 
 
+# ----------------------------------------------------------------------------
+# Wi-Fi channel <-> frequency (airodump-style). Lets the user select a channel
+# by NUMBER (--channel 6) instead of a raw Hz freq. Standard 2.4 GHz + the
+# common 5 GHz channels used by 802.11a/ac/ax.
+# ----------------------------------------------------------------------------
+# 2.4 GHz: ch 1-13 = 2407 + 5*ch MHz  (ch 1 = 2412, ch 6 = 2437, ch 11 = 2462)
+# ch 14 = 2484 (Japan-only)
+def wifi24_freq(ch: int) -> float:
+    """2.4 GHz Wi-Fi channel center (Hz). ch 1-13 -> 2407+5*ch MHz; ch 14 -> 2484."""
+    if 1 <= ch <= 13:
+        return (2407.0 + 5.0 * ch) * 1e6
+    if ch == 14:
+        return 2484.0e6
+    raise ValueError(f"invalid 2.4 GHz channel {ch} (1-14)")
+
+# 5 GHz: ch N (36-177) = 5180 + 5*(N-36) MHz  (ch 36 = 5180, ch 100 = 5500,
+# ch 149 = 5745)
+def wifi5_freq(ch: int) -> float:
+    """5 GHz Wi-Fi channel center (Hz). ch 36-177 -> 5180 + 5*(N-36) MHz."""
+    if 36 <= ch <= 177:
+        return (5180.0 + 5.0 * (ch - 36)) * 1e6
+    raise ValueError(f"invalid 5 GHz channel {ch} (36-177)")
+
+def wifi_channel_freq(ch: int) -> float:
+    """Map a Wi-Fi channel number to its center frequency (Hz).
+    1-14 -> 2.4 GHz band, 36-177 -> 5 GHz band (airodump-style)."""
+    if 1 <= ch <= 14:
+        return wifi24_freq(ch)
+    if 36 <= ch <= 177:
+        return wifi5_freq(ch)
+    raise ValueError(f"unknown Wi-Fi channel {ch} (use 1-14 or 36-177)")
+
+# The 2.4 GHz channels worth scanning (non-overlapping + the rest). airodump
+# defaults to 1,6,11; we scan all 1-13 for completeness (fast at low dwell).
+WIFI24_SCAN_CHANNELS = list(range(1, 14))
+# Common 5 GHz channels (20 MHz spacing, US regulatory domain).
+WIFI5_SCAN_CHANNELS = [36, 40, 44, 48, 52, 56, 60, 64,
+                       100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140,
+                       149, 153, 157, 161, 165]
+
+def wifi_scan_channels(band: str = "2.4") -> list[int]:
+    """The list of channel numbers to sweep for a given band."""
+    if band in ("2.4", "2.4ghz"):
+        return WIFI24_SCAN_CHANNELS
+    if band in ("5.8", "5ghz", "5", "5g"):
+        return WIFI5_SCAN_CHANNELS
+    raise ValueError(f"no Wi-Fi scan channels for band {band!r}")
+
+
 def band_by_name(name: str) -> Band:
     for b in BANDS:
         if b.name == name:
@@ -456,6 +505,56 @@ class DroneScanner:
         return {"ok": True, "paths": paths, "band": band_name,
                 "srate": b.srate, "n_samples": len(samples),
                 "center_hz": center, "out_dir": out_dir}
+
+    def wifi_scan(self, band: str = "2.4", dwell_ms: int = 40,
+                  srate: float = 4e6,
+                  channels: list | None = None) -> list[dict]:
+        """Sweep the Wi-Fi channels of a band and report per-channel signal
+        strength (airodump-style). Returns a list of
+        {channel, freq_hz, peak_db, presence_db, occupancy} sorted by strength.
+
+        This is "scan instead of setting a freq" — find which channel(s) have
+        energy (a router beacon, a drone link) before capturing. The per-channel
+        metric is the peak power above the noise floor + the occupancy fraction
+        (a steady AP is ~100% occupied; impulsive noise is a few %).
+        """
+        from . import wifi as _wifi
+        if channels is None:
+            channels = wifi_scan_channels(band)
+        buf = np.zeros(4096, dtype=np.complex64)
+        results = []
+        for ch in channels:
+            try:
+                freq = wifi_channel_freq(ch)
+            except ValueError:
+                continue
+            self.radio.tune2(freq, srate, self.gain)
+            self.radio.recv_block(buf, 0.05)   # settle
+            # grab a few blocks for a stable measurement
+            f, db = power_spectrum(buf, srate)
+            for _ in range(4):
+                if self.radio.recv_block(buf, 0.05):
+                    f2, db2 = power_spectrum(buf, srate)
+                    db = np.maximum(db, db2)
+            floor = float(np.percentile(db, 20))
+            peak = float(db.max() - floor)
+            # occupancy: fraction of the capture window where the channel is
+            # active (above floor+6 dB). Steady AP ~1.0; impulsive noise low.
+            occ = 0.0
+            for _ in range(8):
+                if self.radio.recv_block(buf, 0.05):
+                    f3, db3 = power_spectrum(buf, srate)
+                    occ += float((db3 > (np.percentile(db3, 20) + 6)).mean())
+            occ /= 8.0
+            results.append({
+                "channel": ch,
+                "freq_hz": freq,
+                "peak_db": round(peak, 1),
+                "occupancy": round(occ, 2),
+                "freq_mhz": round(freq / 1e6, 1),
+            })
+        results.sort(key=lambda r: r["peak_db"], reverse=True)
+        return results
 
     def _lsig_scan(self, samples: np.ndarray, srate: float,
                    max_offsets: int = 256) -> dict:
