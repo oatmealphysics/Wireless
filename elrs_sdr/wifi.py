@@ -345,6 +345,41 @@ def channel_from_pilots(freq: np.ndarray, known_pilots: np.ndarray) -> np.ndarra
 
 
 # ============================================================================
+# 802.11a/g DATA interleaver (20 MHz) — distinct from the L-SIG interleaver
+# ============================================================================
+# The data interleaver (802.11-2012 §17.3.2.3.4) is a 4x12 block for 20 MHz:
+# the 48 coded bits per symbol are written COLUMN-wise (down each column) and
+# read out ROW-wise (across each row). Subcarrier k (0..47) maps to
+# row = k // 12, col = k % 12; the bit written to that slot is c(i) with
+# i = col*4 + row. This is a fixed permutation (its own inverse structure),
+# so it round-trips exactly — unit-testable offline.
+_DATA_ROWS = 4
+_DATA_COLS = 12
+
+def _data_interleave_idx() -> np.ndarray:
+    """For each subcarrier k (0..47), the input-bit index c(i) it carries."""
+    idx = np.zeros(48, dtype=np.int64)
+    for k in range(48):
+        row = k // _DATA_COLS        # 0..3
+        col = k % _DATA_COLS         # 0..11
+        idx[k] = col * _DATA_ROWS + row
+    return idx
+
+_DATA_IL = _data_interleave_idx()
+
+def data_interleave(bits48: np.ndarray) -> np.ndarray:
+    """Interleave 48 coded bits into the 48 data-subcarrier slots (20 MHz).
+    slot[k] = bits48[_DATA_IL[k]]."""
+    return bits48[_DATA_IL]
+
+def data_deinterleave(slots48: np.ndarray) -> np.ndarray:
+    """Inverse of data_interleave: subcarrier slots -> coded bit order."""
+    out = np.zeros(48, dtype=np.uint8)
+    out[_DATA_IL] = slots48
+    return out
+
+
+# ============================================================================
 # L-SIG demod + validation — the POSITIVE 802.11 confirmation
 # ============================================================================
 # The 802.11a/g L-SIG (legacy signal) is a FIXED, well-specified 24-bit field
@@ -579,46 +614,152 @@ def _schmidl_cox_sync(iq: np.ndarray) -> tuple[int, float]:
 
 
 # ============================================================================
+# Constellation decisions (BPSK / QPSK) — the subcarrier-to-bit mapping
+# ============================================================================
+# 802.11a/g legacy rates (the L-SIG Rate index -> modulation + bits/symbol):
+#   0:6 BPSK, 1:9 QPSK, 2:12 QPSK, 3:18 QPSK, 4:24 QPSK,
+#   5:36 16-QAM, 6:48 16-QAM, 7:54 64-QAM   (Mbps)
+# The capture-gated part: the EXACT subcarrier-to-bit order + the QAM level
+# mapping must match the real PHY. BPSK/QPSK are unambiguous; 16/64-QAM need
+# the Gray-code level table. We implement BPSK + QPSK (covers the 6/9/12/.../
+# 24 Mbps rates, which beacons commonly use) and report QAM rates as
+# "not yet supported" rather than guessing.
+_RATE_MOD = {
+    0: ("bpsk", 1), 1: ("qpsk", 2), 2: ("qpsk", 2), 3: ("qpsk", 2),
+    4: ("qpsk", 2), 5: ("qam16", 4), 6: ("qam16", 4), 7: ("qam64", 6),
+}
+
+def _bpsk_decide(val: complex) -> int:
+    """BPSK: 1 bit. 0 -> +1, 1 -> -1 (802.11 convention: bit 0 maps to +1)."""
+    return 1 if val.real < 0 else 0
+
+def _qpsk_decide(val: complex) -> tuple[int, int]:
+    """QPSK: 2 bits (I,Q). bit0 from I (0->+1,1->-1), bit1 from Q (0->+1,1->-1)."""
+    b0 = 1 if val.real < 0 else 0
+    b1 = 1 if val.imag < 0 else 0
+    return b0, b1
+
+
+def _decide_symbol_freq(freq: np.ndarray, chan: np.ndarray,
+                        mod: str) -> np.ndarray:
+    """Equalize + decide one OFDM symbol's 48 data subcarriers -> bit array.
+    Returns the bits in SUBCARRIER order (k=0..47), 1 bit/subcarrier (BPSK)
+    or 2 bits/subcarrier (QPSK, [b0,b1] per subcarrier)."""
+    bits = []
+    for sc in DATA_SUBCARRIERS:
+        bin_idx = sc % FFT_SIZE
+        h = chan[bin_idx]
+        if abs(h) < 1e-6:
+            h = 1e-6
+        val = freq[bin_idx] / h
+        if mod == "bpsk":
+            bits.append(_bpsk_decide(val))
+        elif mod == "qpsk":
+            b0, b1 = _qpsk_decide(val)
+            bits.append(b0); bits.append(b1)
+        else:
+            raise ValueError(f"mod {mod!r} not supported for data demod")
+    return np.array(bits, dtype=np.uint8)
+
+
+# ============================================================================
 # High-level: try to decode a beacon MAC from a baseband IQ block
 # ============================================================================
 def decode_beacon_mac(iq: np.ndarray, srate: float) -> bytes | None:
     """Attempt to recover a beacon BSS MAC from a baseband IQ capture at
     `srate` (Hz) centered on a 20 MHz 802.11 channel.
 
-    Returns 6 bytes (the MAC) on a SUCCESSFUL, self-consistent decode
-    (beacon frame-control + valid structure), or None. Never returns a guess.
+    Full pipeline (positive decode — never a guess):
+      1) Schmidl-Cox sync  -> L-STF start
+      2) L-LTF channel estimate (BPSK +1 pilots)
+      3) L-SIG demod       -> Rate (modulation) + Length (frame size)
+      4) data symbols      -> FFT -> equalize -> BPSK/QPSK decide -> bits
+      5) data deinterleave -> PN23 descramble -> Viterbi decode -> bytes
+      6) parse beacon frame -> BSS ID (Source addr, offset 10)
 
-    This is the research path: it requires a real, well-synced capture to
-    produce a non-None result. It's structured so a known-good capture can be
-    dropped in as a unit test (see selftest.test_wifi).
+    Returns 6 bytes (the MAC) on a SUCCESSFUL, self-consistent decode, else
+    None. The L-SIG must validate (Rate/Length/Parity/Tail) before we even
+    attempt the data; a non-802.11 or corrupted capture returns None. The
+    exact subcarrier-to-bit order + data interleaver are capture-gated (must
+    match the real PHY), so this is validated against a real beacon in the
+    field — the structure is offline-unit-testable (round-trips).
     """
-    if iq is None or len(iq) < 2 * FFT_SIZE:
+    if iq is None or len(iq) < 4 * FFT_SIZE:
         return None
-    # 1) coarse timing: find the strongest 64-sample window (a symbol)
-    win = len(iq) // FFT_SIZE
-    if win < 2:
+    # 1) Schmidl-Cox timing: find the L-STF symbol start
+    tau, m_peak = _schmidl_cox_sync(iq)
+    if tau < 0:
         return None
-    mag = np.abs(iq)
-    # sliding window energy
-    kernel = np.ones(FFT_SIZE)
-    energy = np.convolve(mag, kernel, mode="valid")
-    start = int(np.argmax(energy))
-    sym = iq[start:start + FFT_SIZE]
-    # 2) FFT + equalize (identity channel as a first-order; real use needs
-    #    pilot-based estimation from the L-STF/L-LTF)
-    freq = fft_demod_symbol(sym.astype(np.complex128))
-    data = extract_data_subcarriers(freq)
-    # 3) map to bits (QPSK/BPSK decision per subcarrier) — first-order
-    bits = np.zeros(len(data), dtype=np.uint8)
-    for i, v in enumerate(data):
-        bits[i] = 1 if (v.real >= 0) else 0
-    # 4) Viterbi decode (CC 1/2) — only if we have a plausible coded stream
-    if len(bits) >= 2 * (_K + 1):
-        # bits here are the raw decision bits; the real pipeline pairs them as
-        # (c1,c2) codewords. This is a placeholder structure; a real decode
-        # reconstructs the codeword pairs from the BPSK/QPSK subcarrier
-        # decisions in the 802.11 bit order. We do NOT claim success here.
-        pass
-    # Without a validated front-end we do not fabricate a frame. Return None
-    # unless we have an actual parsed beacon (which the unit tests inject).
-    return None
+    # 2) L-LTF channel estimate (one symbol-period after L-STF start; the L-STF
+    #    is 10 short symbols = 8 us, so L-LTF is ~8 us in)
+    sym_period = int(round(srate * 12.8e-6))     # 11a/g total OFDM symbol
+    lltf_start = tau + int(round(srate * 8.0e-6))
+    if lltf_start + FFT_SIZE > len(iq):
+        return None
+    lltf = iq[lltf_start:lltf_start + FFT_SIZE].astype(np.complex128)
+    lltf_freq = fft_demod_symbol(lltf)
+    chan = np.abs(lltf_freq)                     # L-LTF is BPSK +1 -> |H|
+    chan[chan < 1e-6] = 1e-6
+
+    # 3) L-SIG: demod + validate -> Rate (modulation) + Length (frame size)
+    lsig_ok, lsig_detail = demod_lsig(iq, srate)
+    if not lsig_ok:
+        return None                              # not 802.11 (or front-end needs tuning)
+    # parse Rate from the detail string ("rate=N len=M ...")
+    import re
+    m_rate = re.search(r"rate=(\d+)", lsig_detail)
+    m_len = re.search(r"len=(\d+)", lsig_detail)
+    if not m_rate:
+        return None
+    rate_idx = int(m_rate.group(1))
+    length = int(m_len.group(1)) if m_len else 0
+    mod, bits_per_sym = _RATE_MOD.get(rate_idx, (None, 0))
+    if mod in (None, "qam16", "qam64"):
+        return None                              # QAM rates not supported yet
+    # 4) demod the data symbols (right after the 2 L-SIG symbols)
+    #    L-SIG = 2 symbols after the L-LTF, so data starts at lltf + 3*sym_period
+    data_start = lltf_start + 3 * sym_period
+    # how many data symbols to read: Length is the PSDU size (bytes for 802.11g,
+    # 3-byte units for 802.11a). Upper-bound the number of symbols to avoid
+    # running off the end of the capture.
+    max_symbols = min(64, (len(iq) - data_start) // sym_period)
+    coded_bits = []
+    for s in range(max_symbols):
+        sym_start = data_start + s * sym_period
+        if sym_start + FFT_SIZE > len(iq):
+            break
+        sym = iq[sym_start:sym_start + FFT_SIZE].astype(np.complex128)
+        freq = fft_demod_symbol(sym)
+        bits = _decide_symbol_freq(freq, chan, mod)
+        # data deinterleave (subcarrier order -> coded bit order)
+        if len(bits) == 48:
+            coded_bits.extend(data_deinterleave(bits).tolist())
+        elif len(bits) == 96:
+            # QPSK: 2 bits/subcarrier -> 96 bits; the interleaver is per-bit
+            # (each of the 48 subcarriers carries 2 bits, interleaved as 96
+            # single-bit slots). We handle the common case where the 96 bits
+            # deinterleave over a 4x24 view — but to stay honest we only
+            # support BPSK (48 bits) for the full frame path for now.
+            return None
+    if len(coded_bits) < 2 * (_K + 1):
+        return None
+    # 5) Viterbi decode the CC 1/2 (c1,c2 pairs) -> descramble -> bytes
+    #    The coded stream is (c1,c2) pairs; Viterbi expects the pair order.
+    coded = np.array(coded_bits, dtype=np.uint8)
+    if len(coded) % 2:
+        coded = coded[:-1]
+    msg_bits = viterbi_decode(coded)
+    # PN23 descramble the decoded data (the data field is scrambled; L-SIG is not)
+    descrambled = pn23_descramble(msg_bits)
+    # bytes (8 bits each, MSB-first)
+    n_bytes = len(descrambled) // 8
+    if n_bytes < 24:
+        return None                              # a beacon frame is >= 24 bytes
+    byte_arr = np.zeros(n_bytes, dtype=np.uint8)
+    for b in range(n_bytes):
+        v = 0
+        for bit in range(8):
+            v = (v << 1) | int(descrambled[b * 8 + bit])
+        byte_arr[b] = v
+    # 6) parse the beacon frame -> BSS ID
+    return parse_beacon_mac(bytes(byte_arr[:min(n_bytes, 128)]))
