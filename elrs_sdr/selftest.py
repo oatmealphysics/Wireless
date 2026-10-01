@@ -494,8 +494,8 @@ def test_wifi_phy():
           f"corr={corr_real:.2f} tau={tau_real}")
     wnoise = (rng2.standard_normal(n_sync) + 1j * rng2.standard_normal(n_sync)) * 0.5
     _, corr_noise = wifi._ll_stf_sync(wnoise)
-    check("L-STF matched-filter does NOT saturate on white noise (corr < 0.25)",
-          corr_noise < 0.25, f"corr={corr_noise:.3f}")
+    check("L-STF matched-filter does NOT saturate on white noise (score < 0.5)",
+          corr_noise < 0.5, f"corr={corr_noise:.3f}")
 
     # --- 802.11a/g subcarrier map: exactly 48 data + 4 pilot ---
     check("802.11a 20MHz has exactly 48 data subcarriers",

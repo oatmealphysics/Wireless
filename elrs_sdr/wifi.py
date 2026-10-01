@@ -537,7 +537,7 @@ def demod_lsig(iq: np.ndarray, srate: float) -> tuple[bool, str]:
     #    cross-correlate against the known L-STF reference. Require a strong,
     #    sharp peak (the real 802.11 preamble); noise gives a low/flat corr.
     tau, stf_corr = _ll_stf_sync(iq)
-    if tau < 0 or stf_corr < 0.25:
+    if tau < 0 or stf_corr < 0.5:
         return False, f"no_stf_sync (corr={stf_corr:.2f})"
     # 2) the L-LTF is one symbol-period after the L-STF; use it for channel
     #    estimation (pilots are BPSK +1)
@@ -581,57 +581,78 @@ def demod_lsig(iq: np.ndarray, srate: float) -> tuple[bool, str]:
 
 
 def _ll_stf_ref() -> np.ndarray:
-    """The 802.11a/g L-STF (short training field) reference: a known 64-point
-    sequence repeated 10 times (10 short symbols x 0.8 us). This is the
-    standard 802.11a preamble short-training sequence (the well-known
-    [1,1,-1,1,-1,-1,1,-1] pattern structure, normalized). Cross-correlating
-    the baseband IQ against this is the proven L-STF sync (used by SWiFi and
-    gr-ieee802-11) and gives a sharp, noise-robust peak at the preamble start
-    — unlike Schmidl-Cox, it does NOT saturate to 1.0 on white noise."""
-    # 802.11a L-STF: the short training sequence is a 64-symbol BPSK sequence.
-    # The canonical 64-point L-STF (normalized to unit energy) — the standard
-    # 11a preamble short symbols. We build it from the known structure: each
-    # short symbol is a 64-point sequence; the 10 are identical.
-    # The standard 11a L-STF 64-point sequence (the 'short symbol' = a 64-point
-    # sequence with the specific BPSK pattern). Using the well-known sequence:
-    stf64 = np.array([
-        1, 1, -1, 1, -1, -1, 1, -1,
-        1, 1, -1, 1, -1, -1, 1, -1,
-        1, -1, -1, -1, 1, 1, -1, 1,
-        -1, -1, 1, -1, -1, 1, 1, -1,
-        1, 1, -1, 1, -1, -1, 1, -1,
-        1, 1, -1, 1, -1, -1, 1, -1,
-        1, -1, -1, -1, 1, 1, -1, 1,
-        -1, -1, 1, -1, -1, 1, 1, -1,
-    ], dtype=np.complex128)
-    # 10 identical short symbols
+    """The 802.11a L-STF (short training field) reference: the REAL 64-sample
+    short-training sequence, repeated 10 times. Sourced from the proven
+    gr-ieee802-11 (bastibl) codebase — utils/sync_words.py. NOT a hand-rolled
+    guess: this is the actual 802.11a preamble short symbol (sparse, with
+    (1+1j)/(−1−1j) at the specified positions, scaled by sqrt(52/24)).
+    Cross-correlating the baseband IQ against this is the proven L-STF sync.
+    """
+    # The real 802.11a short training sequence (64 samples), from
+    # gr-ieee802-11/utils/sync_words.py (Bastian Bloessl, GPL). Verified:
+    # len==64, power==52 (matches the source's own self-check).
+    scale = (52.0 ** 0.5) / (24.0 ** 0.5)
+    short = [
+        0, 0, 0, 0, 0, 0, 0, 0,
+        1 + 1j, 0, 0, 0, -1 - 1j, 0, 0, 0,
+        1 + 1j, 0, 0, 0, -1 - 1j, 0, 0, 0,
+        -1 - 1j, 0, 0, 0, 1 + 1j, 0, 0, 0,
+        0, 0, 0, 0, -1 - 1j, 0, 0, 0,
+        -1 - 1j, 0, 0, 0, 1 + 1j, 0, 0, 0,
+        1 + 1j, 0, 0, 0, 1 + 1j, 0, 0, 0,
+        1 + 1j, 0, 0, 0, 0, 0, 0, 0,
+    ]
+    assert len(short) == 64, f"L-STF ref must be 64 samples, got {len(short)}"
+    stf64 = np.array([scale * x for x in short], dtype=np.complex128)
+    # 10 identical short symbols (the 802.11a L-STF)
     ref = np.tile(stf64, 10)
     return ref / (np.linalg.norm(ref) + 1e-12)
 
 
+def _ll_ltf_ref() -> np.ndarray:
+    """The 802.11a L-LTF (long training field) reference: the REAL 64-sample
+    long-training sequence (unrotated, the 11a form). From gr-ieee802-11
+    utils/sync_words.py (exact source values). Used for channel estimation
+    (known pilot values)."""
+    long_norm = [
+        0, 0, 0, 0, 0, 0, 1, 1,
+        -1, -1, 1, 1, -1, 1, -1, 1,
+        1, 1, 1, 1, 1, -1, -1, 1,
+        1, -1, 1, -1, 1, 1, 1, 1,
+        0, 1, -1, -1, 1, 1, -1, 1,
+        -1, 1, -1, -1, -1, -1, -1, 1,
+        1, -1, -1, 1, -1, 1, -1, 1,
+        1, 1, 1, 0, 0, 0, 0, 0,
+    ]
+    assert len(long_norm) == 64, f"L-LTF ref must be 64 samples, got {len(long_norm)}"
+    return np.array(long_norm, dtype=np.complex128)
+
+
 def _ll_stf_sync(iq: np.ndarray) -> tuple[int, float]:
-    """L-STF matched-filter sync (the proven 802.11a timing method).
-    Cross-correlate the baseband IQ against the known L-STF reference (10
-    identical short symbols). Returns (tau, peak_corr) where tau is the sample
-    index of the L-STF START and peak_corr is the normalized correlation peak
-    (1.0 = perfect match, ~0 = noise). This is the SWiFi/gr-ieee802-11
-    approach: sharp, noise-robust, does NOT saturate on white noise."""
+    """L-STF matched-filter sync (the proven 802.11a timing method, from
+    gr-ieee802-11). Cross-correlate the baseband IQ against the known L-STF
+    reference (10 identical short symbols). Returns (tau, score) where tau is
+    the L-STF start index and score is a 0..1 peak-to-noise metric (1.0 = a
+    strong, clean preamble; ~0 = noise). The score is the correlation peak
+    relative to the noise floor of the correlation (peak / (k * noise_std)),
+    so a real preamble gives a high score and white noise a low one (no
+    Schmidl-Cox saturation)."""
     n = len(iq)
     ref = _ll_stf_ref()
     m = len(ref)
     if n < m + 64:
         return -1, 0.0
-    # cross-correlate directly (np.correlate: 'full' mode; the peak is at the
-    # index where the ref best matches the IQ). Using the conjugate reference
-    # gives the matched-filter (phase-aligned) correlation.
     x = iq.astype(np.complex128)
-    # np.correlate(x, ref, 'valid') gives n-m+1 values: corr[k] = sum x[k+j]*conj(ref[j])
-    corr = np.correlate(x, np.conj(ref), mode="valid").real
-    peak = float(np.max(corr))
-    ref_energy = float(np.sqrt(np.sum(np.abs(ref) ** 2)))
-    norm = peak / (ref_energy * (np.linalg.norm(x) + 1e-12))
-    tau = int(np.argmax(corr))
-    return tau, min(1.0, max(0.0, norm))
+    # matched-filter correlation: corr[k] = sum x[k+j] * conj(ref[j])
+    corr = np.correlate(x, np.conj(ref), mode="valid")
+    abs_corr = np.abs(corr)
+    peak = float(abs_corr.max())
+    tau = int(np.argmax(abs_corr))
+    # noise floor: median |corr| (correlation is mostly noise between frames)
+    noise_floor = float(np.median(abs_corr)) + 1e-12
+    # peak-to-noise ratio mapped to 0..1 (a clean preamble is ~10x+ noise)
+    pnr = peak / (noise_floor * 10.0)
+    return tau, min(1.0, max(0.0, pnr))
 
 
 # ============================================================================
@@ -711,7 +732,7 @@ def decode_beacon_mac(iq: np.ndarray, srate: float) -> bytes | None:
     #    cross-correlate against the known L-STF reference. Require a strong
     #    peak (real preamble); noise gives a low/flat corr.
     tau, stf_corr = _ll_stf_sync(iq)
-    if tau < 0 or stf_corr < 0.25:
+    if tau < 0 or stf_corr < 0.5:
         return None
     # 2) L-LTF channel estimate (one symbol-period after L-STF start; the L-STF
     #    is 10 short symbols = 8 us, so L-LTF is ~8 us in)
