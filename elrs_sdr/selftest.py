@@ -641,6 +641,16 @@ def test_detections_table():
           hasattr(_radio, "write_capture_bundle"))
     check("DroneScanner has capture_raw() (the live raw-IQ save)",
           hasattr(DroneScanner, "capture_raw"))
+    # the radio lock (thread-safety fix): step() and capture_raw() must both
+    # hold self._radio_lock so the live scan loop and a webui capture never
+    # call radio.recv_block() concurrently (UHD's RX stream is not
+    # thread-safe; concurrent pulls segfaulted the server on a double Save-IQ).
+    check("DroneScanner has a _radio_lock (thread-safety for UHD RX)",
+          "self._radio_lock = threading.Lock()" in inspect.getsource(DroneScanner.__init__))
+    check("step() holds the radio lock around tune2/recv_block",
+          "with self._radio_lock" in inspect.getsource(DroneScanner.step))
+    check("capture_raw() holds the same radio lock",
+          "with self._radio_lock" in inspect.getsource(DroneScanner.capture_raw))
     check("dashboard table labeled as all-bands", "(all bands)" in html)
     check("dashboard has no view-tabs anymore (table always visible)",
           "vt-table" not in html and "viewtabs" not in html)
