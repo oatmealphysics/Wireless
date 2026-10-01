@@ -264,22 +264,47 @@ def cmd_scan(args):
 def cmd_capture(args):
     _need_uhd()
     from .dronescan import (band_by_name, wifi_channel_freq, wifi_scan_channels,
-                            DroneScanner)
-    # --- resolve the capture frequency ---
-    # Priority: --channel (airodump-style) > --band > --freq
+                            DroneScanner, BANDS)
+    # --- resolve band, freq, srate, samples with SENSIBLE PER-BAND DEFAULTS ---
+    # The user should NOT have to type --srate/--samples. The program picks
+    # them from the band (or channel -> band). Explicit flags still override.
     scan_first = getattr(args, "scan", False)
+    srate_set = getattr(args, "_srate_set", False)
+    samples_set = ("--samples" in (getattr(args, "_argv", []) or []))
+
+    # determine the target band (channel 1-14 -> 2.4, 36+ -> 5.8/5ghz, or --band)
+    band_name = getattr(args, "band", None)
     if getattr(args, "channel", None):
         ch = int(args.channel)
         args.freq = wifi_channel_freq(ch)
-        # a 20 MHz Wi-Fi channel needs a wider capture than 4 Msps; default to
-        # 8 Msps (USB2-sustainable) unless the user overrode it.
-        if not getattr(args, "_srate_set", False):
+        band_name = "2.4" if 1 <= ch <= 14 else "5.8"
+        # a 20 MHz Wi-Fi channel needs a wider window than the band default;
+        # default to 8 Msps (USB2-sustainable) unless overridden.
+        if not srate_set:
             args.srate = 8e6
-        print(f"channel {ch} -> {args.freq/1e6:.1f} MHz", flush=True)
-    elif getattr(args, "band", None):
-        b = band_by_name(args.band)
+    elif band_name:
+        b = band_by_name(band_name)
         args.freq = (b.lo_hz + b.hi_hz) / 2
-        args.srate = b.srate
+        if not srate_set:
+            args.srate = b.srate
+    else:
+        # raw --freq: pick the band that contains it (for a sensible default rate)
+        for b in BANDS:
+            if b.lo_hz - 1e6 <= args.freq <= b.hi_hz + 1e6:
+                if not srate_set:
+                    args.srate = b.srate
+                break
+        else:
+            if not srate_set:
+                args.srate = 4e6   # safe default outside any known band
+    band_name = getattr(args, "band", None) or (
+        "2.4" if (1 <= args.freq < 2.5e9) else
+        "5.8" if (5.1e9 <= args.freq < 6.0e9) else None)
+
+    # sensible default sample count: ~3 seconds at the chosen rate (enough to
+    # catch a periodic beacon, short enough to be quick). Override with --samples.
+    if not samples_set:
+        args.samples = int(round(args.srate * 3.0))
 
     r = _open_radio(args)
 
@@ -726,11 +751,12 @@ def build_parser():
 
 def main(argv=None):
     parser = build_parser()
-    # detect whether the user explicitly set --srate (so --channel's sensible
-    # 8 Msps default doesn't clobber an explicit choice)
+    # detect whether the user explicitly set --srate / --samples (so the
+    # per-band sensible defaults don't clobber an explicit choice)
     argv = list(sys.argv[1:]) if argv is None else list(argv)
     args = parser.parse_args(argv)
     args._srate_set = ("--srate" in argv)
+    args._argv = argv
     args.fn(args)
 
 
