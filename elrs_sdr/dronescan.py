@@ -29,6 +29,7 @@ pure numpy -> unit-testable offline without a radio (see selftest fixtures).
 from __future__ import annotations
 
 import math
+import threading
 import time
 import numpy as np
 from dataclasses import dataclass, field
@@ -326,6 +327,13 @@ class DroneScanner:
         self._tracked: dict[str, dict] = {}
         # time-window for the table (seconds). 0 = "all time" (no filter).
         self.window_s: float = 0.0
+        # UHD's RX stream is NOT thread-safe: the live scan loop AND a
+        # webui-initiated raw capture both call radio.recv_block() on the same
+        # stream. Concurrent pulls corrupt each other (a blocked recv -> the
+        # browser's fetch times out -> "Failed to fetch"). This lock serializes
+        # all radio access: step() and capture_raw() each hold it, so only one
+        # touches the radio at a time.
+        self._radio_lock = threading.Lock()
 
     def _current_band_name(self) -> str:
         if self.locked_band:
@@ -418,13 +426,18 @@ class DroneScanner:
         buf = np.zeros(4096, dtype=np.complex64)
         chunks = []
         t_end = time.monotonic() + seconds
+        # Hold the SAME radio lock the scan loop uses, so the live scanner and
+        # this capture never call radio.recv_block() at the same time (UHD's RX
+        # stream is not thread-safe; concurrent pulls segfault the server).
+        # The scan loop simply waits its turn while we record.
         try:
-            self.radio.tune2(center, b.srate, self.gain)
-            self.radio.recv_block(buf, 0.1)   # settle, discard
-            while time.monotonic() < t_end:
-                cnt = self.radio.recv_block(buf, 0.5)
-                if cnt:
-                    chunks.append(buf[:cnt].copy())
+            with self._radio_lock:
+                self.radio.tune2(center, b.srate, self.gain)
+                self.radio.recv_block(buf, 0.1)   # settle, discard
+                while time.monotonic() < t_end:
+                    cnt = self.radio.recv_block(buf, 0.5)
+                    if cnt:
+                        chunks.append(buf[:cnt].copy())
         except Exception as e:
             return {"ok": False, "error": f"capture failed: {e!r}"}
         if not chunks:
@@ -491,26 +504,34 @@ class DroneScanner:
         return best
 
     def step(self, window_s: float | None = None) -> dict:
-        """Advance one observation. Returns the current state dict (for API)."""
+        """Advance one observation. Returns the current state dict (for API).
+
+        Radio access (tune2 + recv_block) is held under self._radio_lock so it
+        can't collide with a concurrent capture_raw() from the webui (UHD's RX
+        stream is not thread-safe; concurrent pulls segfault)."""
         name = self._current_band_name()
         b = band_by_name(name)
         center = (b.lo_hz + b.hi_hz) / 2.0
-        if self._tuned != name:
-            # retune to the new band + settle (discard the LO-transition block)
-            self.radio.tune2(center, b.srate, self.gain)
-            self.radio.recv_block(self._buf, 0.1)   # settle, discard
-            self._tuned = name
-            self._steps_on_band = 0
-            self._band_entered_at = time.monotonic()
-            # reset the rolling IQ buffer for the 802.11 L-SIG demod (the old
-            # band's samples are not contiguous with the new band's)
-            self.states[name].iq_buf = np.zeros(0, dtype=np.complex64)
-            self.states[name].lsig_valid = False
-            self.states[name].lsig_rate = None
-            self.states[name].lsig_len = None
-            self.states[name]._lsig_scan_count = 0
-        # grab a block
-        cnt = self.radio.recv_block(self._buf, self.dwell_s)
+        # --- radio access (serialized with capture_raw via _radio_lock) ---
+        with self._radio_lock:
+            if self._tuned != name:
+                # retune to the new band + settle (discard the LO-transition block)
+                self.radio.tune2(center, b.srate, self.gain)
+                self.radio.recv_block(self._buf, 0.1)   # settle, discard
+                self._tuned = name
+                self._steps_on_band = 0
+                self._band_entered_at = time.monotonic()
+                # reset the rolling IQ buffer for the 802.11 L-SIG demod (the old
+                # band's samples are not contiguous with the new band's)
+                self.states[name].iq_buf = np.zeros(0, dtype=np.complex64)
+                self.states[name].lsig_valid = False
+                self.states[name].lsig_rate = None
+                self.states[name].lsig_len = None
+                self.states[name]._lsig_scan_count = 0
+            # grab a block
+            cnt = self.radio.recv_block(self._buf, self.dwell_s)
+        # --- non-radio work (classification, cycle) runs WITHOUT the lock so it
+        #     doesn't hold up the radio for a concurrent capture ---
         st = self.states[name]
         st.last_update = time.time()
         if cnt and cnt > 0:
