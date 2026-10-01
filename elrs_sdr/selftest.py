@@ -777,8 +777,6 @@ def test_detections_table():
           len(ds.wifi_scan_channels("2.4")) == 13)
     check("DroneScanner has wifi_scan() (airodump-style channel sweep)",
           hasattr(DroneScanner, "wifi_scan"))
-    check("capture CLI has --channel (airodump-style) arg",
-          "--channel" in (p.__doc__ or "") or True)  # (verified via parser below)
     from . import cli as _cli
     _p = _cli.build_parser()
     _a = _p.parse_args(["capture", "--channel", "6", "--scan"])
