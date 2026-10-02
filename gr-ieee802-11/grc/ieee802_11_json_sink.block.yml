@@ -1,0 +1,35 @@
+# json_sink — tap decoded 802.11 frames and print one JSON line per frame
+# to stdout (the elrs-sdr webui integration seam).
+
+id: ieee802_11_json_sink
+label: JSON Frame Sink (stdout)
+category: '[IEEE802.11]'
+
+parameters:
+-   id: center_freq_hz
+    label: Center Freq (Hz)
+    dtype: float
+    default: '2437000000.0'
+-   id: channel
+    label: Wi-Fi Channel
+    dtype: int
+    default: '6'
+-   id: include_raw
+    label: Include Raw
+    dtype: bool
+    default: 'False'
+    options: ['True', 'False']
+    option_labels: [Enable, Disable]
+
+inputs:
+-   domain: message
+    id: in
+    optional: false
+
+outputs: []
+
+templates:
+    imports: import ieee802_11
+    make: ieee802_11.json_sink(${center_freq_hz}, ${channel}, ${include_raw})
+
+file_format: 1
