@@ -319,10 +319,12 @@ def cmd_capture(args):
         ch = int(args.channel)
         args.freq = wifi_channel_freq(ch)
         band_name = "2.4" if 1 <= ch <= 14 else "5.8"
-        # a 20 MHz Wi-Fi channel needs a wider window than the band default;
-        # default to 8 Msps (USB2-sustainable) unless overridden.
+        # A 20 MHz Wi-Fi channel needs a window that covers the WHOLE channel
+        # (center +/-10 MHz) — 8 Msps only sees 8 MHz and misses the outer
+        # half of the beacon's bandwidth. Default to 20 Msps (sustainable over
+        # USB 2.0 with 32-bit I/Q) unless overridden.
         if not srate_set:
-            args.srate = 8e6
+            args.srate = 20e6
     elif band_name:
         b = band_by_name(band_name)
         args.freq = (b.lo_hz + b.hi_hz) / 2
@@ -422,40 +424,48 @@ def cmd_spectrum(args):
         if r.recv_block(buf, 0.02):
             chunks.append(buf.copy())
     iq = np.concatenate(chunks) if chunks else buf
+    iq = iq.astype(np.complex128) - iq.mean()   # DC remove (B205 LO image)
     print(f"\nspectrum @ {freq/1e6:.1f} MHz{chnote}, {srate/1e6:.1f} Msps "
-          f"({len(iq):,} samples = {len(iq)/srate*1000:.0f} ms), gain={gain:.0f} dB")
+          f"({len(iq):,} samples = {len(iq)/srate*1000:.0f} ms), gain={gain:.0f} dB "
+          f"[DC-removed]")
     # DC offset (a large DC offset = receiver problem / saturated)
     dc = float(np.mean(iq))
     dc_db = 20 * np.log10(abs(dc) + 1e-12)
     ac_db = 20 * np.log10(float(np.std(iq)) + 1e-12)
-    print(f"  DC offset: {dc_db:.1f} dB (relative to 1.0)  "
-          f"[should be < -20 dB; high = receiver/DC problem]")
+    print(f"  DC offset (post-removal): {dc_db:.1f} dB  "
+          f"[should be < -40 dB after removal]")
     print(f"  AC (signal+noise) std: {ac_db:.1f} dB")
     # power spectrum (average over several blocks for stability)
     f, db = power_spectrum(iq[:min(len(iq), 8192*64)], srate)
     floor = float(np.percentile(db, 20))
     peak_idx = int(np.argmax(db))
     peak = float(db[peak_idx] - floor)
+    # AP-band mean power (the +/-8 MHz channel window around center)
+    inband = (f >= -8e6) & (f <= 8e6)
+    band_db = float(db[inband].mean() - floor)
     pres = db > (floor + 8)
     occ = float(pres.mean())
     print(f"  noise floor (20th pct): {floor:.1f} dB")
+    print(f"  AP-band mean (±8 MHz): {band_db:.1f} dB above floor  "
+          f"[a real 802.11 AP is typically +8..+20 dB here]")
     print(f"  peak: {peak:.1f} dB above floor at {f[peak_idx]/1e6:+.2f} MHz offset")
-    print(f"  occupancy (above floor+8 dB): {occ*100:.1f}%  "
-          f"[a real AP would be ~30-100%; noise is <5%]")
+    print(f"  occupancy (above floor+8 dB): {occ*100:.1f}%")
     # top 8 peaks
     order = np.argsort(db)[::-1][:8]
     print("  top spectral peaks (offset from center, dB above floor):")
     for k in sorted(order):
         print(f"    {f[k]/1e6:+7.2f} MHz   {db[k]-floor:6.1f} dB")
-    if peak < 8:
+    if band_db > 12:
+        print(f"\n  -> AP-BAND SIGNAL PRESENT (band mean {band_db:.0f} dB above floor).")
+        print(f"     This is a real carrier on this channel — survey/capture it")
+        print(f"     and the 802.11 detector will try to decode the beacon MAC.")
+    elif peak < 8:
         print("\n  -> NO clear carrier. Either no signal in range, or the B205")
         print("     isn't receiving well (try lower gain, check antenna).")
-    elif occ > 0.3:
-        print(f"\n  -> STEADY signal present! Peak at {f[peak_idx]/1e6:+.2f} MHz.")
-        print(f"     This is a real carrier — capture it and we can ID it.")
     else:
-        print(f"\n  -> Peak present but low occupancy ({occ*100:.0f}%) — a weak or")
-        print("     intermittent signal (or a narrow carrier).")
+        print(f"\n  -> Peak present ({peak:.0f} dB) but AP-band is quiet "
+              f"({band_db:.1f} dB) — likely an impulsive artifact (DC spike /")
+        print("     narrow interferer), not a steady AP.")
 
 
 # ----------------------------------------------------------------------------
@@ -536,7 +546,7 @@ def cmd_survey(args):
         results = []
     res_by_ch = {r_["channel"]: r_ for r_ in results}
 
-    print(f"{'ch':>4}  {'freq(MHz)':>9}  {'peak':>6}  {'occ':>5}  signal / identification")
+    print(f"{'ch':>4}  {'freq(MHz)':>9}  {'APocc':>6}  {'peak':>6}  signal / identification")
     print("-" * 78, flush=True)
     stream = r._open_rx_stream()
     buf = np.zeros(8192, dtype=np.complex64)
@@ -544,25 +554,51 @@ def cmd_survey(args):
     for ch, f in zip(channels, freqs):
         r.tune(f, srate, gain, args.antenna)
         _t.sleep(0.05)
-        r._recv(stream, buf, 0.3, meta)
-        if np.any(buf):
-            f_arr, db = power_spectrum(buf, srate)
+        # ---- accumulate blocks over the full dwell: an AP beacon is
+        # PERSISTENT (every ~100 ms) and spread across the 20 MHz channel;
+        # the B205 DC artifact is a few narrow bins and bursty. Per-block
+        # AP-band occupancy over the dwell is the discriminator. ----
+        t_end = _t.monotonic() + args.dwell
+        blocks = 0
+        ap_active_blocks = 0
+        peak_db = 0.0
+        id_blocks = []
+        while _t.monotonic() < t_end:
+            if not r._recv(stream, buf, 0.02, meta):
+                continue
+            n = int(buf.size)
+            if n == 0:
+                continue
+            # DC removal (B205 has no IF filter; the DC/LO image at ~0.5 MHz
+            # from center would otherwise dominate any single-block metric)
+            iq = buf[:n].astype(np.complex128)
+            iq = iq - iq.mean()
+            f_arr, db = power_spectrum(iq, srate)
             floor = float(np.percentile(db, 20))
-            peak = float(db.max() - floor)
-            occ = float((db > (floor + 8)).mean())
-        else:
-            peak, occ = 0.0, 0.0
-        ident = _identify_carrier(buf, srate)
-        if occ > 0.7 and peak > 15:
-            sig = "** STEADY ** " + (ident or "unidentified")
-        elif occ > 0.3:
-            sig = "intermittent " + (ident or "")
-        elif peak > 15:
-            sig = ident or "impulsive/noise"
+            inband = (f_arr >= -10e6) & (f_arr <= 10e6)
+            band_db = float(db[inband].mean() - floor)
+            peak_db = max(peak_db, float(db.max() - floor))
+            blocks += 1
+            if band_db > 6.0:
+                ap_active_blocks += 1
+                if len(id_blocks) < 4:
+                    id_blocks.append(iq.astype(np.complex64))
+        ap_occ = (ap_active_blocks / blocks) if blocks else 0.0
+        # identification on the strongest DC-removed block (if any)
+        ident = None
+        if id_blocks:
+            best_blk = max(id_blocks, key=lambda b: float(np.mean(np.abs(b) ** 2)))
+            ident = _identify_carrier(best_blk, srate)
+        if ap_occ > 0.5:
+            sig = "** AP-BAND SIGNAL ** " + (ident or "(802.11 not yet decoded)")
+        elif ap_occ > 0.15:
+            sig = "intermittent AP-band carrier " + (ident or "")
+        elif peak_db > 15:
+            sig = "impulsive (DC artifact/noise)"
         else:
             sig = "quiet"
-        bar = "#" * int(occ * 20)
-        print(f"{ch:>4}  {f/1e6:>9.1f}  {peak:>5.1f}  {occ*100:>4.0f}%  "
+        bar = "#" * int(ap_occ * 20)
+        print(f"{ch:>4}  {f/1e6:>9.1f}  {ap_occ*100:>5.0f}%  {peak_db:>5.1f}  "
               f"{bar:<20} {sig}", flush=True)
     print("-" * 78, flush=True)
     best = max(channels, key=lambda c: (res_by_ch.get(c, {}).get("occupancy", 0),

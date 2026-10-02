@@ -517,6 +517,44 @@ def lsig_interleave(coded_60: np.ndarray) -> np.ndarray:
     return out
 
 
+def _chan_from_lltf(lltf_time: np.ndarray) -> np.ndarray:
+    """Estimate the per-FFT-bin channel from one time-domain L-LTF symbol.
+
+    ZF estimate H_k = X_k / P_k where P_k is the known L-LTF pilot value at
+    bin k (the FFT of the time-domain L-LTF reference). This is computed on
+    the 4 known pilot subcarriers and spread to the data subcarriers by
+    nearest-pilot linear interpolation in subcarrier index. Returns a 64-bin
+    complex array (all bins; callers use the data/pilot bins)."""
+    lltf_freq = fft_demod_symbol(lltf_time.astype(np.complex128))
+    # known pilot values = FFT of the time-domain L-LTF (unit-scale identity)
+    P = fft_demod_symbol(_ll_ltf_ref())
+    pilot_bins = PILOTS  # FFT bins of -21, -7, 7, 21
+    h_pilot = np.array([lltf_freq[b] / P[b] for b in pilot_bins],
+                       dtype=np.complex128)
+    # pilot subcarrier indices (negative = below DC), in the same order
+    p_idx = PILOT_SUBCARRIERS
+    chan = np.zeros(FFT_SIZE, dtype=np.complex128)
+    for k in range(FFT_SIZE):
+        rel = k - 32
+        if rel > 32:
+            rel -= 64
+        # nearest pilot by subcarrier index (fine for a flat 2.4/5 GHz channel)
+        if rel <= p_idx[0]:
+            h = h_pilot[0]
+        elif rel >= p_idx[-1]:
+            h = h_pilot[-1]
+        else:
+            for i in range(len(p_idx) - 1):
+                if p_idx[i] <= rel < p_idx[i + 1]:
+                    t = (rel - p_idx[i]) / (p_idx[i + 1] - p_idx[i])
+                    h = (1 - t) * h_pilot[i] + t * h_pilot[i + 1]
+                    break
+        chan[k] = h
+    # ZF guard
+    chan[abs(chan) < 1e-4] = 1e-4
+    return chan
+
+
 def demod_lsig(iq: np.ndarray, srate: float) -> tuple[bool, str]:
     """Attempt to demodulate + validate an 802.11a/g L-SIG from baseband IQ.
 
@@ -547,23 +585,8 @@ def demod_lsig(iq: np.ndarray, srate: float) -> tuple[bool, str]:
     if lltf_start + FFT_SIZE > n:
         return False, "no_lltf"
     lltf = iq[lltf_start:lltf_start + FFT_SIZE].astype(np.complex128)
-    lltf_freq = fft_demod_symbol(lltf)
-    # channel estimate: divide the received L-LTF FFT by the KNOWN L-LTF
-    # pilot values (the FFT of the time-domain L-LTF reference). This gives
-    # the complex per-subcarrier channel (amplitude + phase) — the correct ZF
-    # equalizer input (vs the old magnitude-only estimate).
-    lltf_time_ref = _ll_ltf_ref()
-    lltf_pilot = fft_demod_symbol(lltf_time_ref)
-    chan = np.zeros(FFT_SIZE, dtype=np.complex128)
-    for k in range(FFT_SIZE):
-        ref = lltf_pilot[k]
-        if abs(ref) > 1e-6:
-            chan[k] = lltf_freq[k] / ref
-        else:
-            # guard/null subcarrier: fall back to a unit-magnitude estimate
-            chan[k] = 1.0 + 0j
-    # ZF equalizer guard (avoid divide-by-zero at the data subcarriers)
-    chan[abs(chan) < 1e-4] = 1e-4
+    # channel estimate: ZF on the 4 known L-LTF pilots + interpolation
+    chan = _chan_from_lltf(lltf)
     # 3) demod the 2 L-SIG symbols (right after the L-LTF)
     lsig_start = lltf_start + sym_period
     if lsig_start + 2 * sym_period + FFT_SIZE > n:

@@ -368,7 +368,10 @@ class RadioDevice:
             floor = float(np.percentile(db, 20))
             peak = float(db.max() - floor)
             # relative to 1.0 full scale: floor_db = 20*log10(floor) approx
-            floor_db = 20.0 * np.log10(floor + 1e-12)
+            # (floor is a relative power in dB; convert back to linear, and
+            # guard against a non-positive/zero floor which would warn)
+            floor_lin = 10.0 ** (max(-120.0, floor) / 10.0)
+            floor_db = 20.0 * np.log10(floor_lin + 1e-12)
             if floor_db < target_floor_db:
                 # too quiet — raise gain (up to the B205 max ~70 dB)
                 gain = min(70.0, gain + 10.0)
