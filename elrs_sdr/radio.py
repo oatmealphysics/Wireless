@@ -357,8 +357,10 @@ class RadioDevice:
         gain = start_gain
         self.tune(freq_hz, sample_rate, gain, antenna)
         buf = np.zeros(8192, dtype=np.complex64)
-        self._open_rx_stream()
-        stream = self._usrp.get_rx_stream() if hasattr(self._usrp, "get_rx_stream") else None
+        # open the RX stream the same way the rest of the code does (handles
+        # the UHD 4.11 StreamArgs requirement — a bare get_rx_stream() call
+        # fails on the 4.11 binding).
+        stream = self._open_rx_stream()
         # grab a quick sample to measure the floor
         self._recv(stream, buf, 0.1)
         f, db = power_spectrum(buf, sample_rate)
