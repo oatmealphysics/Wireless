@@ -386,8 +386,10 @@ def cmd_capture(args):
     t0 = time.time()
     r.capture(args.samples, args.out)
     print(f"done in {time.time()-t0:.1f}s", flush=True)
-    print(f"\nto tune the detectors on this capture:", flush=True)
-    print(f"  elrs-sdr validate {args.out} --srate {args.srate:g}", flush=True)
+    print(f"\nto run the detectors on this capture:", flush=True)
+    print(f"  elrs-sdr validate {args.out}", flush=True)
+    print(f"  (the measured sample rate is saved in {args.out}.meta.txt and", flush=True)
+    print(f"   auto-read by validate — no need to type --srate)", flush=True)
 
 
 # ----------------------------------------------------------------------------
@@ -429,7 +431,7 @@ def cmd_spectrum(args):
           f"({len(iq):,} samples = {len(iq)/srate*1000:.0f} ms), gain={gain:.0f} dB "
           f"[DC-removed]")
     # DC offset (a large DC offset = receiver problem / saturated)
-    dc = float(np.mean(iq))
+    dc = float(np.mean(np.abs(iq)))
     dc_db = 20 * np.log10(abs(dc) + 1e-12)
     ac_db = 20 * np.log10(float(np.std(iq)) + 1e-12)
     print(f"  DC offset (post-removal): {dc_db:.1f} dB  "
@@ -820,6 +822,84 @@ def cmd_webui(args):
 # ----------------------------------------------------------------------------
 # validate — run the positive detectors on a captured IQ file (offline)
 # ----------------------------------------------------------------------------
+def cmd_spectra(args):
+    """Averaged power spectrum of a whole capture. The single most useful
+    diagnostic: does a REAL beacon exist in this file? A steady 802.11 AP
+    shows as a broad, flat-ish hump across the ~20 MHz channel; the B205's
+    DC/LO artifact shows as a few narrow spikes near center. Averages over
+    the whole capture so a single beacon (every 100 ms) is clearly visible
+    above the noise floor.
+    """
+    import numpy as np
+    from .radio import read_complex8, read_capture_meta
+    from .dronescan import power_spectrum
+    samples = read_complex8(args.file)
+    srate = args.srate
+    if srate is None:
+        meta = read_capture_meta(args.file)
+        srate = float(meta.get("sample_rate_hz", 4e6))
+    print(f"spectra: {len(samples):,} samples @ {srate/1e6:.3f} Msps "
+          f"from {args.file}", flush=True)
+    # ---- DC removal (B205 has no IF filter) ----
+    # Remove the block-mean DC, then the long-term (slow) drift, so the
+    # averaged spectrum isn't dominated by the DC/LO image.
+    samples = samples.astype(np.complex128)
+    samples = samples - samples.mean()
+    # ---- averaged PSD: split into ~1 s chunks, FFT each, average the
+    #     POWER (not the complex) to get a stable, low-noise spectrum.
+    chunk = int(srate * 1.0)          # ~1 s per chunk
+    chunk = max(1024, min(chunk, len(samples)))
+    n_chunks = max(1, len(samples) // chunk)
+    # raw-power averaging (correct, no dB round-trip)
+    w = np.hanning(chunk)
+    acc = None
+    f = None
+    for i in range(n_chunks):
+        seg = samples[i*chunk:(i+1)*chunk] * w
+        if len(seg) < 256:
+            break
+        spec = np.fft.fft(seg)
+        half = len(spec)//2 + 1
+        p = (np.abs(spec[:half])**2) / (n_chunks)
+        if acc is None:
+            acc = p
+            f = np.fft.rfftfreq(len(seg), d=1.0/srate)
+        else:
+            acc += p
+    ref = float(np.mean(acc) + 1e-12)
+    db = 10.0*np.log10(acc + 1e-12) - 10.0*np.log10(ref + 1e-12)
+    # ---- report ----
+    floor = float(np.percentile(db, 20))
+    # AP-band mean (the whole 20 MHz channel = full sample band at 20 Msps,
+    # or +/-10 MHz if the srate is higher)
+    band = 10e6
+    inband = (f >= -band) & (f <= band)
+    band_db = float(db[inband].mean() - floor) if inband.any() else 0.0
+    peak_idx = int(np.argmax(db))
+    peak_db = float(db[peak_idx] - floor)
+    print("="*62)
+    print(f"  noise floor (20th pct):   {floor:6.1f} dB")
+    print(f"  AP-band mean (±10 MHz):   {band_db:6.1f} dB above floor")
+    print(f"  overall peak:             {peak_db:6.1f} dB at {f[peak_idx]/1e6:+.2f} MHz")
+    print(f"  -> a real 802.11 beacon is typically +8..+20 dB AP-band mean;")
+    print(f"     a B205 DC artifact is a few narrow spikes, AP-band stays <5 dB")
+    print("="*62)
+    print("top spectral peaks (offset from center, dB above floor):")
+    order = np.argsort(db)[::-1][:args.top]
+    for k in sorted(order):
+        print(f"    {f[k]/1e6:+7.2f} MHz   {db[k]-floor:6.1f} dB")
+    if band_db > 8:
+        print(f"\n  ** AP-BAND SIGNAL PRESENT (mean {band_db:.0f} dB above floor).")
+        print(f"     A real carrier is in this capture — run `validate` to")
+        print(f"     attempt the 802.11 L-SIG/MAC decode.")
+    elif peak_db > 15:
+        print(f"\n  -> Peak ({peak_db:.0f} dB) but AP-band quiet ({band_db:.1f} dB):")
+        print(f"     likely the B205 DC/LO artifact or a narrow interferer,")
+        print(f"     NOT a steady AP beacon.")
+    else:
+        print(f"\n  -> No clear signal in this capture (peak {peak_db:.0f} dB).")
+        print(f"     The AP is too weak / out of range / not on this channel.")
+
 def cmd_validate(args):
     """Run the positive-identification detectors on a captured IQ file.
 
@@ -829,12 +909,26 @@ def cmd_validate(args):
     X should show X's detector high and the others low — that's how the
     synthetic-calibrated thresholds get confirmed.
     """
-    from .radio import read_complex8
+    from .radio import read_complex8, read_capture_meta
     from . import positivedet, dronescan as ds
     samples = read_complex8(args.file)
     srate = args.srate
+    # auto-read the sample rate from the .meta.txt sidecar (written by
+    # `capture`) when the user didn't pass --srate explicitly — the B205 mini
+    # delivers ~8 MS/s even when 20 Msps is configured, so the configured
+    # rate is wrong and the measured one (in the meta) is authoritative.
+    srate_explicit = "--srate" in (getattr(args, "_argv", []) or [])
+    if not srate_explicit:
+        meta = read_capture_meta(args.file)
+        if meta.get("sample_rate_hz"):
+            try:
+                srate = float(meta["sample_rate_hz"])
+            except ValueError:
+                pass
     print(f"validating {len(samples):,} samples @ {srate/1e6:.3f} Msps "
-          f"from {args.file}", flush=True)
+          f"from {args.file}"
+          f"{'  [srate from .meta.txt]' if not srate_explicit else ''}",
+          flush=True)
     print("=" * 62)
     print("POSITIVE-IDENTIFICATION DETECTOR METRICS (real capture)")
     print("=" * 62)
@@ -864,25 +958,51 @@ def cmd_validate(args):
                 idx = np.where(pres)[0]
                 track.append(float(freqs[idx[int(np.argmax(db[idx]))]]))
     fhss_s, fhss_m = run(positivedet.fhss_hop, track)
-    # --- L-SIG scan: try demod_lsig at many offsets to find a valid 802.11
-    #     L-SIG anywhere in the capture. The front-end's Schmidl-Cox sync may
-    #     miss the right offset on a real capture, so we brute-force offsets.
-    #     This is the tuning tool for the POSITIVE 802.11 confirmation.
+    # --- L-SIG scan: find a valid 802.11 L-SIG ANYWHERE in the capture.
+    #     Two-pass: (1) coarse scan the whole capture in 1-OFDM-symbol
+    #     (12.8 us) steps to find candidate regions, (2) a fine 1-sample
+    #     sweep around each candidate to nail the exact alignment.
+    #     demod_lsig does its own L-STF matched-filter sync, so the window
+    #     just needs to contain the full preamble+L-LTF+2xL-SIG (~5 symbols).
     from . import wifi
+    sym = max(64, int(round(srate * 12.8e-6)))        # one OFDM symbol
+    win = 8 * sym + 256                              # preamble margin + L-SIG
     lsig_hits = 0
     lsig_best = None
-    step = max(1, int(srate * 0.1e-6))       # ~0.1 us offset granularity
-    # scan a limited number of windows for speed (the L-SIG is 2 symbols)
-    n_scan = min(2000, len(samples) // (2 * int(srate * 12.8e-6) + 64))
-    for w in range(n_scan):
-        off = w * step
-        if off + 4 * 64 > len(samples):
+    # pass 1: coarse (1-symbol step) across the whole capture, capped for speed
+    step1 = sym
+    n_scan1 = min(4000, max(1, (len(samples) - win) // step1 + 1))
+    candidates = []
+    for w in range(n_scan1):
+        off = w * step1
+        if off + win > len(samples):
             break
-        ok, detail = wifi.demod_lsig(samples[off:off + 4 * 64 + 2048], srate)
+        try:
+            ok, detail = wifi.demod_lsig(samples[off:off + win], srate)
+        except Exception:
+            ok = False
         if ok:
             lsig_hits += 1
             if lsig_best is None:
                 lsig_best = (off, detail)
+            candidates.append(off)
+            if len(candidates) >= 8:        # plenty; stop the coarse pass
+                break
+    # pass 2: fine 1-sample sweep around each candidate (if the coarse pass
+    #     found a hit but the exact offset matters, refine).
+    for c in candidates[:8]:
+        lo = max(0, c - 4 * sym)
+        hi = min(len(samples) - win, c + 4 * sym)
+        for off in range(lo, hi + 1, 1):
+            try:
+                ok, detail = wifi.demod_lsig(samples[off:off + win], srate)
+            except Exception:
+                continue
+            if ok:
+                lsig_hits += 1
+                if lsig_best is None:
+                    lsig_best = (off, detail)
+                break
     rows = [
         ("LoRa / ELRS  (CONFIRMED)",  lora_s,  lora_m,  ds.DroneScanner._LORA_CLAIM),
         ("OFDM / Wi-Fi (UNCONFIRMED)",ofdm_s,  ofdm_m,  ds.DroneScanner._OFDM_CLAIM),
@@ -956,7 +1076,11 @@ def build_parser():
                          "center frequency automatically. Preferred over --freq.")
     sp.add_argument("--freq", type=float, default=None,
                     help="center frequency Hz (only if --channel is not given)")
-    sp.add_argument("--srate", type=float, default=8e6)
+    sp.add_argument("--srate", type=float, default=20e6,
+                    help="sample rate Hz (default 20 Msps — covers the full "
+                         "20 MHz Wi-Fi channel; the B205 mini delivers ~8 "
+                         "MS/s over USB 2.0, which is enough to see the "
+                         "center of the channel)")
     sp.add_argument("--gain", type=float, default=40)
     sp.add_argument("--antenna", default=None)
     sp.set_defaults(fn=cmd_spectrum)
@@ -1001,8 +1125,21 @@ def build_parser():
                              "(tune the UNCONFIRMED detectors)")
     sp.add_argument("file", help="a .complex8 capture file")
     sp.add_argument("--srate", type=float, default=4e6,
-                    help="the sample rate the capture was taken at (default 4 Msps)")
+                    help="the sample rate the capture was taken at (default 4 Msps; "
+                         "auto-read from the .meta.txt sidecar if present)")
     sp.set_defaults(fn=cmd_validate)
+
+    sp = sub.add_parser("spectra",
+                        help="AVERAGED power spectrum of a whole capture — shows "
+                             "if a real beacon is present (a steady 20 MHz hump "
+                             "vs. the B205 DC spike). The key diagnostic for "
+                             "'is there a signal in this capture?'")
+    sp.add_argument("file", help="a .complex8 capture file")
+    sp.add_argument("--srate", type=float, default=None,
+                    help="sample rate Hz (auto-read from .meta.txt if omitted)")
+    sp.add_argument("--top", type=int, default=15,
+                    help="number of top spectral peaks to print (default 15)")
+    sp.set_defaults(fn=cmd_spectra)
 
     sp = sub.add_parser("decode", help="decode a .complex8 file offline")
     sp.add_argument("file")

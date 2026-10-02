@@ -636,6 +636,7 @@ class RadioDevice:
         # warn if the sustained rate is far below the configured sample rate
         configured_srate = getattr(self, "_sample_rate", 0.0)
         warned_rate = False
+        measured_srate = 0.0
         try:
             while got < n_samples:
                 n = self._recv(stream, buf, 0.5)
@@ -644,8 +645,9 @@ class RadioDevice:
                 take = min(n, n_samples - got)
                 out[got:got + take] = buf[:take]
                 got += take
+                measured_srate = got / max(time.time() - t0, 1e-9)
                 if (got // log_every) != ((got - take) // log_every):
-                    rate = got / max(time.time() - t0, 1e-9)
+                    rate = measured_srate
                     print(f"  captured {got}/{n_samples} @ {rate/1e6:.2f} MS/s",
                           flush=True)
                     # one-time warning if the actual rate is <80% of configured
@@ -661,16 +663,23 @@ class RadioDevice:
         except KeyboardInterrupt:
             print(f"\n  interrupted at {got}/{n_samples} samples", flush=True)
             if got == 0:
-                print("  (nothing captured)", flush=True)
+                self._measured_srate = measured_srate
                 return out[:0]
             out = out[:got]
             if path and save_partial:
                 _write_complex8(out, path)
+                _write_capture_meta(path, measured_srate or configured_srate,
+                                    getattr(self, "_freq", 0.0),
+                                    note="PARTIAL capture (Ctrl-C)")
                 print(f"  wrote PARTIAL capture: {path} ({got} samples)", flush=True)
+            self._measured_srate = measured_srate
             return out
         if path:
             _write_complex8(out, path)
+            _write_capture_meta(path, measured_srate or configured_srate,
+                                getattr(self, "_freq", 0.0), note="")
             print(f"  wrote {path}", flush=True)
+        self._measured_srate = measured_srate
         return out
 
     # ------------------------------------------------------------------ #
@@ -742,6 +751,57 @@ def read_complex8(path: str) -> np.complex64:
     i = raw[0::2].astype(np.float32) / 32767.0
     q = raw[1::2].astype(np.float32) / 32767.0
     return (i + 1j * q).astype(np.complex64)
+
+
+def read_capture_meta(path: str) -> dict:
+    """Read a capture's .meta.txt sidecar (sibling of `path`). Returns {} if
+    absent. Keys: sample_rate_hz, center_freq_hz, n_samples, note, ..."""
+    import os
+    meta_path = os.path.splitext(path)[0] + ".meta.txt"
+    out = {}
+    if not os.path.exists(meta_path):
+        return out
+    try:
+        for line in open(meta_path):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if ":" in line:
+                k, v = line.split(":", 1)
+                out[k.strip()] = v.strip()
+    except Exception:
+        return {}
+    return out
+
+
+def _write_capture_meta(c8_path: str, srate: float, center_hz: float,
+                        note: str = ""):
+    """Write a .meta.txt sidecar next to a .complex8 capture recording the
+    MEASURED sample rate (critical: the B205 mini under USB 2.0 delivers
+    ~8 MS/s even when 20 Msps is configured, so the configured rate is
+    wrong and validate must use the measured one)."""
+    import os, time as _time
+    meta_path = os.path.splitext(c8_path)[0] + ".meta.txt"
+    try:
+        n = os.path.getsize(c8_path) // 4
+    except Exception:
+        n = 0
+    meta = (
+        "# elrs-sdr raw IQ capture\n"
+        f"timestamp_utc: {_time.strftime('%Y-%m-%dT%H:%M:%SZ', _time.gmtime())}\n"
+        f"center_freq_hz: {center_hz:.6g}\n"
+        f"sample_rate_hz: {srate:.6g}\n"
+        f"n_samples: {n}\n"
+        f"format: complex8 (int16 I,Q interleaved, little-endian)\n"
+        f"note: {note}\n"
+        f"# validate with: python3 -m elrs_sdr validate {os.path.basename(c8_path)}\n"
+        f"# (validate auto-reads this file for the sample rate)\n"
+    )
+    try:
+        with open(meta_path, "w") as f:
+            f.write(meta)
+    except Exception:
+        pass
 
 
 # ----------------------------------------------------------------------------
