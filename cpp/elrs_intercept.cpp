@@ -81,7 +81,10 @@ struct UdhCapture {
     double srate_hz = 0.0;
 
     bool init(const std::string &dev, double freq_hz, double srate, double gain) {
-        buf.resize((size_t)(srate * 0.25));
+        // ~30 ms window @ the sample rate: enough for 2-3 full SF7 packets
+        // (preamble+payload ~7 ms each), small enough that the brute-force
+        // demod stays fast so the HUNT sweep can step channels in ms, not s.
+        buf.resize((size_t)(srate * 0.030));
         srate_hz = srate;                  // track the rate we asked for
         stream_args = uhd::stream_args_t("fc32");
         usrp = uhd::usrp::multi_usrp::make(dev);
@@ -141,11 +144,10 @@ int main(int argc, char **argv) {
     size_t   nwin = 0;
 
     // HUNT/EXPLOIT sweep: the drone hops 80 channels ~150x/s, so we sweep the
-    // ISM2G4 band rather than camp on one freq. dwell_windows = how many
-    // capture windows to sit on each channel before stepping to the next.
-    // With buf=4096 @ 10 MS/s that's 0.41 ms/channel -> ~155 ch/s, one full
-    // band sweep in ~0.5 s (fast enough to land on the drone's current hop).
-    const size_t   dwell_windows = 2;
+    // ISM2G4 band rather than camp on one freq. Each capture window is ~30 ms;
+    // dwell_windows = how many to sit on each channel before stepping. With a
+    // fast demod, 1 window/ch steps the band every ~130 ms -> full sweep ~10 s.
+    const size_t   dwell_windows = 1;
     size_t         sweep_ch = 0;          // channel index within the sweep
     size_t         sweep_dwell = 0;       // windows spent on current channel
     double         sweep_mhz = hunt_mhz;  // current tuned freq during sweep
@@ -163,9 +165,23 @@ int main(int argc, char **argv) {
         double elapsed = std::chrono::duration<double>(
                              std::chrono::steady_clock::now() - t0).count();
         nwin++;
-        if (nwin % 40 == 1)
-            std::fprintf(stderr, "[run] t=%.1fs wins=%zu phase=%d freq=%.6f MHz srate=%.3fM\n",
-                         elapsed, nwin, st, cur_mhz, cap.srate() / 1e6);
+        // Peak + mean magnitude over the window: a cheap "is there signal here"
+        // readout that works before we decode anything. Lets us see the drone's
+        // energy across the sweep and confirm gain is sane (noise floor vs signal).
+        double peak = 0.0, sum = 0.0;
+        for (size_t i = 0; i < got; i++) {
+            double m = std::abs(win[i]);
+            if (m > peak) peak = m;
+            sum += m;
+        }
+        double mean = got ? (sum / (double)got) : 0.0;
+        // Log every channel step in HUNT (so the sweep walk is visible) and
+        // periodically in LOCK.
+        bool log = (st == HUNT) || (st == EXPLOIT) || (nwin % 50 == 1);
+        if (log)
+            std::fprintf(stderr,
+                "[run] t=%.1fs wins=%zu phase=%d freq=%.3f MHz pk=%.4f mean=%.4f\n",
+                elapsed, nwin, st, cur_mhz, peak, mean);
 
         // Software demod (both IQ polarities — ELRS InvertIQ). demod_iq returns
         // a stream of payload bytes; we slide an 8-byte window over it.
