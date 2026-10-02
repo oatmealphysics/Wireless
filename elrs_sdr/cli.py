@@ -269,6 +269,149 @@ def cmd_scan(args):
 
 
 # ----------------------------------------------------------------------------
+# sweep — the core workflow: sweep a band, show the spectrum, and IDENTIFY
+# each carrier by running the positive detectors on it. This is "scan the
+# spectrum and identify what's there" — the point of the program.
+# ----------------------------------------------------------------------------
+def cmd_sweep(args):
+    _need_uhd()
+    from .dronescan import power_spectrum, wifi_channel_freq, wifi_scan_channels
+    from . import positivedet
+    import time as _t
+
+    # band -> (f0, f1, srate)
+    band_presets = {
+        "2.4":   (2.400e9, 2.480e9, 8e6),
+        "5.8":   (5.150e9, 5.900e9, 8e6),
+        "sub1g": (700e6, 900e6, 4e6),
+        "433":   (425e6, 440e6, 4e6),
+        "1.2":   (1.240e9, 1.300e9, 4e6),
+    }
+    if args.freq:
+        f0 = args.freq - args.bandwidth / 2.0
+        f1 = args.freq + args.bandwidth / 2.0
+        srate = args.srate if getattr(args, "_srate_set", False) else 8e6
+    elif args.band in band_presets:
+        f0, f1, srate = band_presets[args.band]
+        if getattr(args, "_srate_set", False):
+            srate = args.srate
+    else:
+        print(f"unknown band {args.band!r}; use one of {list(band_presets)} or --freq")
+        return
+
+    steps = args.steps
+    step_hz = (f1 - f0) / steps
+    r = _open_radio(args)
+    # auto-gain (once, on the band center)
+    gain = _resolve_gain(args, r, (f0 + f1) / 2.0, srate)
+    r.tune((f0 + f1) / 2.0, srate, gain, args.antenna)
+
+    print(f"\nsweeping {f0/1e6:.1f}-{f1/1e6:.1f} MHz in {steps} steps "
+          f"({step_hz/1e6:.2f} MHz/step), {srate/1e6:.1f} Msps, gain={gain:.0f} dB")
+    print(f"  (dwell {args.dwell_ms} ms/step, ~{steps*args.dwell_ms/1000:.0f}s total)\n",
+          flush=True)
+
+    stream = r._open_rx_stream()
+    buf = np.zeros(8192, dtype=np.complex64)
+    meta = r._make_rx_metadata()
+    spec = []   # (freq, db_array, freqs_array) per step — for the plot
+    carriers = []  # detected carriers: (freq, peak_db, occ)
+    t0 = _t.time()
+    for i in range(steps):
+        f = f0 + step_hz * i
+        r.set_freq(f)
+        _t.sleep(args.dwell_ms / 1000.0)
+        cnt = r._recv(stream, buf, 0.2, meta)
+        if cnt:
+            f_arr, db = power_spectrum(buf[:cnt], srate)
+            floor = float(np.percentile(db, 20))
+            peak_rel = float(db.max() - floor)
+            occ = float((db > (floor + 8)).mean())
+            spec.append((f, db, f_arr, floor))
+            if peak_rel > 8.0:   # a carrier (not just noise)
+                carriers.append((f, peak_rel, occ))
+            pct = (i + 1) * 100 // steps
+            print(f"\r  [{pct:3d}%] {f/1e6:8.1f} MHz  peak {peak_rel:5.1f} dB  "
+                  f"occ {occ*100:3.0f}%", end="", flush=True)
+    print(flush=True)
+    print(f"  done in {_t.time()-t0:.0f}s", flush=True)
+
+    # --- ASCII spectrum plot (average the per-step spectra) ---
+    if spec:
+        # use the first step's freq axis (all steps share the same offset axis)
+        plot_w = 80
+        # combine: max power per offset bin across steps
+        all_db = [s[1] for s in spec]
+        f0_ax = spec[0][2]
+        combined = np.max(np.stack(all_db), axis=0)
+        cmin, cmax = float(np.percentile(combined, 5)), float(combined.max())
+        rng = max(cmax - cmin, 1.0)
+        # build the plot (offset MHz on x, power on y)
+        height = 16
+        cols = np.linspace(0, len(combined) - 1, plot_w).astype(int)
+        col_db = combined[cols]
+        print("\nspectrum (offset from center, dB relative; top = strongest):")
+        for row in range(height, -1, -1):
+            thr = cmin + (rng * row / height)
+            line = "".join("#" if col_db[c] >= thr else " " for c in range(plot_w))
+            db_label = f"{cmin + (rng*row/height):6.1f}"
+            print(f"{db_label} {line}")
+        xlabels = [f"{f0_ax[cols[c]]/1e6:+.1f}" for c in range(0, plot_w, plot_w//6)]
+        print("   " + " ".join(f"{x:<{plot_w//6}}" for x in xlabels))
+        print(f"   (offset MHz from center {((f0+f1)/2)/1e6:.1f} MHz)\n")
+
+    # --- identify the carriers ---
+    print(f"detected {len(carriers)} carrier(s):")
+    if not carriers:
+        print("  none above the noise floor — try higher gain or a different band")
+    # dedupe close carriers (merge within 2x step_hz)
+    carriers.sort(key=lambda x: -x[1])
+    merged = []
+    for f, p, o in carriers:
+        if merged and abs(f - merged[-1][0]) < 2 * step_hz:
+            continue
+        merged.append((f, p, o))
+    for f, p, o in merged[:args.max_id]:
+        print(f"\n  carrier @ {f/1e6:.1f} MHz  peak={p:.1f} dB  occ={o*100:.0f}%")
+        # run the positive detectors on a fresh capture at this carrier
+        r.tune(f, srate, gain, args.antenna)
+        _t.sleep(0.05)
+        r._recv(stream, buf, 0.3, meta)
+        ident = _identify_carrier(buf, srate)
+        if ident:
+            print(f"    -> {ident}")
+        else:
+            print(f"    -> (no positive ID — broadband/unidentified)")
+
+
+def _identify_carrier(buf, srate) -> str | None:
+    """Run the positive detectors on a captured buffer; return the strongest
+    positive ID (or None if nothing claims it)."""
+    from . import positivedet
+    from .dronescan import DroneScanner as DS
+    buf = np.asarray(buf)
+    if len(buf) < 4096:
+        return None
+    candidates = []
+    lora_s, lora_m = positivedet.lora_chirp(buf, srate)
+    if lora_s >= DS._LORA_CLAIM:
+        candidates.append((lora_s, "LoRa (ELRS/Meshtastic/sub-1G)"))
+    ofdm_s, ofdm_m = positivedet.ofdm_preamble(buf, srate)
+    if ofdm_s >= DS._OFDM_CLAIM:
+        candidates.append((ofdm_s, "OFDM / 802.11 (Wi-Fi)"))
+    video_s, video_m = positivedet.analog_video(buf, srate)
+    if video_s >= DS._VIDEO_CLAIM:
+        candidates.append((video_s, "Analog FPV video"))
+    ocus_s, ocus_m = positivedet.ocusync_phy(buf, srate)
+    if ocus_s >= DS._OCUSYNC_CLAIM:
+        candidates.append((ocus_s, "OcuSync (proprietary OFDM)"))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: -x[0])
+    return candidates[0][1]
+
+
+# ----------------------------------------------------------------------------
 # capture
 # ----------------------------------------------------------------------------
 def cmd_capture(args):
@@ -822,6 +965,28 @@ def build_parser():
     sp.add_argument("--gain", type=float, default=30)
     sp.add_argument("--antenna", default=None)
     sp.set_defaults(fn=cmd_scan)
+
+    sp = sub.add_parser("sweep",
+                        help="scan the spectrum across a band, show it, and "
+                             "IDENTIFY each carrier (the core workflow)")
+    sp.add_argument("--band", default="2.4",
+                    choices=["2.4", "5.8", "sub1g", "433", "1.2"],
+                    help="band to sweep (default 2.4)")
+    sp.add_argument("--freq", type=float, default=None,
+                    help="center frequency Hz (overrides --band); sweeps "
+                         "+/- --bandwidth/2")
+    sp.add_argument("--bandwidth", type=float, default=8e6,
+                    help="MHz*1e6 total width to sweep around --freq (default 8 MHz)")
+    sp.add_argument("--steps", type=int, default=64,
+                    help="number of sweep steps (default 64)")
+    sp.add_argument("--dwell-ms", type=int, default=30,
+                    help="ms per step (default 30)")
+    sp.add_argument("--max-id", type=int, default=5,
+                    help="identify at most N carriers (default 5)")
+    sp.add_argument("--srate", type=float, default=8e6)
+    sp.add_argument("--gain", type=float, default=40)
+    sp.add_argument("--antenna", default=None)
+    sp.set_defaults(fn=cmd_sweep)
 
     sp = sub.add_parser("spectrum",
                         help="quick RF diagnostic: dump the power spectrum on a "
