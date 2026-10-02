@@ -1,20 +1,44 @@
-// elrs_decode.h — UHD-independent ELRS decode logic (UPSTREAM ELRS model).
+// elrs_decode.h — UHD-independent ELRS decode logic (UPSTREAM ELRS, verified
+// against ExpressLRS-master source).
 //
-// Pure C++ (no UHD, no radio). Shared by elrs_intercept.cpp (the live tool)
-// and tests/test_elrs_decode.cpp (the CPU-only unit test).
+// Pure C++ (no UHD, no radio). Shared by elrs_intercept.cpp (live tool) and
+// tests/test_elrs_decode.cpp (CPU-only unit test).
 //
-// The FHSS / PRNG / UID-seed / CRC model here is ported EXACTLY from the
-// upstream ExpressLRS source (drone_refs/_ext/ExpressLRS/ExpressLRS-master):
-//   - src/lib/FHSS/random.cpp      rng() LCG 214013/2531011 mod 2^31
-//   - src/lib/FHSS/FHSS.cpp        FHSSrandomiseFHSSsequenceBuild (block shuffle)
-//   - src/lib/FHSS/FHSS.cpp:22-56  domain tables (ISM2G4: 80ch, 2400.4-2479.4 MHz)
-//   - src/lib/OTA/OTA.cpp:41       OtaGetUidSeed = UID[2..3] + (UID[4]<<8) + (UID[5]^OTA_VERSION_ID)
-//   - src/src/common.cpp:31-45     2.4 GHz air rates (SF5-8 @ 800 kHz BW)
+// Every constant/algorithm below is ported directly from:
+//   src/lib/OTA/OTA.h        packet structs, PACKET_TYPE_*, ELRS_CRC16_POLY
+//   src/lib/OTA/OTA.cpp      OtaCrcInitializer, ValidatePacketCrc, nonce logic,
+//                            PackUInt11ToChannels4x10, OtaGetUidSeed
+//   src/lib/CRC/crc.cpp      Crc2Byte::init/calc (table-driven CRC-16)
+//   src/lib/FHSS/random.cpp  rng() LCG 214013/2531011 mod 2^31
+//   src/lib/FHSS/FHSS.cpp    FHSSrandomiseFHSSsequenceBuild, ISM2G4 domain
 //
-// NOTE: this REPLACES the earlier model that mirrored the
-// LoRa-ELRS-Interceptor-Decoder reference (Fisher-Yates / LCG-2891336453 /
-// 13ch @ 903.5+500kHz). That reference was a *different* ELRS variant; for
-// stock ExpressLRS on 2.4 GHz the upstream algorithm below is authoritative.
+// =========================================================================
+// KEY PACKET LAYOUTS (OTA.h)
+// =========================================================================
+// OTA_Sync_s (8 bytes) — sent periodically, carries UID in clear:
+//   [0] fhssIndex
+//   [1] nonce
+//   [2] rfRateEnum
+//   [3] flags: otaProtocol in bits 6-7 (low 6 bits: switchEncMode/newTlmRatio/
+//              geminiMode/... free)
+//   [4] UID4
+//   [5] UID5
+//   [6..7] (padding / part of the 8-byte OTA frame)
+//   PACKET_TYPE_SYNC = 0b10  (low 2 bits of byte[0])
+//
+// OTA_Packet4_s std (8 bytes) — RC data:
+//   [0] type:2 (low bits) | crcHigh:6
+//   [1..5] raw[5] = 4 channels x 10 bits (LSB-first bitstream, see unpack)
+//   [6] switches:7 | isArmed:1
+//   [7] crcLow
+//   PACKET_TYPE_RCDATA = 0b00
+//
+// CRC-16 (Crc2Byte, poly 0x3D65, MSB-first table):
+//   init = (UID[4]<<8 | UID[5]) ^ (OTA_VERSION_ID<<8)
+//   nonceValidator = 0 for SYNC, OtaNonce for RC (a running 8-bit counter the
+//   receiver tracks; we brute-force it 0..255 to validate RC packets)
+//   calc over bytes [0 .. crcLow) with crcHigh zeroed (OTA4_CRC_CALC_LEN).
+// =========================================================================
 
 #pragma once
 #include <algorithm>
@@ -22,64 +46,40 @@
 #include <cstring>
 #include <cmath>
 
-// =========================================================================
-// LoRa PHY — 2.4 GHz ELRS (ISM2G4). Stock default is RATE_LORA_2G4_150HZ:
-//   SF7, BW 800 kHz, CR 4/8 (LI). We default to SF7/800 and expose SF/BW as
-//   tunables so the tool can try SF5/6/8 if the link uses another rate.
-// =========================================================================
-static constexpr uint8_t  ELRS_SYNC_WORD     = 0x12;   // ELRS LoRa sync word
-static constexpr uint32_t ELRS_BW_KHZ        = 800;    // 2.4 GHz uses 800 kHz BW
-static constexpr uint8_t  ELRS_SF            = 7;      // default; try 5/6/8 if no hit
-static constexpr uint8_t  ELRS_CODING_RATE   = 8;      // CR 4/8 (LI) for 2.4 GHz
-static constexpr uint8_t  ELRS_LFSR_POLY     = 0x69;   // ELRS whitening LFSR
+// --- LoRa PHY — 2.4 GHz ELRS (ISM2G4), default RATE_LORA_2G4_150HZ ---
+static constexpr uint8_t  ELRS_SYNC_WORD     = 0x12;
+static constexpr uint32_t ELRS_BW_KHZ        = 800;
+static constexpr uint8_t  ELRS_SF            = 7;      // default; try 5/6/8
+static constexpr uint8_t  ELRS_CODING_RATE   = 8;
+static constexpr uint8_t  ELRS_LFSR_POLY     = 0x69;   // whitening (OTA)
 
-// =========================================================================
-// FHSS domain — ISM2G4 (2.4 GHz). From FHSS.cpp:
-//   {"ISM2G4", 2400400000, 2479400000, 80, 2440000000}
-//   (freq_start, freq_stop, freq_count, sync freq)
-// FREQ_SPREAD_SCALE=256; FREQ_STEP=50000 (reg units). For the SX1280 path
-// FREQ_HZ_TO_REG_VAL(freq)=freq and SPREAD_SCALE=1 in some builds, but the
-// sequence index math only needs (start, stop, count) — see freq_for_index().
-// =========================================================================
+// --- FHSS domain — ISM2G4 (FHSS.cpp:22-56) ---
 static constexpr uint32_t ELRS_FREQ_START_HZ = 2400400000UL;
 static constexpr uint32_t ELRS_FREQ_STOP_HZ  = 2479400000UL;
-static constexpr uint32_t ELRS_N_FREQ        = 80;     // 80 channels
-static constexpr uint32_t ELRS_SYNC_CHANNEL  = 40;     // freq_count / 2  (2440 MHz)
-static constexpr uint32_t ELRS_HOP_US        = 6666;   // 150 Hz default; 3333 for 8CH-333, 20000 for 50Hz
+static constexpr uint32_t ELRS_N_FREQ        = 80;
+static constexpr uint32_t ELRS_SYNC_CHANNEL  = 40;     // freq_count / 2
+static constexpr uint32_t ELRS_HOP_US        = 6666;   // 150 Hz default
 
-// =========================================================================
-// Packet model
-// =========================================================================
-static constexpr uint8_t  ELRS_PACKET_SIZE   = 8;    // OTA4_PACKET_SIZE (v1/v2 default)
-static constexpr uint8_t  ELRS_CRC_SIZE      = 2;    // CRC-16 for v2, CRC-14+2 for v1 — see crc section
-static constexpr uint8_t  PKT_TYPE_RC        = 0x00;
-static constexpr uint8_t  PKT_TYPE_SYNC      = 0x01;
-static constexpr uint8_t  OTA_VERSION_ID     = 6;    // current OTA version (XOR'd into seed + CRC init)
-static constexpr uint8_t  OTA_V1_UID_OFFSET  = 2;
-static constexpr uint8_t  OTA_V2_UID_OFFSET  = 3;
+// --- Packet model (OTA.h) ---
+static constexpr uint8_t  ELRS_PACKET_SIZE   = 8;      // OTA4_PACKET_SIZE
+static constexpr uint8_t  OTA_VERSION_ID     = 6;      // current OTA version
+static constexpr uint16_t ELRS_CRC16_POLY    = 0x3D65; // ELRS_CRC16_POLY (OTA.h:190)
+static constexpr uint8_t  PKT_TYPE_RCDATA    = 0b00;   // PACKET_TYPE_RCDATA
+static constexpr uint8_t  PKT_TYPE_DATA      = 0b01;
+static constexpr uint8_t  PKT_TYPE_SYNC      = 0b10;   // PACKET_TYPE_SYNC
+static constexpr uint8_t  PKT_TYPE_LINKSTATS = 0b00;
+// OTA4 RCDATA channel indices (4x 10-bit, CRSF order): 0=throttle 1=roll 2=pitch 3=yaw
+static constexpr uint8_t  CH_THROTTLE        = 0;
+static constexpr uint8_t  CH_ROLL            = 1;
+static constexpr uint8_t  CH_PITCH           = 2;
+static constexpr uint8_t  CH_YAW             = 3;
 
-// --- RC channel mapping (ELRS 16ch, 11-bit) ---
-static constexpr int      CH_ROLL     = 0;
-static constexpr int      CH_PITCH    = 1;
-static constexpr int      CH_THROTTLE = 2;
-static constexpr int      CH_YAW      = 3;
-static constexpr int      CH_ARM      = 4;
-static constexpr int      CH_FLIGHT   = 5;
-static constexpr int      N_CHANNELS  = 16;
-static constexpr uint16_t CH_CENTER   = 1024;
-static constexpr uint16_t ARM_THR     = 1500;
-static constexpr uint16_t DEADBAND    = 50;
-static constexpr int      MAX_MISSED  = 4;
+// OTA4 CRC calc length = offsetof(OTA_Packet4_s, crcLow) = 7 bytes [0..6]
+static constexpr uint8_t  OTA4_CRC_CALC_LEN  = 7;
 
-// =========================================================================
-// PRNG — EXACT port of src/lib/FHSS/random.cpp
-//   seed = (214013 * seed + 2531011) % 2147483648;  return seed >> 16
-// =========================================================================
+// --- PRNG — EXACT port of src/lib/FHSS/random.cpp ---
 static inline uint16_t elrs_rng(uint32_t &seed) {
-    const uint64_t m = 2147483648ULL;   // 2^31
-    const uint64_t a = 214013ULL;
-    const uint64_t c = 2531011ULL;
-    // 64-bit multiply to avoid any 32-bit overflow ambiguity under -O2.
+    const uint64_t m = 2147483648ULL, a = 214013ULL, c = 2531011ULL;
     seed = (uint32_t)((a * (uint64_t)seed + c) % m);
     return (uint16_t)(seed >> 16);
 }
@@ -87,40 +87,26 @@ static inline uint8_t elrs_rngN(uint32_t &seed, uint8_t max) {
     return (uint8_t)(elrs_rng(seed) % max);
 }
 
-// =========================================================================
-// UID -> PRNG seed — EXACT port of src/lib/OTA/OTA.cpp:41 OtaGetUidSeed()
-//   (UID is a 6-byte array; the seed uses bytes [2],[3],[4],[5^OTA_VERSION_ID])
-// In our elrs_uid struct (4 bytes captured from a SYNC pkt, bytes[3]=0x00
-// placeholder), the mapping is: bytes[0]=UID[2], bytes[1]=UID[3],
-// bytes[2]=UID[4], bytes[3]=UID[5]. So:
-// =========================================================================
+// --- UID -> PRNG seed — OtaGetUidSeed() (OTA.cpp:41). UID is 6 bytes; seed
+//     uses UID[2],[3],[4],[5^OTA_VERSION_ID]. Our elrs_uid.bytes[4] holds
+//     UID[2..5] (bytes[0]=UID[2]..bytes[3]=UID[5]).
 static inline uint32_t uid_seed(const uint8_t uid[4]) {
-    return ((uint32_t)uid[0] << 24)
-         | ((uint32_t)uid[1] << 16)
-         | ((uint32_t)uid[2] << 8)
-         |  (uint32_t)(uid[3] ^ OTA_VERSION_ID);
+    return ((uint32_t)uid[0] << 24) | ((uint32_t)uid[1] << 16)
+         | ((uint32_t)uid[2] << 8)  | (uint32_t)(uid[3] ^ OTA_VERSION_ID);
 }
 
-// =========================================================================
-// FHSS sequence builder — EXACT port of FHSSrandomiseFHSSsequenceBuild()
-//   (src/lib/FHSS/FHSS.cpp:139). Produces the hop INDEX sequence; the sync
-//    channel sits at position 0 of every freqCount block, and the channel
-//    that "collides" with the sync slot in a fresh block becomes 0.
-// =========================================================================
-static const uint16_t ELRS_SEQ_LEN = 256;   // FHSS_SEQUENCE_LEN (upstream)
+// --- FHSS sequence builder — FHSSrandomiseFHSSsequenceBuild() (FHSS.cpp:139) ---
+static const uint16_t ELRS_SEQ_LEN = 256;   // FHSS_SEQUENCE_LEN
 static inline uint16_t build_fhss_sequence(const uint8_t uid[4], uint8_t seq[ELRS_SEQ_LEN]) {
     const uint16_t freqCount = (uint16_t)ELRS_N_FREQ;
     const uint8_t  syncChannel = (uint8_t)ELRS_SYNC_CHANNEL;
     const uint16_t sequenceCount = (ELRS_SEQ_LEN / freqCount) * freqCount;
     uint32_t seed = uid_seed(uid);
-
-    // init
     for (uint16_t i = 0; i < sequenceCount; i++) {
-        if (i % freqCount == 0)            seq[i] = syncChannel;
-        else if (i % freqCount == syncChannel) seq[i] = 0;
-        else                                seq[i] = (uint8_t)(i % freqCount);
+        if (i % freqCount == 0)                 seq[i] = syncChannel;
+        else if (i % freqCount == syncChannel)  seq[i] = 0;
+        else                                    seq[i] = (uint8_t)(i % freqCount);
     }
-    // shuffle (block-local)
     for (uint16_t i = 0; i < sequenceCount; i++) {
         if (i % freqCount != 0) {
             uint8_t offset = (uint8_t)((i / freqCount) * freqCount);
@@ -132,139 +118,127 @@ static inline uint16_t build_fhss_sequence(const uint8_t uid[4], uint8_t seq[ELR
     }
     return sequenceCount;
 }
-
-// =========================================================================
-// index -> absolute freq (Hz). ISM2G4 linear mapping over 80 channels:
-//   freq(i) = start + i * (stop - start) / (count - 1)
-// =========================================================================
 static inline uint32_t freq_for_index(uint8_t idx) {
     uint64_t spread = (uint64_t)(ELRS_FREQ_STOP_HZ - ELRS_FREQ_START_HZ);
-    uint64_t v = (spread * idx) / (ELRS_N_FREQ - 1);
-    return (uint32_t)(ELRS_FREQ_START_HZ + v);
+    return (uint32_t)(ELRS_FREQ_START_HZ + (spread * idx) / (ELRS_N_FREQ - 1));
 }
-
-// Convenience: the full 80-entry freq table for a UID (sequence order).
 static inline void generate_hop_table(const uint8_t uid[4], uint32_t table[ELRS_N_FREQ]) {
     uint8_t seq[ELRS_SEQ_LEN];
-    uint16_t n = build_fhss_sequence(uid, seq);
-    (void)n;
-    for (uint32_t i = 0; i < ELRS_N_FREQ; i++)
-        table[i] = freq_for_index(seq[i]);
+    build_fhss_sequence(uid, seq);
+    for (uint32_t i = 0; i < ELRS_N_FREQ; i++) table[i] = freq_for_index(seq[i]);
+}
+
+// --- CRC — EXACT port of Crc2Byte (crc.cpp), bit-width-generic.
+// OTA4 (the 8-byte RC/SYNC packet we target) uses a 14-bit CRC, poly 0x2E57.
+// (OTA8/full uses 16-bit, poly 0x3D65 — see OTA.cpp:560,577.) ---
+static constexpr uint16_t ELRS_CRC14_POLY    = 0x2E57; // ELRS_CRC14_POLY (OTA.h:189)
+static constexpr uint8_t  ELRS_CRC_BITS      = 14;     // OTA4
+// Table build: crc = i << (bits-8); for 8 bits: crc = (crc<<1)^((crc & (1<<(bits-1)))?poly:0)
+static inline void build_crc_table(uint16_t tab[256], uint8_t bits, uint16_t poly) {
+    const uint16_t highbit = (uint16_t)(1 << (bits - 1));
+    for (int i = 0; i < 256; i++) {
+        uint16_t crc = (uint16_t)(i << (bits - 8));
+        for (int j = 0; j < 8; j++)
+            crc = (uint16_t)((crc << 1) ^ ((crc & highbit) ? poly : 0));
+        tab[i] = crc;
+    }
+}
+static inline uint16_t crc_calc(const uint16_t tab[256], uint8_t bits,
+                                const uint8_t *data, uint8_t len, uint16_t crc) {
+    const uint16_t mask = (uint16_t)((1 << bits) - 1);
+    const int shift = bits - 8;
+    while (len--)
+        crc = (uint16_t)((crc << 8) ^ tab[((crc >> shift) ^ *data++) & 0xFF]);
+    return crc & mask;
+}
+// Convenience: build+calc for the OTA4 14-bit CRC.
+static inline uint16_t crc14_calc(const uint8_t *data, uint8_t len, uint16_t crc) {
+    static uint16_t tab[256];
+    static bool inited = false;
+    if (!inited) { build_crc_table(tab, ELRS_CRC_BITS, ELRS_CRC14_POLY); inited = true; }
+    return crc_calc(tab, ELRS_CRC_BITS, data, len, crc);
+}
+// CRC init — OtaUpdateCrcInitFromUid() (OTA.cpp:28): (UID[4]<<8|UID[5])^(ov<<8).
+// Our uid[4]=uid[2], uid[5]=uid[3].
+static inline uint16_t crc_init_from_uid(const uint8_t uid[4]) {
+    return (uint16_t)(((uint16_t)uid[2] << 8 | uid[3]) ^ ((uint16_t)OTA_VERSION_ID << 8));
+}
+// Validate an OTA4 packet. For RC, the receiver's running OtaNonce is unknown
+// to a passive interceptor, so we brute-force nonceValidator 0..255 (a SYNC
+// packet uses nonceValidator=0). Returns true + fills *nonce_out on success.
+static inline bool validate_ota4(const uint8_t pkt[8], const uint8_t uid[4],
+                                 bool is_sync, uint8_t *nonce_out) {
+    uint16_t init = crc_init_from_uid(uid);
+    // OTA4 stored CRC (14-bit): crcHigh:6 = top 6 bits (bits 6-13) into byte0[7:2],
+    // crcLow = bottom 8 bits (bits 0-7) in byte7. inCRC = (crcHigh<<8)+crcLow.
+    uint16_t stored = (uint16_t)(((uint16_t)(pkt[0] >> 2) & 0x3F) << 8) | pkt[7];
+    uint8_t buf[7];
+    memcpy(buf, pkt, 7);
+    buf[0] &= 0x03;   // zero crcHigh (keep type:2 low bits) — calc before it's ORed in
+    if (is_sync) {
+        if (crc14_calc(buf, OTA4_CRC_CALC_LEN, init) == stored) {
+            if (nonce_out) *nonce_out = 0;
+            return true;
+        }
+        return false;
+    }
+    for (uint8_t nonce = 0; nonce < 256; nonce++) {
+        if (crc14_calc(buf, OTA4_CRC_CALC_LEN, (uint16_t)(init ^ nonce)) == stored) {
+            if (nonce_out) *nonce_out = nonce;
+            return true;
+        }
+    }
+    return false;
+}
+
+// --- Packet type + OTA version + UID extraction ---
+// PACKET_TYPE_SYNC = 0b10 in the LOW 2 bits of byte[0] (OTA.h:22, :57).
+static inline uint8_t packet_type(const uint8_t *buf) { return buf[0] & 0x03; }
+// otaProtocol = bits 6-7 of byte[3] (OTA.h:36).
+static inline uint8_t ota_protocol(const uint8_t *buf) { return (buf[3] >> 6) & 0x03; }
+// SYNC carries UID4,UID5 in clear at [4],[5] (OTA_Sync_s, OTA.h:38-39).
+// elrs_uid.bytes holds UID[2..5]: bytes[2]=UID4, bytes[3]=UID5. For a bound
+// link UID[0..2]=0, so bytes[0..1]=0 (UID[2],UID[3]).
+static inline bool extract_uid(const uint8_t *buf, uint8_t uid[4]) {
+    if (packet_type(buf) != PKT_TYPE_SYNC) return false;
+    uid[0] = 0x00;   // UID[2] (0 when bound)
+    uid[1] = 0x00;   // UID[3] (0 when bound)
+    uid[2] = buf[4]; // UID4
+    uid[3] = buf[5]; // UID5
+    return true;
 }
 
 struct elrs_uid { uint8_t bytes[4]; bool complete; };
 struct rc_frame {
-    uint16_t channels[N_CHANNELS];
+    uint16_t channels[4];   // 4x 10-bit channels (OTA4 RCDATA)
+    uint8_t  switches;
     bool     armed;
     bool     active;
     uint8_t  flight_mode;
 };
 
-// =========================================================================
-// CRC — ELRS OTA v2 uses CRC-16 (poly 0x1021, init from UID+version), v1
-// uses CRC-14. The exact CRC is the arbiter of a real decode, so we support
-// both. The 256-guess on the hidden UID byte is what makes the init correct.
-// =========================================================================
-static inline uint16_t crc16_ccitt(const uint8_t *data, uint8_t len, uint16_t init) {
-    uint16_t crc = init;
-    for (uint8_t i = 0; i < len; i++) {
-        crc ^= (uint16_t)(data[i] << 8);
-        for (int b = 0; b < 8; b++)
-            crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
-    }
-    return crc;
-}
-// CRC init for a given UID (v2): OtaCrcInitializer style =
-//   ((UID[4]<<8 | UID[5]) ^ (OTA_VERSION_ID<<8))  — see OTA.cpp.
-static inline uint16_t crc_init_from_uid(const uint8_t uid[4]) {
-    uint8_t uid4 = uid[2], uid5 = uid[3];   // our bytes[2]=UID[4], bytes[3]=UID[5]
-    return (uint16_t)(((uint16_t)uid4 << 8 | uid5) ^ ((uint16_t)OTA_VERSION_ID << 8));
-}
-static inline bool validate_crc_v2(const uint8_t *buf, uint8_t total_len, const uint8_t uid[4]) {
-    if (total_len < 3) return false;
-    uint16_t calc = crc16_ccitt(buf, total_len - 2, crc_init_from_uid(uid));
-    uint16_t got  = (uint16_t)((buf[total_len-2] << 8) | buf[total_len-1]);
-    return calc == got;
-}
-// Fallback CRC-8 (kept for the earlier reference-model tests / quick checks).
-static inline uint8_t crc8_ccitt(const uint8_t *data, uint8_t len) {
-    uint8_t crc = 0x00;
-    for (uint8_t i = 0; i < len; i++) {
-        crc ^= data[i];
-        for (uint8_t b = 0; b < 8; b++)
-            crc = (crc & 0x80) ? (uint8_t)((crc << 1) ^ 0x07) : (uint8_t)(crc << 1);
-    }
-    return crc;
-}
-static inline bool validate_crc(const uint8_t *buf, uint8_t total_len) {
-    if (total_len < 2) return false;
-    return crc8_ccitt(buf, total_len - 1) == buf[total_len - 1];
-}
-
-// =========================================================================
-// OTA detection + packet type + UID extraction
-// =========================================================================
-static inline uint8_t detect_ota_version(const uint8_t *buf) {
-    uint8_t ver = (buf[0] >> 6) & 0x03;
-    return (ver == 1 || ver == 2) ? ver : 0;
-}
-static inline uint8_t packet_type(const uint8_t *buf) { return (buf[0] >> 4) & 0x03; }
-// A SYNC packet carries UID[4],UID[5] in clear at the version-specific offset;
-// the full 4-byte UID (our bytes[0..3] = UID[2..5]) is assembled there.
-static inline bool extract_uid(const uint8_t *buf, elrs_uid *uid) {
-    uint8_t ver = detect_ota_version(buf);
-    uint8_t off;
-    switch (ver) {
-        case 1: off = OTA_V1_UID_OFFSET; break;
-        case 2: off = OTA_V2_UID_OFFSET; break;
-        default: return false;
-    }
-    uid->bytes[0] = buf[off];
-    uid->bytes[1] = buf[off + 1];
-    uid->bytes[2] = buf[off + 2];
-    uid->bytes[3] = 0x00;          // hidden byte — filled by the 256-guess
-    uid->complete = false;
-    return true;
-}
-
-// =========================================================================
-// Whitening + channel unpack + frame map (2.4 GHz OTA4, 16x11-bit)
-// =========================================================================
-static inline void dewhiten(uint8_t *payload, uint8_t len, const uint8_t uid[4]) {
-    uint8_t lfsr = uid[0] ^ uid[3];
-    for (uint8_t i = 0; i < len; i++) {
-        payload[i] ^= lfsr;
-        lfsr = (uint8_t)((lfsr >> 1) ^ (ELRS_LFSR_POLY * (lfsr & 1)));
-    }
-}
-static inline void unpack_channels(const uint8_t *payload, uint16_t ch[N_CHANNELS]) {
+// --- 4x10-bit channel unpack — inverse of PackUInt11ToChannels4x10 (OTA.cpp:94) ---
+// 5-byte LSB-first bitstream: 4 channels x 10 bits packed contiguously.
+static inline void unpack_channels_4x10(const uint8_t raw[5], uint16_t ch[4]) {
     int bit_pos = 0;
-    for (int c = 0; c < N_CHANNELS; c++) {
+    for (int c = 0; c < 4; c++) {
         uint16_t v = 0;
-        for (int b = 0; b < 11; b++) {
+        for (int b = 0; b < 10; b++) {
             uint8_t bi = (uint8_t)(bit_pos >> 3), bb = (uint8_t)(bit_pos & 0x07);
-            v |= (uint16_t)(((payload[bi] >> bb) & 1) << b);
+            v |= (uint16_t)(((raw[bi] >> bb) & 1) << b);
             bit_pos++;
         }
         ch[c] = v;
     }
 }
-static inline void map_frame(const uint16_t ch[N_CHANNELS], rc_frame *f) {
-    for (int i = 0; i < N_CHANNELS; i++) f->channels[i] = ch[i];
-    f->armed       = (ch[CH_ARM] > ARM_THR);
-    f->flight_mode = (uint8_t)(ch[CH_FLIGHT] / 204);
-    bool thr_live  = (ch[CH_THROTTLE] > 200);
-    bool stk_live  = (std::abs((int)ch[CH_ROLL]  - CH_CENTER) > DEADBAND)
-                  || (std::abs((int)ch[CH_PITCH] - CH_CENTER) > DEADBAND)
-                  || (std::abs((int)ch[CH_YAW]   - CH_CENTER) > DEADBAND);
-    f->active      = f->armed && (thr_live || stk_live);
-}
-static inline rc_frame decode_rc_packet(const uint8_t *pkt, const uint8_t uid[4]) {
-    uint8_t payload[ELRS_PACKET_SIZE - 2];   // strip 2-byte CRC
-    memcpy(payload, pkt, ELRS_PACKET_SIZE - 2);
-    dewhiten(payload, ELRS_PACKET_SIZE - 2, uid);
+// Decode an OTA4 RCDATA packet: 4x10-bit channels + switches + isArmed.
+static inline rc_frame decode_rc_packet(const uint8_t pkt[8], const uint8_t uid[4]) {
+    (void)uid;
     rc_frame f{};
-    unpack_channels(payload, f.channels);
-    map_frame(f.channels, &f);
+    unpack_channels_4x10(&pkt[1], f.channels);   // raw[5] at pkt[1..5]
+    f.switches = pkt[6] & 0x7F;                  // switches:7
+    f.armed    = (bool)((pkt[6] >> 7) & 1);      // isArmed:1
+    f.active   = f.armed && (f.channels[CH_THROTTLE] > 200);  // throttle = ch0
+    f.flight_mode = 0;
     return f;
 }
