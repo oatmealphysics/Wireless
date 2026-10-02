@@ -140,8 +140,21 @@ int main(int argc, char **argv) {
     int      missed  = 0;
     size_t   nwin = 0;
 
+    // HUNT/EXPLOIT sweep: the drone hops 80 channels ~150x/s, so we sweep the
+    // ISM2G4 band rather than camp on one freq. dwell_windows = how many
+    // capture windows to sit on each channel before stepping to the next.
+    // With buf=4096 @ 10 MS/s that's 0.41 ms/channel -> ~155 ch/s, one full
+    // band sweep in ~0.5 s (fast enough to land on the drone's current hop).
+    const size_t   dwell_windows = 2;
+    size_t         sweep_ch = 0;          // channel index within the sweep
+    size_t         sweep_dwell = 0;       // windows spent on current channel
+    double         sweep_mhz = hunt_mhz;  // current tuned freq during sweep
+    cap.tune((uint32_t)(sweep_mhz * 1e6));
+
     std::fprintf(stderr, "[run] capturing (Ctrl-C to stop)...\n");
-    double cur_mhz = hunt_mhz;   // currently-tuned freq (updated on hop/phase change)
+    std::fprintf(stderr, "[run] HUNT sweep: 80 ch 2400.4-2479.4 MHz, dwell=%zu wins/ch\n",
+                 dwell_windows);
+    double cur_mhz = sweep_mhz;   // currently-tuned freq (updated on hop/sweep)
     while (true) {
         std::vector<std::complex<float>> win(cap.buf.size());
         size_t got = cap.read(win);
@@ -181,22 +194,24 @@ int main(int argc, char **argv) {
                         if (validate_ota4(pkt, u.bytes, true, &nonce)) {
                             uid = u; st = EXPLOIT;
                             generate_hop_table(uid.bytes, hop_table);
-                            hop_idx = 0;
+                            // The SYNC packet's byte[0] = fhssIndex: the exact
+                            // channel the drone is hopping to/around right now.
+                            // Use it as the precise starting hop (fall back to
+                            // the sweep channel if it's out of range).
+                            uint8_t fhss_idx = pkt[0];
+                            hop_idx = (fhss_idx < ELRS_N_FREQ) ? fhss_idx : (uint8_t)sweep_ch;
                             std::fprintf(stderr,
-                                "[hunt] SYNC on %.3f MHz, UID4=%02X UID5=%02X -> EXPLOIT\n",
-                                hunt_mhz, u.bytes[2], u.bytes[3]);
-                            emit(out, "sync_hunt", (uint32_t)(hunt_mhz*1e6), &uid, pkt, nullptr);
+                                "[hunt] SYNC on %.3f MHz (fhssIdx=%u), UID4=%02X UID5=%02X -> EXPLOIT\n",
+                                sweep_mhz, fhss_idx, u.bytes[2], u.bytes[3]);
+                            emit(out, "sync_hunt", (uint32_t)(sweep_mhz*1e6), &uid, pkt, nullptr);
                         }
                     }
                 } else if (st == EXPLOIT && ptype == PKT_TYPE_RCDATA) {
                     uint8_t nonce;
                     if (validate_ota4(pkt, uid.bytes, false, &nonce)) {
                         st = LOCK;
-                        double best = 1e18;
-                        for (int i = 0; i < ELRS_N_FREQ; i++) {
-                            double d = std::abs((double)hop_table[i] - hunt_mhz*1e6);
-                            if (d < best) { best = d; hop_idx = (uint8_t)i; }
-                        }
+                        // Start dead-reckoning from the channel we're on now.
+                        hop_idx = (uint8_t)sweep_ch;
                         cur_mhz = hop_table[hop_idx] / 1e6;
                         cap.tune(hop_table[hop_idx]);
                         std::fprintf(stderr,
@@ -211,6 +226,19 @@ int main(int argc, char **argv) {
                     missed = 0;
                     emit(out, "rc", (uint32_t)hop_table[hop_idx], &uid, pkt, &f);
                 }
+            }
+        }
+
+        // HUNT/EXPLOIT: sweep the band. Step to the next channel after the
+        // dwell; LOCK dead-reckons instead (handled below).
+        if (st == HUNT || st == EXPLOIT) {
+            sweep_dwell++;
+            if (sweep_dwell >= dwell_windows) {
+                sweep_dwell = 0;
+                sweep_ch = (sweep_ch + 1) % ELRS_N_FREQ;
+                sweep_mhz = freq_for_index((uint8_t)sweep_ch) / 1e6;
+                cur_mhz = sweep_mhz;
+                cap.tune((uint32_t)(sweep_mhz * 1e6));
             }
         }
 
