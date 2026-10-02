@@ -51,6 +51,16 @@ def _open_radio(args) -> RadioDevice:
     return RadioDevice(args.device, rx_channel=args.rx_chan, tx_channel=args.tx_chan)
 
 
+def _resolve_gain(args, r: RadioDevice, freq_hz: float, srate: float) -> float:
+    """Return the gain to use: the user's --gain if explicitly set, otherwise
+    auto-pick a sensible one (so the user never has to type --gain)."""
+    if getattr(args, "_gain_set", False):
+        return args.gain
+    g = r.auto_gain(freq_hz, srate, getattr(args, "antenna", None))
+    print(f"  (auto-gain: {g:.0f} dB)", flush=True)
+    return g
+
+
 def _describe_rx_rates(d, chan) -> str:
     """Describe the RX sample-rate range across bindings, without crashing.
 
@@ -332,11 +342,14 @@ def cmd_capture(args):
         print(f"\ncapturing on strongest channel {best['channel']} "
               f"({best['freq_mhz']:.1f} MHz)", flush=True)
 
-    r.tune(args.freq, args.srate, args.gain, args.antenna)
+    # resolve gain (auto if the user didn't set --gain)
+    gain = _resolve_gain(args, r, args.freq, args.srate)
+    r.tune(args.freq, args.srate, gain, args.antenna)
     bandnote = f" (band {args.band})" if getattr(args, "band", None) else ""
     chnote = f" (ch {args.channel})" if getattr(args, "channel", None) else ""
     print(f"capturing {args.samples:,} IQ samples @ {args.freq/1e6:.1f} MHz, "
-          f"{args.srate/1e3:.0f} ksps{chnote}{bandnote} -> {args.out}", flush=True)
+          f"{args.srate/1e3:.0f} ksps, gain={gain:.0f} dB{chnote}{bandnote} -> {args.out}",
+          flush=True)
     t0 = time.time()
     r.capture(args.samples, args.out)
     print(f"done in {time.time()-t0:.1f}s", flush=True)
@@ -356,7 +369,8 @@ def cmd_spectrum(args):
     freq = args.freq
     srate = args.srate
     r = _open_radio(args)
-    r.tune(freq, srate, args.gain, args.antenna)
+    gain = _resolve_gain(args, r, freq, srate)
+    r.tune(freq, srate, gain, args.antenna)
     r.recv_block  # settle
     # capture a 0.5s snippet
     n = int(srate * 0.5)
@@ -369,7 +383,7 @@ def cmd_spectrum(args):
             chunks.append(buf.copy())
     iq = np.concatenate(chunks) if chunks else buf
     print(f"\nspectrum @ {freq/1e6:.1f} MHz, {srate/1e6:.1f} Msps "
-          f"({len(iq):,} samples = {len(iq)/srate*1000:.0f} ms), gain={args.gain} dB")
+          f"({len(iq):,} samples = {len(iq)/srate*1000:.0f} ms), gain={gain:.0f} dB")
     # DC offset (a large DC offset = receiver problem / saturated)
     dc = float(np.mean(iq))
     dc_db = 20 * np.log10(abs(dc) + 1e-12)
@@ -434,10 +448,16 @@ def cmd_survey(args):
         srate = b.srate if b else 4e6
         channels = wifi_scan_channels(band) if band in ("2.4", "5.8") else []
     r = _open_radio(args)
-    scanner = DroneScanner(r, dwell_s=0.05, gain=args.gain)
+    # resolve gain once (auto if the user didn't set --gain) using the first
+    # channel as the reference — the gain is then held across the sweep.
+    first_freq = wifi_channel_freq(channels[0]) if channels else (
+        2.44e9 if band == "2.4" else 5.8e9)
+    gain = _resolve_gain(args, r, first_freq, srate)
+    scanner = DroneScanner(r, dwell_s=0.05, gain=gain)
     total = len(channels) * args.dwell
     print(f"surveying {len(channels)} channels on {band} "
-          f"({args.dwell}s dwell each, ~{total:.0f}s total)", flush=True)
+          f"({args.dwell}s dwell each, ~{total:.0f}s total, gain={gain:.0f} dB)",
+          flush=True)
     print(f"{'ch':>3}  {'freq(MHz)':>9}  {'peak(dB)':>8}  {'mean(dB)':>8}  "
           f"{'occupancy':>9}  signal", flush=True)
     print("-" * 60, flush=True)
@@ -908,6 +928,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     args._srate_set = ("--srate" in argv)
     args._argv = argv
+    args._gain_set = ("--gain" in argv)
     args.fn(args)
 
 
