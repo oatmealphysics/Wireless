@@ -75,29 +75,26 @@ static void emit(std::ofstream &out, const char *event, uint32_t freq_hz,
 struct UdhCapture {
     uhd::usrp::multi_usrp::sptr usrp;
     uhd::rx_streamer::sptr rx_stream;
-    uhd::stream_args_t stream_args;        // brace-init to avoid most-vexing-parse
-    uhd::rx_streamer::stream_info_t info;
+    uhd::stream_args_t stream_args;        // assign-init to avoid most-vexing-parse
     uhd::rx_metadata_t meta;
     std::vector<std::complex<float>> buf;
     double srate_hz = 0.0;
 
     bool init(const std::string &dev, double freq_hz, double srate, double gain) {
         buf.resize((size_t)(srate * 0.25));
-        srate_hz = srate;
-        // UHD 4.x: stream_args via brace-init (the 1-arg form triggers
-        // most-vexing-parse when the member is named stream_args).
+        srate_hz = srate;                  // track the rate we asked for
         stream_args = uhd::stream_args_t("fc32");
         usrp = uhd::usrp::multi_usrp::make(dev);
         usrp->set_rx_freq(freq_hz, 0);
         usrp->set_rx_rate(srate, 0);
         usrp->set_rx_gain(gain, 0);
         rx_stream = usrp->get_rx_stream(stream_args);
-        info = rx_stream->get_stream_info();
-        srate_hz = info.rate;
+        // (No stream_info_t / get_stream_info() — not present in this UHD build.
+        //  We only need the rate, which we already have from set_rx_rate.)
         return true;
     }
     size_t read(std::vector<std::complex<float>> &out) {
-        // recv(buffs, nsamps, metadata&, timeout, now) -> size_t (num samps)
+        // recv(buffs, nsamps, metadata&, timeout) -> size_t (num samps)
         return rx_stream->recv(&out[0], out.size(), meta, 0.5);
     }
     void tune(double freq_hz) { usrp->set_rx_freq(freq_hz, 0); }
