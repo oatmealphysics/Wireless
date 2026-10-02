@@ -395,9 +395,18 @@ def cmd_capture(args):
 def cmd_spectrum(args):
     _need_uhd()
     import numpy as np
-    from .dronescan import power_spectrum
+    from .dronescan import power_spectrum, wifi_channel_freq
     from .radio import RadioDevice
-    freq = args.freq
+    ch = getattr(args, "channel", None)
+    if ch is not None:
+        freq = wifi_channel_freq(ch)
+        chnote = f" (ch {ch})"
+    else:
+        freq = args.freq
+        chnote = ""
+        if freq is None:
+            print("give a --channel (e.g. 6 or 149) or --freq in Hz")
+            return
     srate = args.srate
     r = _open_radio(args)
     gain = _resolve_gain(args, r, freq, srate)
@@ -413,7 +422,7 @@ def cmd_spectrum(args):
         if r.recv_block(buf, 0.02):
             chunks.append(buf.copy())
     iq = np.concatenate(chunks) if chunks else buf
-    print(f"\nspectrum @ {freq/1e6:.1f} MHz, {srate/1e6:.1f} Msps "
+    print(f"\nspectrum @ {freq/1e6:.1f} MHz{chnote}, {srate/1e6:.1f} Msps "
           f"({len(iq):,} samples = {len(iq)/srate*1000:.0f} ms), gain={gain:.0f} dB")
     # DC offset (a large DC offset = receiver problem / saturated)
     dc = float(np.mean(iq))
@@ -906,9 +915,11 @@ def build_parser():
                         help="quick RF diagnostic: dump the power spectrum on a "
                              "channel (DC offset, peak, occupancy) — tells us if "
                              "the B205 is receiving RF")
-    sp.add_argument("--freq", type=float, default=5.24e9,
-                    help="center frequency Hz (default 5240 MHz = 5 GHz ch 48; "
-                         "set to your phone hotspot's channel)")
+    sp.add_argument("--channel", type=int, default=None,
+                    help="Wi-Fi channel number (e.g. 6 or 149) — mapped to its "
+                         "center frequency automatically. Preferred over --freq.")
+    sp.add_argument("--freq", type=float, default=None,
+                    help="center frequency Hz (only if --channel is not given)")
     sp.add_argument("--srate", type=float, default=8e6)
     sp.add_argument("--gain", type=float, default=40)
     sp.add_argument("--antenna", default=None)
