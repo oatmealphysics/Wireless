@@ -74,21 +74,24 @@ static void emit(std::ofstream &out, const char *event, uint32_t freq_hz,
 // ---------------------------------------------------------------------------
 struct UdhCapture {
     uhd::usrp::multi_usrp::sptr usrp;
-    uhd::stream_cmd::stream_args_t stream_args("fc32");
-    uhd::rx_streamer::stream_info_t info;
+    uhd::rx_streamer::sptr rx_stream;
+    uhd::stream_args_t stream_args("fc32");
+    uhd::stream_info_t info;
     std::vector<std::complex<float>> buf;
 
     bool init(const std::string &dev, double freq_hz, double srate, double gain) {
         buf.resize((size_t)(srate * 0.25));
-        usrp = uhd::usrp::multi_usrp::make(device_spec(dev));
+        // UHD 4.11: make() takes a device string or map; streamer via get_rx_stream.
+        usrp = uhd::usrp::multi_usrp::make(dev);
         usrp->set_rx_freq(freq_hz, 0);
-        usrp->set_rx_srate(srate, 0);
+        usrp->set_rx_rate(srate, 0);
         usrp->set_rx_gain(gain, 0);
-        info = usrp->get_rx_stream_info(stream_args);
+        rx_stream = usrp->get_rx_stream(stream_args);
+        info = rx_stream->get_stream_info();
         return true;
     }
     size_t read(std::vector<std::complex<float>> &out) {
-        return usrp->rx_stream->recv(out, out.size(), nullptr, 0.5);
+        return rx_stream->recv(out.data(), out.size(), nullptr, 0.5).get_num_samps();
     }
     void tune(double freq_hz) { usrp->set_rx_freq(freq_hz, 0); }
     double srate() const { return info.rate; }
@@ -113,7 +116,7 @@ int main(int argc, char **argv) {
                  "hop=%lu us\n", ELRS_SF, ELRS_BW_KHZ, ELRS_SYNC_WORD,
                  (unsigned long)ELRS_N_FREQ, (unsigned long)(ELRS_FREQ_STEP_HZ/1000),
                  (unsigned long)hop_interval_us());
-    std::fprintf(stderr, "[init] demod=STUB (IQ dumped for offline validation)\n");
+    std::fprintf(stderr, "[init] demod=software (both IQ polarities, byte-phase = real-RF)\n");
 
     UdhCapture cap;
     if (!cap.init(dev, hunt_mhz * 1e6, srate, gain)) {
@@ -134,6 +137,7 @@ int main(int argc, char **argv) {
     size_t   nwin = 0;
 
     std::fprintf(stderr, "[run] capturing (Ctrl-C to stop)...\n");
+    double cur_mhz = hunt_mhz;   // currently-tuned freq (updated on hop/phase change)
     while (true) {
         std::vector<std::complex<float>> win(cap.buf.size());
         size_t got = cap.read(win);
@@ -143,8 +147,8 @@ int main(int argc, char **argv) {
                              std::chrono::steady_clock::now() - t0).count();
         nwin++;
         if (nwin % 40 == 1)
-            std::fprintf(stderr, "[run] t=%.1fs wins=%zu phase=%d freq=%.6f MHz\n",
-                         elapsed, nwin, st, cap.info.rate * 0 + (double)0);
+            std::fprintf(stderr, "[run] t=%.1fs wins=%zu phase=%d freq=%.6f MHz srate=%.3fM\n",
+                         elapsed, nwin, st, cur_mhz, cap.srate() / 1e6);
 
         // Software demod (both IQ polarities — ELRS InvertIQ). demod_iq returns
         // a stream of payload bytes; we slide an 8-byte window over it and
@@ -163,23 +167,53 @@ int main(int argc, char **argv) {
                     elrs_uid u;
                     if (extract_uid(pkt, &u)) {
                         uid = u; st = EXPLOIT;
+                        generate_hop_table(&uid, hop_table);
+                        hop_idx = 0;
                         std::fprintf(stderr,
-                            "[hunt] SYNC on %.3f MHz, UID=%s[?]\n",
+                            "[hunt] SYNC on %.3f MHz, UID=%s[?] -> EXPLOIT (256-guess pending)\n",
                             hunt_mhz, hexstr(uid.bytes, 3).c_str());
                         emit(out, "sync_hunt", (uint32_t)(hunt_mhz*1e6), &uid, pkt, nullptr);
                     }
+                } else if (st == EXPLOIT && ptype == PKT_TYPE_RC) {
+                    // First CRC-valid RC packet after a SYNC: the UID (and thus
+                    // hop table) is confirmed. Lock onto the hop sequence.
+                    st = LOCK;
+                    // Estimate current hop idx: find which table freq is closest
+                    // to the freq we captured the RC on (hunt_mhz for now).
+                    double best = 1e18;
+                    for (int i = 0; i < ELRS_N_FREQ; i++) {
+                        double d = std::abs((double)hop_table[i] - hunt_mhz*1e6);
+                        if (d < best) { best = d; hop_idx = (uint8_t)i; }
+                    }
+                    cur_mhz = hop_table[hop_idx] / 1e6;
+                    cap.tune(hop_table[hop_idx]);
+                    std::fprintf(stderr,
+                        "[exploit] RC CRC-valid -> LOCK, hop_idx=%u freq=%.6f MHz\n",
+                        hop_idx, cur_mhz);
+                    emit(out, "lock", (uint32_t)hop_table[hop_idx], &uid, pkt, nullptr);
                 } else if (st == LOCK && ptype == PKT_TYPE_RC) {
                     rc_frame f = decode_rc_packet(pkt, &uid);
                     missed = 0;
-                    emit(out, "rc", (uint32_t)(hunt_mhz*1e6), &uid, pkt, &f);
+                    emit(out, "rc", (uint32_t)hop_table[hop_idx], &uid, pkt, &f);
                 }
             }
         }
 
         // Dead-reckon hop advancement in LOCK (timing-driven).
         if (st == LOCK) {
-            // (advance hop_idx + retune on hop_interval boundary — timing
-            //  anchored to the SYNC capture; full timing loop in a future pass)
+            // Advance one hop per hop_interval, retuning each time. The proven
+            // reference (phase3_lockons) anchors hop timing to the SYNC capture
+            // with µs precision; this is a coarser wall-clock version — good
+            // enough to follow the sequence, not bit-locked.
+            static auto last_hop = std::chrono::steady_clock::now();
+            auto now = std::chrono::steady_clock::now();
+            double dt_us = std::chrono::duration<double, std::micro>(now - last_hop).count();
+            if (dt_us >= hop_interval_us()) {
+                hop_idx = (hop_idx + 1) % ELRS_N_FREQ;
+                cur_mhz = hop_table[hop_idx] / 1e6;
+                cap.tune(hop_table[hop_idx]);
+                last_hop = now;
+            }
         }
     }
     if (iqf) fclose(iqf);
