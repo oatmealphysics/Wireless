@@ -25,16 +25,35 @@ if [ "${1:-}" = "test" ]; then
 fi
 
 # --- UHD live tool (needs UHD on this host) ---
-if ! pkg-config --exists libuhd 2>/dev/null; then
-  echo "[build] ERROR: libuhd not found via pkg-config." >&2
-  echo "[build] Install UHD dev headers + libuhd, e.g.:" >&2
-  echo "[build]   (Ubuntu) sudo apt install libuhd-dev    or build UHD from source" >&2
-  echo "[build] and ensure 'pkg-config --exists libuhd' succeeds." >&2
-  exit 1
+# Resolve UHD build flags. Try pkg-config first; if it can't find libuhd
+# (common when UHD is source-built into /usr/local and PKG_CONFIG_PATH doesn't
+# include it), fall back to explicit flags against /usr/local then /usr.
+UHD_CFLAGS=""; UHD_LIBS=""
+if pkg-config --exists libuhd 2>/dev/null; then
+  UHD_CFLAGS=$(pkg-config --cflags libuhd)
+  UHD_LIBS=$(pkg-config --libs libuhd)
+  echo "[build] UHD via pkg-config: ${UHD_CFLAGS} ${UHD_LIBS}"
+else
+  echo "[build] pkg-config can't find libuhd; trying explicit prefixes..."
+  for prefix in /usr/local /usr; do
+    if [ -f "$prefix/include/uhd/usrp/multi_usrp.hpp" ] && \
+       [ -e "$prefix/lib/x86_64-linux-gnu/libuhd.so" ] || \
+       [ -e "$prefix/lib/libuhd.so" ]; then
+      UHD_CFLAGS="-I$prefix/include"
+      UHD_LIBS="-L$prefix/lib/x86_64-linux-gnu -L$prefix/lib -luhd -Wl,-rpath,$prefix/lib/x86_64-linux-gnu -Wl,-rpath,$prefix/lib"
+      echo "[build] UHD explicit prefix: $prefix"
+      break
+    fi
+  done
+  if [ -z "$UHD_CFLAGS" ]; then
+    echo "[build] ERROR: UHD headers/lib not found in /usr/local or /usr." >&2
+    echo "[build] Run: find / -name 'multi_usrp.hpp' 2>/dev/null  and tell me the prefix." >&2
+    exit 1
+  fi
 fi
 
 echo "[build] compiling elrs_intercept against UHD..."
-g++ -O2 -std=c++17 elrs_intercept.cpp $(pkg-config --cflags --libs libuhd) -lm -o elrs_intercept
+g++ -O2 -std=c++17 elrs_intercept.cpp $UHD_CFLAGS $UHD_LIBS -lm -o elrs_intercept
 echo "[build] OK -> $(pwd)/elrs_intercept"
 echo "[build] run:  ./elrs_intercept [dev] [hunt_MHz] [srate] [gain] [out.jsonl]"
 echo "[build] e.g.: ./elrs_intercept type=b200 915.0 6e6 40 elrs_capture.jsonl"
