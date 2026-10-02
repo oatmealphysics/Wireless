@@ -75,26 +75,33 @@ static void emit(std::ofstream &out, const char *event, uint32_t freq_hz,
 struct UdhCapture {
     uhd::usrp::multi_usrp::sptr usrp;
     uhd::rx_streamer::sptr rx_stream;
-    uhd::stream_args_t stream_args("fc32");
-    uhd::stream_info_t info;
+    uhd::stream_args_t stream_args;        // brace-init to avoid most-vexing-parse
+    uhd::rx_streamer::stream_info_t info;
+    uhd::rx_metadata_t meta;
     std::vector<std::complex<float>> buf;
+    double srate_hz = 0.0;
 
     bool init(const std::string &dev, double freq_hz, double srate, double gain) {
         buf.resize((size_t)(srate * 0.25));
-        // UHD 4.11: make() takes a device string or map; streamer via get_rx_stream.
+        srate_hz = srate;
+        // UHD 4.x: stream_args via brace-init (the 1-arg form triggers
+        // most-vexing-parse when the member is named stream_args).
+        stream_args = uhd::stream_args_t("fc32");
         usrp = uhd::usrp::multi_usrp::make(dev);
         usrp->set_rx_freq(freq_hz, 0);
         usrp->set_rx_rate(srate, 0);
         usrp->set_rx_gain(gain, 0);
         rx_stream = usrp->get_rx_stream(stream_args);
         info = rx_stream->get_stream_info();
+        srate_hz = info.rate;
         return true;
     }
     size_t read(std::vector<std::complex<float>> &out) {
-        return rx_stream->recv(out.data(), out.size(), nullptr, 0.5).get_num_samps();
+        // recv(buffs, nsamps, metadata&, timeout, now) -> size_t (num samps)
+        return rx_stream->recv(&out[0], out.size(), meta, 0.5);
     }
     void tune(double freq_hz) { usrp->set_rx_freq(freq_hz, 0); }
-    double srate() const { return info.rate; }
+    double srate() const { return srate_hz; }
 };
 
 // ---------------------------------------------------------------------------
