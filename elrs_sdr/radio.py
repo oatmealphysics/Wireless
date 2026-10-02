@@ -331,6 +331,56 @@ class RadioDevice:
                 pass
         self._freq, self._sample_rate, self._gain = freq_hz, sample_rate, gain
 
+    def auto_gain(self, freq_hz: float, sample_rate: float,
+                  antenna: str | None = None,
+                  target_floor_db: float = -60.0,
+                  start_gain: float | None = None) -> float:
+        """Pick a sensible RX gain automatically (no user --gain needed).
+
+        Strategy: start at a per-band default, grab a quick sample, and adjust
+        gain UP if the noise floor is too low (signal buried) or DOWN if the
+        receiver is saturated (peak too high / clipping). Returns the chosen
+        gain. Target: noise floor near `target_floor_db` (relative to 1.0 full
+        scale) — high enough to see weak signals, low enough to avoid
+        saturating on a strong one.
+        """
+        import numpy as np
+        from .dronescan import power_spectrum
+        # per-band starting gain (higher bands need a bit more gain)
+        if start_gain is None:
+            if freq_hz < 1e9:
+                start_gain = 40.0
+            elif freq_hz < 3e9:
+                start_gain = 35.0
+            else:
+                start_gain = 30.0
+        gain = start_gain
+        self.tune(freq_hz, sample_rate, gain, antenna)
+        buf = np.zeros(8192, dtype=np.complex64)
+        self._open_rx_stream()
+        stream = self._usrp.get_rx_stream() if hasattr(self._usrp, "get_rx_stream") else None
+        # grab a quick sample to measure the floor
+        self._recv(stream, buf, 0.1)
+        f, db = power_spectrum(buf, sample_rate)
+        for _ in range(5):   # up to 5 adjustment steps
+            floor = float(np.percentile(db, 20))
+            peak = float(db.max() - floor)
+            # relative to 1.0 full scale: floor_db = 20*log10(floor) approx
+            floor_db = 20.0 * np.log10(floor + 1e-12)
+            if floor_db < target_floor_db:
+                # too quiet — raise gain (up to the B205 max ~70 dB)
+                gain = min(70.0, gain + 10.0)
+            elif peak > 45.0:
+                # peak is > 45 dB above floor — likely saturating; lower gain
+                gain = max(0.0, gain - 10.0)
+            else:
+                break   # good enough
+            self.tune(freq_hz, sample_rate, gain, antenna)
+            self._recv(stream, buf, 0.05)
+            f, db = power_spectrum(buf, sample_rate)
+        self._gain = gain
+        return gain
+
     def set_freq(self, freq_hz: float):
         """Set the RX center frequency, binding-tolerant (4.9/4.11 vs 4.2+)."""
         d = self._usrp

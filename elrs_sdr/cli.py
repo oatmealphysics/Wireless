@@ -51,6 +51,16 @@ def _open_radio(args) -> RadioDevice:
     return RadioDevice(args.device, rx_channel=args.rx_chan, tx_channel=args.tx_chan)
 
 
+def _resolve_gain(args, r: RadioDevice, freq_hz: float, srate: float) -> float:
+    """Return the gain to use: the user's --gain if explicitly set, otherwise
+    auto-pick a sensible one (so the user never has to type --gain)."""
+    if getattr(args, "_gain_set", False):
+        return args.gain
+    g = r.auto_gain(freq_hz, srate, getattr(args, "antenna", None))
+    print(f"  (auto-gain: {g:.0f} dB)", flush=True)
+    return g
+
+
 def _describe_rx_rates(d, chan) -> str:
     """Describe the RX sample-rate range across bindings, without crashing.
 
@@ -259,6 +269,37 @@ def cmd_scan(args):
 
 
 # ----------------------------------------------------------------------------
+# _identify_carrier — run the positive detectors on a captured buffer and
+# return the strongest positive ID (or None). Used by `survey`.
+# ----------------------------------------------------------------------------
+def _identify_carrier(buf, srate) -> str | None:
+    """Run the positive detectors on a captured buffer; return the strongest
+    positive ID (or None if nothing claims it)."""
+    from . import positivedet
+    from .dronescan import DroneScanner as DS
+    buf = np.asarray(buf)
+    if len(buf) < 4096:
+        return None
+    candidates = []
+    lora_s, lora_m = positivedet.lora_chirp(buf, srate)
+    if lora_s >= DS._LORA_CLAIM:
+        candidates.append((lora_s, "LoRa (ELRS/Meshtastic/sub-1G)"))
+    ofdm_s, ofdm_m = positivedet.ofdm_preamble(buf, srate)
+    if ofdm_s >= DS._OFDM_CLAIM:
+        candidates.append((ofdm_s, "OFDM / 802.11 (Wi-Fi)"))
+    video_s, video_m = positivedet.analog_video(buf, srate)
+    if video_s >= DS._VIDEO_CLAIM:
+        candidates.append((video_s, "Analog FPV video"))
+    ocus_s, ocus_m = positivedet.ocusync_phy(buf, srate)
+    if ocus_s >= DS._OCUSYNC_CLAIM:
+        candidates.append((ocus_s, "OcuSync (proprietary OFDM)"))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: -x[0])
+    return candidates[0][1]
+
+
+# ----------------------------------------------------------------------------
 # capture
 # ----------------------------------------------------------------------------
 def cmd_capture(args):
@@ -332,11 +373,14 @@ def cmd_capture(args):
         print(f"\ncapturing on strongest channel {best['channel']} "
               f"({best['freq_mhz']:.1f} MHz)", flush=True)
 
-    r.tune(args.freq, args.srate, args.gain, args.antenna)
+    # resolve gain (auto if the user didn't set --gain)
+    gain = _resolve_gain(args, r, args.freq, args.srate)
+    r.tune(args.freq, args.srate, gain, args.antenna)
     bandnote = f" (band {args.band})" if getattr(args, "band", None) else ""
     chnote = f" (ch {args.channel})" if getattr(args, "channel", None) else ""
     print(f"capturing {args.samples:,} IQ samples @ {args.freq/1e6:.1f} MHz, "
-          f"{args.srate/1e3:.0f} ksps{chnote}{bandnote} -> {args.out}", flush=True)
+          f"{args.srate/1e3:.0f} ksps, gain={gain:.0f} dB{chnote}{bandnote} -> {args.out}",
+          flush=True)
     t0 = time.time()
     r.capture(args.samples, args.out)
     print(f"done in {time.time()-t0:.1f}s", flush=True)
@@ -345,69 +389,184 @@ def cmd_capture(args):
 
 
 # ----------------------------------------------------------------------------
-# survey — airodump-style channel survey (dwell N seconds on each channel)
+# spectrum — quick RF diagnostic: dump the real power spectrum on a channel,
+# check DC offset + occupancy. Tells us if the B205 is even receiving RF.
 # ----------------------------------------------------------------------------
+def cmd_spectrum(args):
+    _need_uhd()
+    import numpy as np
+    from .dronescan import power_spectrum
+    from .radio import RadioDevice
+    freq = args.freq
+    srate = args.srate
+    r = _open_radio(args)
+    gain = _resolve_gain(args, r, freq, srate)
+    r.tune(freq, srate, gain, args.antenna)
+    r.recv_block  # settle
+    # capture a 0.5s snippet
+    n = int(srate * 0.5)
+    buf = np.zeros(8192, dtype=np.complex64)
+    chunks = []
+    import time as _t
+    t0 = _t.time()
+    while _t.time() - t0 < 0.5:
+        if r.recv_block(buf, 0.02):
+            chunks.append(buf.copy())
+    iq = np.concatenate(chunks) if chunks else buf
+    print(f"\nspectrum @ {freq/1e6:.1f} MHz, {srate/1e6:.1f} Msps "
+          f"({len(iq):,} samples = {len(iq)/srate*1000:.0f} ms), gain={gain:.0f} dB")
+    # DC offset (a large DC offset = receiver problem / saturated)
+    dc = float(np.mean(iq))
+    dc_db = 20 * np.log10(abs(dc) + 1e-12)
+    ac_db = 20 * np.log10(float(np.std(iq)) + 1e-12)
+    print(f"  DC offset: {dc_db:.1f} dB (relative to 1.0)  "
+          f"[should be < -20 dB; high = receiver/DC problem]")
+    print(f"  AC (signal+noise) std: {ac_db:.1f} dB")
+    # power spectrum (average over several blocks for stability)
+    f, db = power_spectrum(iq[:min(len(iq), 8192*64)], srate)
+    floor = float(np.percentile(db, 20))
+    peak_idx = int(np.argmax(db))
+    peak = float(db[peak_idx] - floor)
+    pres = db > (floor + 8)
+    occ = float(pres.mean())
+    print(f"  noise floor (20th pct): {floor:.1f} dB")
+    print(f"  peak: {peak:.1f} dB above floor at {f[peak_idx]/1e6:+.2f} MHz offset")
+    print(f"  occupancy (above floor+8 dB): {occ*100:.1f}%  "
+          f"[a real AP would be ~30-100%; noise is <5%]")
+    # top 8 peaks
+    order = np.argsort(db)[::-1][:8]
+    print("  top spectral peaks (offset from center, dB above floor):")
+    for k in sorted(order):
+        print(f"    {f[k]/1e6:+7.2f} MHz   {db[k]-floor:6.1f} dB")
+    if peak < 8:
+        print("\n  -> NO clear carrier. Either no signal in range, or the B205")
+        print("     isn't receiving well (try lower gain, check antenna).")
+    elif occ > 0.3:
+        print(f"\n  -> STEADY signal present! Peak at {f[peak_idx]/1e6:+.2f} MHz.")
+        print(f"     This is a real carrier — capture it and we can ID it.")
+    else:
+        print(f"\n  -> Peak present but low occupancy ({occ*100:.0f}%) — a weak or")
+        print("     intermittent signal (or a narrow carrier).")
+
+
+# ----------------------------------------------------------------------------
+# survey — airodump-style: scan a single channel, a comma-separated list of
+# channels, or a whole band. Shows the spectrum + IDENTIFIES each carrier.
+# This is the core "scan the spectrum and identify what's there" workflow.
+# ----------------------------------------------------------------------------
+def _band_channels(band: str) -> list[int]:
+    """Channel list for a band name."""
+    if band == "2.4":
+        return list(range(1, 12))
+    if band == "5.8":
+        return [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112,
+                116, 120, 124, 128, 132, 136, 140,
+                149, 153, 157, 161, 165, 169, 173, 177]
+    return [1]   # sub1g/433/1.2: not Wi-Fi-channeled; single slot
+
+
+def _parse_channel_spec(spec: str) -> list[int]:
+    """Parse a channel spec: a single number, a comma list, a range (a-b),
+    or a band name (2.4/5.8/sub1g/433/1.2)."""
+    spec = spec.strip()
+    if spec in ("2.4", "5.8", "sub1g", "433", "1.2"):
+        return _band_channels(spec)
+    out = []
+    for p in (x.strip() for x in spec.split(",")):
+        if not p:
+            continue
+        if "-" in p:
+            a, b = p.split("-")
+            out.extend(range(int(a), int(b) + 1))
+        else:
+            out.append(int(p))
+    return out
+
+
 def cmd_survey(args):
     _need_uhd()
-    from .dronescan import (DroneScanner, wifi_scan_channels, BANDS)
-    band = args.band
-    # pick the sample rate for the band (8 Msps for 2.4/5 GHz Wi-Fi width)
-    if band == "2.4":
-        srate = 8e6
-        channels = list(range(1, 12))   # ch 1-11 (the 2.4 GHz set)
-    elif band == "5.8":
-        srate = 8e6
-        # Full 5 GHz + 5.8 GHz survey. 5 GHz Wi-Fi (5150-5725 MHz) PLUS the
-        # 5.8 GHz FPV/unlicensed band (5725-5900 MHz) where analog FPV video +
-        # 5 GHz Wi-Fi ch 149-177 live. ch 149-177 = 5745-5885 MHz covers the
-        # common 5.8 GHz FPV video channels (5760/5785/5810/5835/5850 MHz) and
-        # the higher UNII-3 channels.
-        channels = [
-            # 5 GHz UNII-1/2a/2b/3 (5150-5725 MHz)
-            36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112,
-            116, 120, 124, 128, 132, 136, 140,
-            # 5.8 GHz FPV/unlicensed (5725-5900 MHz): ch 149-177
-            149, 153, 157, 161, 165, 169, 173, 177,
-        ]
-    else:
-        b = next((b for b in BANDS if b.name == band), None)
-        srate = b.srate if b else 4e6
-        channels = wifi_scan_channels(band) if band in ("2.4", "5.8") else []
+    import numpy as np
+    import time as _t
+    from .dronescan import (DroneScanner, power_spectrum, wifi_channel_freq, BANDS)
+    from . import positivedet
+
+    # channel spec: --channel (single/comma/range/band) or --band (fallback)
+    spec = getattr(args, "channel", None) or getattr(args, "band", "2.4")
+    channels = _parse_channel_spec(spec)
+    if not channels:
+        print(f"no channels to survey (spec {spec!r})"); return
+    # band name (for the scanner) + sample rate
+    is_wifi = any((1 <= c <= 14) or (36 <= c <= 177) for c in channels)
+    band_name = ("2.4" if any(1 <= c <= 14 for c in channels)
+                 else "5.8") if is_wifi else getattr(args, "band", "2.4")
+    srate = 8e6 if is_wifi else 4e6
+    if getattr(args, "_srate_set", False):
+        srate = args.srate
+
+    def ch_freq(ch):
+        try:
+            return wifi_channel_freq(ch)
+        except ValueError:
+            b = next((b for b in BANDS if b.name == band_name), None)
+            return (b.lo_hz + b.hi_hz) / 2.0 if b else 2.44e9
+
+    freqs = [ch_freq(c) for c in channels]
     r = _open_radio(args)
-    scanner = DroneScanner(r, dwell_s=0.05, gain=args.gain)
+    gain = _resolve_gain(args, r, freqs[0], srate)
+    scanner = DroneScanner(r, dwell_s=0.05, gain=gain)
     total = len(channels) * args.dwell
-    print(f"surveying {len(channels)} channels on {band} "
-          f"({args.dwell}s dwell each, ~{total:.0f}s total)", flush=True)
-    print(f"{'ch':>3}  {'freq(MHz)':>9}  {'peak(dB)':>8}  {'mean(dB)':>8}  "
-          f"{'occupancy':>9}  signal", flush=True)
-    print("-" * 60, flush=True)
-    results = scanner.wifi_scan(band=band, srate=srate, channels=channels,
-                                dwell_s=args.dwell, verbose=False)
-    for res in results:
-        # label: a steady AP has high occupancy; impulsive/DC artifact low
-        if res["occupancy"] > 0.7 and res["peak_db"] > 15:
-            sig = "** STEADY SIGNAL (likely a real AP/link) **"
-        elif res["occupancy"] > 0.3:
-            sig = "intermittent"
-        elif res["peak_db"] > 15:
-            sig = "impulsive (likely DC artifact / noise)"
+    print(f"\nsurveying {len(channels)} channel(s) on {band_name} "
+          f"({args.dwell}s dwell each, ~{total:.0f}s total, gain={gain:.0f} dB, "
+          f"{srate/1e6:.1f} Msps)\n", flush=True)
+
+    # per-channel dwell scan (occupancy/peak) via the proven scanner
+    try:
+        results = scanner.wifi_scan(band=band_name, srate=srate, channels=channels,
+                                    dwell_s=args.dwell, verbose=False)
+    except Exception:
+        results = []
+    res_by_ch = {r_["channel"]: r_ for r_ in results}
+
+    print(f"{'ch':>4}  {'freq(MHz)':>9}  {'peak':>6}  {'occ':>5}  signal / identification")
+    print("-" * 78, flush=True)
+    stream = r._open_rx_stream()
+    buf = np.zeros(8192, dtype=np.complex64)
+    meta = r._make_rx_metadata()
+    for ch, f in zip(channels, freqs):
+        r.tune(f, srate, gain, args.antenna)
+        _t.sleep(0.05)
+        r._recv(stream, buf, 0.3, meta)
+        if np.any(buf):
+            f_arr, db = power_spectrum(buf, srate)
+            floor = float(np.percentile(db, 20))
+            peak = float(db.max() - floor)
+            occ = float((db > (floor + 8)).mean())
+        else:
+            peak, occ = 0.0, 0.0
+        ident = _identify_carrier(buf, srate)
+        if occ > 0.7 and peak > 15:
+            sig = "** STEADY ** " + (ident or "unidentified")
+        elif occ > 0.3:
+            sig = "intermittent " + (ident or "")
+        elif peak > 15:
+            sig = ident or "impulsive/noise"
         else:
             sig = "quiet"
-        bar = "#" * int(res["occupancy"] * 25)
-        print(f"{res['channel']:>3}  {res['freq_mhz']:>9.1f}  "
-              f"{res['peak_db']:>8.1f}  {res['mean_db']:>8.1f}  "
-              f"{res['occupancy']*100:>7.0f}%   {bar:<25} {sig}", flush=True)
-    print("-" * 60, flush=True)
-    # recommendation: the channel with the highest occupancy+peak is the target
-    best = results[0]
-    print(f"\nbest channel: {best['channel']} ({best['freq_mhz']:.1f} MHz) "
-          f"occ={best['occupancy']*100:.0f}% peak={best['peak_db']:.1f} dB", flush=True)
-    if best["occupancy"] > 0.3 and best["peak_db"] > 15:
-        print(f"-> to capture it:  elrs-sdr capture --channel {best['channel']}",
-              flush=True)
+        bar = "#" * int(occ * 20)
+        print(f"{ch:>4}  {f/1e6:>9.1f}  {peak:>5.1f}  {occ*100:>4.0f}%  "
+              f"{bar:<20} {sig}", flush=True)
+    print("-" * 78, flush=True)
+    best = max(channels, key=lambda c: (res_by_ch.get(c, {}).get("occupancy", 0),
+                                        res_by_ch.get(c, {}).get("peak_db", 0)))
+    bres = res_by_ch.get(best, {})
+    print(f"\nbest channel: {best} ({ch_freq(best)/1e6:.1f} MHz) "
+          f"occ={bres.get('occupancy',0)*100:.0f}% peak={bres.get('peak_db',0):.1f} dB",
+          flush=True)
+    if bres.get("occupancy", 0) > 0.3 and bres.get("peak_db", 0) > 15:
+        print(f"-> to capture it:  elrs-sdr capture --channel {best}", flush=True)
     else:
-        print("-> no steady signal found on any channel. Make sure a 2.4 GHz", flush=True)
-        print("   Wi-Fi AP / drone link is in range, then re-survey.", flush=True)
+        print("-> no steady signal found. Make sure a transmitter is in range.",
+              flush=True)
 
 
 # ----------------------------------------------------------------------------
@@ -743,15 +902,31 @@ def build_parser():
     sp.add_argument("--antenna", default=None)
     sp.set_defaults(fn=cmd_scan)
 
+    sp = sub.add_parser("spectrum",
+                        help="quick RF diagnostic: dump the power spectrum on a "
+                             "channel (DC offset, peak, occupancy) — tells us if "
+                             "the B205 is receiving RF")
+    sp.add_argument("--freq", type=float, default=5.24e9,
+                    help="center frequency Hz (default 5240 MHz = 5 GHz ch 48; "
+                         "set to your phone hotspot's channel)")
+    sp.add_argument("--srate", type=float, default=8e6)
+    sp.add_argument("--gain", type=float, default=40)
+    sp.add_argument("--antenna", default=None)
+    sp.set_defaults(fn=cmd_spectrum)
+
     sp = sub.add_parser("survey",
-                        help="airodump-style channel survey (dwell N s on each "
-                             "channel, report occupancy/peak per channel)")
+                        help="airodump-style: scan a channel, comma list, or "
+                             "band; show the spectrum + IDENTIFY each carrier")
+    sp.add_argument("--channel", default=None,
+                    help="channel(s): a single number (48), a comma list "
+                         "(48,149,157), a range (149-165), or a band name "
+                         "(2.4 / 5.8). Overrides --band.")
     sp.add_argument("--band", default="2.4",
-                    choices=["2.4", "5.8"],
-                    help="which band to survey (default 2.4 = ch 1-11)")
-    sp.add_argument("--dwell", type=float, default=5.0,
-                    help="seconds to dwell on each channel (default 5.0; "
-                         "11 channels x 5s = 55s total)")
+                    choices=["2.4", "5.8", "sub1g", "433", "1.2"],
+                    help="band to survey (default 2.4 = ch 1-11)")
+    sp.add_argument("--dwell", type=float, default=2.0,
+                    help="seconds to dwell on each channel (default 2.0)")
+    sp.add_argument("--srate", type=float, default=8e6)
     sp.add_argument("--gain", type=float, default=40)
     sp.add_argument("--antenna", default=None)
     sp.set_defaults(fn=cmd_survey)
@@ -836,6 +1011,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     args._srate_set = ("--srate" in argv)
     args._argv = argv
+    args._gain_set = ("--gain" in argv)
     args.fn(args)
 
 
