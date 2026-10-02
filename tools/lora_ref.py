@@ -27,7 +27,7 @@ def gen_preamble(SF, net_id=64, sto_frac=0, R=1):
     # sync_word[idx_fold:-1] = np.exp(2*np.pi*1j*(np.square(n2)/(2*N) + net_id*n2/N + n2/2))
     sync_word = gen_sym(SF, net_id, sto_frac=sto_frac, R=R)
 
-    quarter_downchirp = downchirp[0:N*R/4]
+    quarter_downchirp = downchirp[0:int(N * R / 4)]
     preamble = np.concatenate([np.tile(upchirp, 8), np.tile(sync_word, 2), np.tile(downchirp, 2), quarter_downchirp])
     return preamble
 
