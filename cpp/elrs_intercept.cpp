@@ -26,7 +26,10 @@
 #include <uhd/usrp/multi_usrp.hpp>
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <complex>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -98,7 +101,24 @@ struct UdhCapture {
     }
     size_t read(std::vector<std::complex<float>> &out) {
         // recv(buffs, nsamps, metadata&, timeout) -> size_t (num samps)
-        return rx_stream->recv(&out[0], out.size(), meta, 0.5);
+        size_t n = rx_stream->recv(&out[0], out.size(), meta, 0.5);
+        // One-shot startup diagnostic: if the stream is delivering all-zeros or
+        // zero samples, the whole decode is doomed before DSP. Print the first
+        // recv's count + a sample histogram (exactly-zero vs nonzero + max mag).
+        static bool diag_done = false;
+        if (!diag_done) {
+            diag_done = true;
+            std::fprintf(stderr, "[diag] first recv: got=%zu of %zu\n", n, out.size());
+            int zeros = 0, nz = 0; double maxm = 0.0;
+            size_t lim = std::min<size_t>(n, 1000);
+            for (size_t i = 0; i < lim; i++) {
+                double m = std::abs(out[i]);
+                if (m == 0.0) zeros++; else { nz++; if (m > maxm) maxm = m; }
+            }
+            std::fprintf(stderr, "[diag] first %zu: zeros=%d nonzero=%d maxmag=%.6e\n",
+                         lim, zeros, nz, maxm);
+        }
+        return n;
     }
     void tune(double freq_hz) { usrp->set_rx_freq(freq_hz, 0); }
     double srate() const { return srate_hz; }
