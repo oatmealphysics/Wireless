@@ -548,10 +548,22 @@ def demod_lsig(iq: np.ndarray, srate: float) -> tuple[bool, str]:
         return False, "no_lltf"
     lltf = iq[lltf_start:lltf_start + FFT_SIZE].astype(np.complex128)
     lltf_freq = fft_demod_symbol(lltf)
-    # channel estimate: L-LTF subcarriers are BPSK (known +/-1); use the
-    # magnitude as the channel gain (the sign is folded into the decisions)
-    chan = np.abs(lltf_freq)
-    chan[chan < 1e-6] = 1e-6
+    # channel estimate: divide the received L-LTF FFT by the KNOWN L-LTF
+    # pilot values (the FFT of the time-domain L-LTF reference). This gives
+    # the complex per-subcarrier channel (amplitude + phase) — the correct ZF
+    # equalizer input (vs the old magnitude-only estimate).
+    lltf_time_ref = _ll_ltf_ref()
+    lltf_pilot = fft_demod_symbol(lltf_time_ref)
+    chan = np.zeros(FFT_SIZE, dtype=np.complex128)
+    for k in range(FFT_SIZE):
+        ref = lltf_pilot[k]
+        if abs(ref) > 1e-6:
+            chan[k] = lltf_freq[k] / ref
+        else:
+            # guard/null subcarrier: fall back to a unit-magnitude estimate
+            chan[k] = 1.0 + 0j
+    # ZF equalizer guard (avoid divide-by-zero at the data subcarriers)
+    chan[abs(chan) < 1e-4] = 1e-4
     # 3) demod the 2 L-SIG symbols (right after the L-LTF)
     lsig_start = lltf_start + sym_period
     if lsig_start + 2 * sym_period + FFT_SIZE > n:
@@ -626,6 +638,35 @@ def _ll_ltf_ref() -> np.ndarray:
     ]
     assert len(long_norm) == 64, f"L-LTF ref must be 64 samples, got {len(long_norm)}"
     return np.array(long_norm, dtype=np.complex128)
+
+
+def _ll_ltf_freq_ref() -> np.ndarray:
+    """The 802.11a L-LTF in the FREQUENCY domain (the FFT of the time-domain
+    L-LTF), used as the known-pilot reference for channel estimation. This is
+    the exact `LONG` filter from gr-ieee802-11/lib/sync_long.cc (Bastian
+    Bloessl, GPL) — the 64-point complex sequence. Dividing the received
+    L-LTF FFT by this gives the complex per-subcarrier channel estimate
+    (amplitude + phase), which is the correct ZF equalizer input."""
+    long_freq = [
+        (-0.0455, -1.0679), (0.3528, -0.9865), (0.8594, 0.7348), (0.1874, 0.2475),
+        (0.5309, -0.7784), (-1.0218, -0.4897), (-0.3401, -0.9423), (0.8657, -0.2298),
+        (0.4734, 0.0362), (0.0088, -1.0207), (-1.2142, -0.4205), (0.2172, -0.5195),
+        (0.5207, -0.1326), (-0.1995, 1.4259), (1.0583, -0.0363), (0.5547, -0.5547),
+        (0.3277, 0.8728), (-0.5077, 0.3488), (-1.1650, 0.5789), (0.7297, 0.8197),
+        (0.6173, 0.1253), (-0.5353, 0.7214), (-0.5011, -0.1935), (-0.3110, -1.3392),
+        (-1.0818, -0.1470), (-1.1300, -0.1820), (0.6663, -0.6571), (-0.0249, 0.4773),
+        (-0.8155, 1.0218), (0.8140, 0.9396), (0.1090, 0.8662), (-1.3868, -0.0000),
+        (0.1090, -0.8662), (0.8140, -0.9396), (-0.8155, -1.0218), (-0.0249, -0.4773),
+        (0.6663, 0.6571), (-1.1300, 0.1820), (-1.0818, 0.1470), (-0.3110, 1.3392),
+        (-0.5011, 0.1935), (-0.5353, -0.7214), (0.6173, -0.1253), (0.7297, -0.8197),
+        (-1.1650, -0.5789), (-0.5077, -0.3488), (0.3277, -0.8728), (0.5547, 0.5547),
+        (1.0583, 0.0363), (-0.1995, -1.4259), (0.5207, 0.1326), (0.2172, 0.5195),
+        (-1.2142, 0.4205), (0.0088, 1.0207), (0.4734, -0.0362), (0.8657, 0.2298),
+        (-0.3401, 0.9423), (-1.0218, 0.4897), (0.5309, 0.7784), (0.1874, -0.2475),
+        (0.8594, -0.7348), (0.3528, 0.9865), (-0.0455, 1.0679), (1.3868, -0.0000),
+    ]
+    assert len(long_freq) == 64, f"LONG freq ref must be 64, got {len(long_freq)}"
+    return np.array([complex(*v) for v in long_freq], dtype=np.complex128)
 
 
 def _ll_stf_sync(iq: np.ndarray) -> tuple[int, float]:
