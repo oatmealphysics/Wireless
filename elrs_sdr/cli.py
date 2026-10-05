@@ -23,7 +23,7 @@ import time
 
 import numpy as np
 
-from . import lora, ota, fhss, crc
+from .core import lora, ota, fhss, crc
 from .radio import RadioDevice, UHDNotInstalled, read_complex8
 
 

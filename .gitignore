@@ -1,4 +1,25 @@
+# Python
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
+build/
+dist/
+
+# SDR captures (large, regenerable)
+*.iq
 *.complex8
+*.jsonl
+
+# C++ build artifacts (cpp/build.sh produces these)
+cpp/elrs_intercept
+cpp/tests/test_elrs_decode
+cpp/tests/test_lora_demod
+cpp/*.o
+
+# Tarballs / archives — never commit
+*.tgz
+*.tar.gz
+
+# Scan output (regenerated)
+scan.jsonl

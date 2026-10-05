@@ -24,6 +24,43 @@ Semtech implementation details. The code is structured so that the **first real
 capture** becomes a unit test for `lora.py` — everything above it is already
 validated against the exact CRC.
 
+## Repository layout
+
+```
+elrs_sdr/            the Python package (the `elrs-sdr` command + webui)
+  core/              ELRS decode — single source of truth (exact reference ports)
+    crc.py             Crc2Byte (CRC-14 0x2E57 / CRC-16 0x3D65), OTA CRC init
+    ota.py             OTA packet model (sync/rc/linkstats, pack/unpack, validate)
+    fhss.py            FHSS sequence (LCG PRNG + block-shuffle), ISM2G4 map
+    lora.py            software LoRa demod (preamble correlate + symbol demod)
+  radio.py           UHD device wrapper (RX+TX symmetric) + .complex8 I/O
+  dronscan.py        multi-band presence + protocol scanner
+  wifi.py  positivedet.py   band/channel tables + PHY detectors
+  webui.py  cli.py  selftest.py  uhd_bootstrap.py
+
+cpp/                 live UHD tool (C++) — the real-time capture/decode
+  elrs_decode.h      same decode logic as core/ (CRC/FHSS/OTA) for the C++ path
+  lora_demod_cpp.h   C++ LoRa demod
+  elrs_intercept.cpp main tool: --scan (2.4 GHz power sweep) + ELRS decode
+  tests/             CPU unit tests (18 decode checks) + C++<->numpy cross-val
+
+tools/               standalone one-off scripts (NOT the package)
+  lora_ref.py        numpy LoRa generator (the C++ cross-validation depends on it)
+  drone_scan.py  odr_detect.py  odr_web.py  sdr_wifi_preamble.py   (ODID/BLE/Wi-Fi)
+  webui_diag.sh      laptop webui diagnostic helper
+
+docs/                DRONE_RF_ARCHITECTURE.md
+apps/                droneid_json_rx.py (DJI Drone-ID adapter)
+
+DroneSecurity/  gr-ieee802-11/  drone_refs/   vendored external references (untouched)
+```
+
+The Python package (`elrs_sdr/`) and the C++ tool (`cpp/`) are **two
+implementations of the same reference ports** — C++ for low-latency live
+capture on the laptop, Python for the webui, offline decoding, and testing.
+`tools/` holds standalone scripts that don't belong in the package; `lora_ref.py`
+is the proven numpy LoRa generator the C++ demod cross-validates against.
+
 ## The decoding barrier (read this first)
 
 ELRS validates each frame with a CRC whose **init is derived from the link's
@@ -193,20 +230,20 @@ out of scope for the LoRa path.)
 ## Architecture (RX/TX symmetric by design)
 
 ```
-cli.py        subcommands: info/scan/capture/decode/monitor/bind-capture/tx
-  │
-radio.py      RadioDevice — ONE UHD wrapper, symmetric RX+TX
-  │           rx_stream()/capture()  ↔  tx_stream()/tx_tune()
-  │           .complex8 file I/O (SDR# / GQRtx compatible)
-  │
-lora.py       LoRa PHY — chirp mod/demod, IQ inversion, preamble+sync detect
-  │           modulate_frame()  ↔  demodulate_frame()   [needs capture validation]
-  │
-ota.py        OTA packet model — build_*/decode_*/validate_*/generate_*
-  │           the SAME functions serve RX (validate+unpack) and TX (build+pack)
-  │
-crc.py        Crc2Byte + Crc8 — exact ports
-fhss.py       LCG + domains + hop-sequence builder
+elrs_sdr/
+  cli.py        subcommands: info/scan/capture/decode/monitor/bind-capture/tx
+    │
+  radio.py      RadioDevice — ONE UHD wrapper, symmetric RX+TX
+    │           rx_stream()/capture()  ↔  tx_stream()/tx_tune()
+    │           .complex8 file I/O (SDR# / GQRtx compatible)
+    │
+  core/         the ELRS decode (single source of truth, exact reference ports)
+    │           lora.py    LoRa PHY — chirp mod/demod, IQ inversion, preamble detect
+    │                     modulate_frame()  ↔  demodulate_frame()  [needs capture]
+    │           ota.py     OTA packet model — build_*/decode_*/validate_*/generate_*
+    │                     the SAME functions serve RX (validate+unpack) and TX (pack)
+    │           crc.py     Crc2Byte + Crc8 — exact ports
+    │           fhss.py    LCG + domains + hop-sequence builder
 ```
 
 Adding TX later is *wiring, not re-implementation*: `ota.build_*` and

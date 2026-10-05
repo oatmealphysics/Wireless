@@ -21,4 +21,4 @@ radio = []
 elrs-sdr = "elrs_sdr.cli:main"
 
 [tool.setuptools]
-packages = ["elrs_sdr"]
+packages = ["elrs_sdr", "elrs_sdr.core"]
