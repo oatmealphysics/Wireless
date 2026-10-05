@@ -35,6 +35,7 @@
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 // ---------------------------------------------------------------------------
@@ -94,11 +95,24 @@ struct UdhCapture {
         usrp->set_rx_freq(freq_hz, 0);
         usrp->set_rx_rate(srate, 0);
         usrp->set_rx_gain(gain, 0);
+        // Common B200 all-zero/DC-clipped fixes: make sure the RX chain is
+        // actually armed on a real antenna (default can be a DC path on some
+        // firmware), and enable the DC-offset / IQ-imbalance compensation.
+        try { usrp->set_rx_antenna("RX2", 0); } catch (const std::exception &e) {
+            std::fprintf(stderr, "[init] set_rx_antenna(RX2) failed: %s\n", e.what());
+        }
+        try { usrp->set_dc_offset_mode(true, 0); } catch (const std::exception &e) {
+            std::fprintf(stderr, "[init] set_dc_offset_mode failed: %s\n", e.what());
+        }
+        try { usrp->set_iq_balance_mode(true, 0); } catch (const std::exception &e) {
+            std::fprintf(stderr, "[init] set_iq_balance_mode failed: %s\n", e.what());
+        }
         rx_stream = usrp->get_rx_stream(stream_args);
         // (No stream_info_t / get_stream_info() — not present in this UHD build.
         //  We only need the rate, which we already have from set_rx_rate.)
         return true;
     }
+    void set_buf(size_t n) { buf.resize(n); }
     size_t read(std::vector<std::complex<float>> &out) {
         // recv(buffs, nsamps, metadata&, timeout) -> size_t (num samps)
         size_t n = rx_stream->recv(&out[0], out.size(), meta, 0.5);
@@ -130,11 +144,30 @@ struct UdhCapture {
 enum phase { HUNT = 0, EXPLOIT, LOCK };
 
 int main(int argc, char **argv) {
-    std::string dev    = argc > 1 ? argv[1] : "type=b200";
-    double hunt_mhz    = argc > 2 ? atof(argv[2]) : 2430.0;   // 2.4 GHz ELRS (ISM2G4)
-    double srate       = argc > 3 ? atof(argv[3]) : 10.0e6;  // ~12.5x oversample of 800 kHz BW
-    double gain        = argc > 4 ? atof(argv[4]) : 40.0;
-    std::string outp   = argc > 5 ? argv[5] : "elrs_capture.jsonl";
+    // Modes:
+    //   elrs_intercept [dev] [hunt_MHz] [srate] [gain] [out.jsonl]   (ELRS decode)
+    //   elrs_intercept --scan [dev] [gain] [dwell_ms]                (2.4 GHz power scan)
+    bool scan_mode = false;
+    int  a = 1;
+    if (argc > 1 && std::string(argv[1]) == "--scan") { scan_mode = true; a = 2; }
+
+    std::string dev;
+    double hunt_mhz, srate, gain;
+    std::string outp;
+    int dwell_ms;
+    if (scan_mode) {
+        dev     = argc > a     ? argv[a]     : "type=b200";
+        gain    = argc > a + 1 ? atof(argv[a+1]) : 40.0;
+        dwell_ms= argc > a + 2 ? atoi(argv[a+2]) : 200;   // ms per channel
+        hunt_mhz= 2400.4; srate = 10.0e6; outp = "scan.jsonl";
+    } else {
+        dev    = argc > 1 ? argv[1] : "type=b200";
+        hunt_mhz= argc > 2 ? atof(argv[2]) : 2430.0;
+        srate  = argc > 3 ? atof(argv[3]) : 10.0e6;
+        gain   = argc > 4 ? atof(argv[4]) : 40.0;
+        outp   = argc > 5 ? argv[5] : "elrs_capture.jsonl";
+        dwell_ms = 200;
+    }
 
     std::ofstream out(outp.c_str());
     std::fprintf(stderr, "[init] dev=%s hunt=%.3f MHz srate=%.1f MS/s gain=%.1f\n",
@@ -149,6 +182,84 @@ int main(int argc, char **argv) {
     if (!cap.init(dev, hunt_mhz * 1e6, srate, gain)) {
         std::fprintf(stderr, "[init] UHD init failed\n");
         return 1;
+    }
+
+    // ------------------------------------------------------------------
+    // SCAN MODE: sweep ISM2G4, measure per-channel power, find the signal.
+    // No demod. Reports where the 2.4 GHz energy is (fixed vs hopping),
+    // its magnitude, and confirms the RF path is alive.
+    // ------------------------------------------------------------------
+    if (scan_mode) {
+        // Power averaging wants a bigger buffer than the 30 ms demod window.
+        // Use ~100 ms per channel for a stable mean.
+        size_t scan_win = (size_t)(srate * 0.100);
+        cap.set_buf(scan_win);
+        std::fprintf(stderr, "[scan] sweeping ISM2G4: %lu ch, %.0f ms dwell/ch, gain=%.1f\n",
+                     (unsigned long)ELRS_N_FREQ, dwell_ms, gain);
+        std::fprintf(stderr, "[scan]  ch  freq_MHz   mean_pk  mean  (pk/mean ratio)\n");
+
+        double all_mean[ELRS_N_FREQ];
+        double all_pk[ELRS_N_FREQ];
+        auto tscan = std::chrono::steady_clock::now();
+        for (size_t ch = 0; ch < ELRS_N_FREQ; ch++) {
+            double mhz = freq_for_index((uint8_t)ch) / 1e6;
+            cap.tune((uint32_t)(mhz * 1e6));
+            // Settle briefly after retune (PLL/filters), then average power.
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            std::vector<std::complex<float>> win(scan_win);
+            size_t got = 0; double sum = 0.0; double peak = 0.0;
+            auto td = std::chrono::steady_clock::now();
+            while (std::chrono::duration<double, std::milli>(
+                       std::chrono::steady_clock::now() - td).count() < dwell_ms) {
+                size_t n = cap.read(win);
+                for (size_t i = 0; i < n; i++) {
+                    double m = std::abs(win[i]);
+                    sum += m * m;              // mean *power* (|x|^2), not magnitude
+                    if (m > peak) peak = m;
+                }
+                got += n;
+            }
+            double mean_pow = got ? (sum / (double)got) : 0.0;
+            double mean_mag = got ? std::sqrt(mean_pow) : 0.0;   // RMS magnitude
+            all_mean[ch] = mean_mag; all_pk[ch] = peak;
+            // One-shot diag on the first channel so we know the RF is alive.
+            if (ch == 0) {
+                std::fprintf(stderr, "[scan]   ch0 first-recv got=%zu (RF alive check)\n", got);
+            }
+            std::fprintf(stderr, "[scan]  %2zu  %8.3f   %8.5f  %8.5f  (%s)\n",
+                         ch, mhz, peak, mean_mag,
+                         (peak > 0 && mean_mag > 0) ?
+                            (peak / mean_mag > 3.0 ? "SPICY" : "flat") : "-");
+        }
+        // Summary: rank channels by mean power, flag the loud ones.
+        std::fprintf(stderr, "\n[scan] top 10 channels by mean power:\n");
+        std::vector<size_t> order(ELRS_N_FREQ);
+        for (size_t i = 0; i < ELRS_N_FREQ; i++) order[i] = i;
+        std::sort(order.begin(), order.end(),
+                  [&](size_t a, size_t b){ return all_mean[a] > all_mean[b]; });
+        double floormax = 0.0;   // the noise floor = max of the quietest half
+        for (size_t i = ELRS_N_FREQ / 2; i < ELRS_N_FREQ; i++)
+            if (all_mean[order[i]] > floormax) floormax = all_mean[order[i]];
+        for (size_t i = 0; i < 10 && i < ELRS_N_FREQ; i++) {
+            size_t c = order[i];
+            double db = (floormax > 0 && all_mean[c] > 0)
+                          ? 20.0 * std::log10(all_mean[c] / floormax) : 0.0;
+            std::fprintf(stderr, "[scan]   #%2zu ch=%2zu freq=%.3f MHz mean=%.5f peak=%.5f (+%.1f dB over floor)\n",
+                         i + 1, c, freq_for_index((uint8_t)c) / 1e6,
+                         all_mean[c], all_pk[c], db);
+        }
+        double scansec = std::chrono::duration<double>(
+                             std::chrono::steady_clock::now() - tscan).count();
+        std::fprintf(stderr, "[scan] done in %.1fs. Floor~%.5f. If a real RC link is on, expect 1+ channels +5-20 dB over floor.\n",
+                     scansec, floormax);
+        // Emit a JSONL summary for later analysis.
+        std::ofstream sjson("scan.jsonl");
+        if (sjson) {
+            for (size_t i = 0; i < ELRS_N_FREQ; i++)
+                sjson << "{\"ch\":" << i << ",\"freq\":" << (freq_for_index((uint8_t)i)/1e6)
+                      << ",\"mean\":" << all_mean[i] << ",\"peak\":" << all_pk[i] << "}\n";
+        }
+        return 0;
     }
 
     // Dump raw IQ for offline demod validation.
