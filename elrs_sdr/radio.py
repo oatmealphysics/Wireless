@@ -57,6 +57,10 @@ from __future__ import annotations
 import time
 import numpy as np
 
+from .log import get_logger
+
+log = get_logger(__name__)
+
 # Import UHD through the bootstrap so the sys.path scan is actually used
 # (see uhd_bootstrap.load_uhd). This is the single source of the `uhd` module
 # for the whole radio path.
@@ -475,7 +479,6 @@ class RadioDevice:
         """
         if not hasattr(stream, "issue_stream_cmd"):
             return
-        import sys
         types = getattr(uhd, "types", None)
         cmd_cls = getattr(types, "StreamCMD", None) or getattr(uhd, "StreamCMD", None)
         mode_cls = getattr(types, "StreamMode", None) or getattr(uhd, "StreamMode", None)
@@ -496,8 +499,7 @@ class RadioDevice:
             a = getattr(mode_cls, attr, None)
             if a is not None and not callable(a):
                 mode = a
-                print(f"  [ok] START via class attr {attr} -> {type(a).__name__}",
-                      file=sys.stderr)
+                log.debug("START via class attr %s -> %s", attr, type(a).__name__)
                 break
         # 2) Attribute is a zero-arg callable (some bindings).
         if mode is None:
@@ -508,11 +510,10 @@ class RadioDevice:
                         m = a()
                         if m is not None:
                             mode = m
-                            print(f"  [ok] START via {attr}() -> {type(m).__name__}",
-                                  file=sys.stderr)
+                            log.debug("START via %s() -> %s", attr, type(m).__name__)
                             break
                     except Exception as e:
-                        print(f"  [dbg] {attr}() failed: {e!r}", file=sys.stderr)
+                        log.debug("%s() failed: %r", attr, e)
                         continue
         # 3) Instance-method fallback (4.2: StreamMode().start()).
         if mode is None:
@@ -522,24 +523,23 @@ class RadioDevice:
                     m = getattr(inst, attr, None)
                     if m is not None:
                         mode = m() if callable(m) else m
-                        print(f"  [ok] START via instance .{attr} "
-                              f"-> {type(mode).__name__}", file=sys.stderr)
+                        log.debug("START via instance .%s -> %s", attr,
+                                  type(mode).__name__)
                         break
             except Exception as e:
-                print(f"  [dbg] StreamMode() instance fallback failed: {e!r}",
-                      file=sys.stderr)
+                log.debug("StreamMode() instance fallback failed: %r", e)
         if mode is None:
             if getattr(self, "_start_stream_reported", False):
                 return
             self._start_stream_reported = True
-            print("  [warn] _start_stream: could not build StreamMode.START "
-                  "(see [dbg] lines)", file=sys.stderr)
+            log.warning("_start_stream: could not build StreamMode.START "
+                        "(run with --verbose for the probe trail)")
             return
         try:
             cmd = cmd_cls(mode)
-            print(f"  [ok] built StreamCMD -> {type(cmd).__name__}", file=sys.stderr)
+            log.debug("built StreamCMD -> %s", type(cmd).__name__)
         except Exception as e:
-            print(f"  [dbg] StreamCMD(mode) failed: {e!r}", file=sys.stderr)
+            log.debug("StreamCMD(mode) failed: %r", e)
             try:
                 cmd = cmd_cls()
                 if hasattr(cmd, "set_stream_mode"):
@@ -547,18 +547,18 @@ class RadioDevice:
                 else:
                     return
             except Exception as e2:
-                print(f"  [dbg] StreamCMD() fallback failed: {e2!r}", file=sys.stderr)
+                log.debug("StreamCMD() fallback failed: %r", e2)
                 return
         try:
             stream.issue_stream_cmd(cmd)
             if not getattr(self, "_start_stream_reported", False):
                 self._start_stream_reported = True
-                print("  [ok] issue_stream_cmd(START) issued", file=sys.stderr)
+                log.debug("issue_stream_cmd(START) issued")
         except Exception as e:
             if not getattr(self, "_start_stream_reported", False):
                 self._start_stream_reported = True
-                print(f"  [warn] issue_stream_cmd(START) raised: {e!r} "
-                      "(stream may already be running)", file=sys.stderr)
+                log.warning("issue_stream_cmd(START) raised: %r "
+                            "(stream may already be running)", e)
 
     # Back-compat name used by cli.py / older callers.
     def get_rx_stream(self):

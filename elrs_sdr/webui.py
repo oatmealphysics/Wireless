@@ -1,676 +1,217 @@
 """
-Web UI for the multi-band drone presence + protocol scanner.
+Unified drone-watch web dashboard.
 
-One command:
-    python3 -m elrs_sdr webui
-
-Starts a local dashboard on http://localhost:8090 (no external deps — pure
-stdlib http.server). A background thread runs the DroneScanner; the browser
-polls /api/state (JSON) and renders a Kismet-style multi-band waterfall with
-click-to-lock band tabs, a live detection panel, and a protocol summary.
+One page, fed by the fusion TrackTable, showing every drone around you merged
+across all sources (Remote ID / SDR protocol scan / DJI DroneID) in a single
+identity-keyed table. Pure stdlib http.server — no third-party packages, no
+build step.
 
 Endpoints:
-    GET  /            -> dashboard HTML
-    GET  /api/state   -> {cycling, locked_band, bands:[...], summary}
-    POST /api/lock    -> {"band": "5.8"} to lock, {"band": null} to resume
+    GET  /              -> dashboard HTML
+    GET  /api/state     -> {summary, drones:[...], window_s}
+    POST /api/window    -> {"seconds": 120}   (0 = all time)
+
+Launched by `dronewatch webui` (see cli.py), which wires up the sources the
+operator selected and hands this server the shared TrackTable.
 """
 
 from __future__ import annotations
 
 import json
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import dronescan
-from .dronescan import DroneScanner, CYCLE_ORDER
+from .log import get_logger
 
-# The dashboard (self-contained HTML/JS/CSS, no build step).
+log = get_logger(__name__)
+
+
 DASHBOARD = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Drone RF Scanner</title>
+<title>DroneWatch</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
-  body { margin:0; background:#0a0e12; color:#cdd6df;
-         font:14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  header { padding:12px 18px; background:#0f151b; border-bottom:1px solid #1c2733;
-           display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
-  header h1 { font-size:17px; margin:0; color:#e8eef4; font-weight:600; }
-  .status { font-size:12.5px; color:#7fa8c9; }
-  main { display:grid; grid-template-columns: 1fr 340px; gap:14px; padding:14px 18px; }
-  @media (max-width: 900px){ main { grid-template-columns: 1fr; } }
-
-  /* fixed-height scroll box for the detections table so it NEVER changes the
-     page height / pushes other elements around */
-  .table-card { padding:0; }
-  .table-card h2 { padding:11px 14px 0; }
-  .table-head { display:flex; align-items:center; justify-content:space-between;
-                padding:11px 14px 8px; gap:10px; flex-wrap:wrap; }
-  .head-actions { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
-  .pausebtn { background:#14324a; color:#cde6ff; border:1px solid #2b5578;
-              border-radius:6px; padding:4px 12px; font-size:12px; cursor:pointer;
-              font-weight:600; }
-  .pausebtn:hover { background:#1b4a6b; }
-  .pausebtn.paused { background:#3a2f12; color:#ffd27c; border-color:#7a5a1a; }
-  .pauseflag { margin:0 14px 8px; padding:6px 10px; background:#3a2f12; color:#ffd27c;
-               border:1px solid #7a5578; border-radius:6px; font-size:12px; font-weight:600; }
-  .capresult { margin:0 14px 8px; padding:8px 10px; background:#12281a; color:#9fe8b4;
-               border:1px solid #2b6b3a; border-radius:6px; font-size:12px; line-height:1.5; }
-  .capresult code { background:#0d1a12; padding:1px 5px; border-radius:4px;
-                    font-family:monospace; color:#c8f5d4; }
-  .capresult.err { background:#2a1414; color:#ffb4b4; border-color:#7a2a2a; }
-  .table-head h2 { margin:0; }
-  .win-label { font-size:12px; color:#7fa8c9; display:flex; align-items:center; gap:6px; }
-  .win-label select { background:#0d141b; color:#cdd6df; border:1px solid #223243;
-                      border-radius:6px; padding:4px 8px; font-size:12px; cursor:pointer; }
-  /* table grows with its rows; the PAGE scrolls (native browser behavior).
-     no max-height / overflow cap => sticky header pins to the viewport. */
-  .table-scroll { }
-  .hint { font-size:11.5px; color:#5a6b7a; margin-top:6px; }
-
-  /* right panel: sticky to the viewport so it stays visible while a long
-     table scrolls past (native page scroll, no inner overflow box) */
-  .panel { display:flex; flex-direction:column; gap:12px;
-           position:sticky; top:14px; align-self:start; }
-  .card { background:#0f151b; border:1px solid #1c2733; border-radius:8px; padding:12px 14px; }
-  .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em;
-             color:#7fa8c9; margin:0 0 8px; font-weight:600; }
-  .summary { font-size:14px; color:#e8eef4; min-height:20px; }
-  .det { border-top:1px solid #182430; padding:8px 0; }
-  .det:first-of-type { border-top:none; }
-  .det .f { font-size:15px; font-weight:600; color:#e8eef4; }
-  .det .p { font-size:12.5px; color:#aebccb; margin-top:2px; }
-  .badge { display:inline-block; font-size:10.5px; padding:1px 7px; border-radius:9px;
-           margin-left:6px; vertical-align:middle; font-weight:600; }
-  .badge.high { background:#1c4a2e; color:#7fe0a0; }
-  .badge.medium { background:#4a3a1c; color:#e0c87f; }
-  .badge.low { background:#3a2a1c; color:#c9a87f; }
-  .quiet { color:#5a6b7a; font-style:italic; }
-  .sig { font-size:11px; color:#7fa8c9; }
-
-  /* table-layout:fixed + explicit widths => columns NEVER resize when cell
-     content changes (no left/right jitter as values update) */
-  table.dets { width:100%; border-collapse:collapse; font-size:12.5px;
-               table-layout:fixed; }
-  table.dets th { text-align:left; padding:6px 9px; color:#7fa8c9; font-weight:600;
-                  border-bottom:1px solid #223243; position:sticky; top:0;
-                  background:#0d141b; cursor:pointer; user-select:none;
-                  white-space:nowrap; overflow:hidden; }
-  table.dets th:hover { background:#15202b; color:#cfe3f5; }
-  table.dets th .arrow { font-size:10px; color:#5fd07a; margin-left:3px; }
-  table.dets td { padding:6px 9px; border-bottom:1px solid #16202b; color:#cdd6df;
-                  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  table.dets tr:hover td { background:#101922; }
-  /* column widths (must match the 10 <th> in order) */
-  table.dets col.c-band   { width:64px; }
-  table.dets col.c-freq   { width:88px; }
-  table.dets col.c-proto  { width:150px; }
-  table.dets col.c-make   { width:150px; }
-  table.dets col.c-manuf  { width:110px; }
-  table.dets col.c-mac    { width:150px; }   /* 802.11 BSSID/Source MAC (aa:bb:cc:dd:ee:ff) */
-  table.dets col.c-type   { width:100px; }
-  table.dets col.c-str    { width:92px; }
-  table.dets col.c-age    { width:90px; }
-  table.dets col.c-last   { width:88px; }
-  table.dets col.c-conf   { width:72px; }
-  table.dets col.c-status { width:100px; }
-  table.dets col.c-metric { width:150px; }
-  .status-badge { padding:1px 7px; border-radius:9px; font-size:11px; font-weight:600; }
-  .status-badge.confirmed { background:#12321f; color:#5fd07a; }
-  .status-badge.unconfirmed { background:#3a2f12; color:#ffb43c; }
-  .metric { font-size:11px; color:#7f95a8; font-family:monospace; }
-  .conf-badge { padding:1px 7px; border-radius:9px; font-size:11px; font-weight:600; }
-  .conf-badge.high { background:#12321f; color:#5fd07a; }
-  .conf-badge.medium { background:#3a2f12; color:#ffb43c; }
-  .conf-badge.low { background:#2a1a1a; color:#e08a8a; }
-  .manuf { color:#9fc3e8; }
-  .mac { color:#8fd6b0; font-family:monospace; font-size:11.5px; letter-spacing:.3px; }
-  .age { color:#7f95a8; }
-  .hidden { display:none; }
+  body { margin: 0; background: #0d1117; color: #c9d1d9;
+         font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  header { padding: 14px 18px; border-bottom: 1px solid #21262d;
+           display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; color: #58a6ff; letter-spacing: .5px; }
+  .sub { color: #8b949e; font-size: 12px; }
+  .pill { background: #161b22; border: 1px solid #30363d; border-radius: 999px;
+          padding: 2px 10px; font-size: 12px; }
+  .pill b { color: #e6edf3; }
+  main { padding: 14px 18px; }
+  .controls { margin-bottom: 12px; display: flex; gap: 10px; align-items: center;
+              flex-wrap: wrap; }
+  select, button { background: #161b22; color: #c9d1d9; border: 1px solid #30363d;
+                   border-radius: 6px; padding: 5px 10px; font: inherit; }
+  button { cursor: pointer; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid #21262d;
+           white-space: nowrap; }
+  th { color: #8b949e; font-weight: 600; font-size: 12px; cursor: pointer;
+       position: sticky; top: 0; background: #0d1117; }
+  tr:hover td { background: #11151c; }
+  .ok { color: #3fb950; } .warn { color: #d29922; } .dim { color: #6e7681; }
+  .tag { border-radius: 4px; padding: 1px 7px; font-size: 11px; border: 1px solid; }
+  .tag.remote-id { color: #3fb950; border-color: #238636; }
+  .tag.dji-droneid { color: #58a6ff; border-color: #1f6feb; }
+  .tag.control-link { color: #d29922; border-color: #9e6a03; }
+  .tag.video { color: #db61a2; border-color: #ab296a; }
+  .mono { font-variant-numeric: tabular-nums; }
+  .empty { color: #6e7681; padding: 30px 0; text-align: center; }
+  code { color: #e6edf3; }
 </style>
 </head>
 <body>
 <header>
-  <h1>Drone RF Scanner</h1>
-  <span class="status" id="status">connecting…</span>
+  <h1>DroneWatch</h1>
+  <span class="sub">unified drone presence &amp; identity &mdash; all sources</span>
+  <span class="pill">tracks <b id="n-total">0</b></span>
+  <span class="pill">confirmed ID <b id="n-conf" class="ok">0</b></span>
+  <span class="pill" id="n-kinds"></span>
 </header>
 <main>
-  <section id="view-table">
-    <div class="card table-card" style="padding:0; margin-top:12px;">
-      <div class="table-head">
-        <h2>Detections <span class="sig">(all bands)</span></h2>
-        <div class="head-actions">
-        <label class="win-label">Window
-          <select id="win" onchange="setWindow(this.value)">
-            <option value="0">All time</option>
-            <option value="60">1 min</option>
-            <option value="300">5 min</option>
-            <option value="900">15 min</option>
-            <option value="3600">1 hour</option>
-            <option value="28800">8 hours</option>
-            <option value="86400">24 hours</option>
-          </select>
-        </label>
-        <button id="pausebtn" class="pausebtn" onclick="togglePause()"
-          title="Freeze the table so you can select + copy rows (Space also toggles)">⏸ Pause</button>
-        <label class="win-label" title="Save raw baseband IQ on this band to open in GNU Radio / SDR++ / IQT (and to send back to tune the detectors)">
-          <select id="capband">
-            <option value="2.4">2.4</option>
-            <option value="5.8">5.8</option>
-            <option value="5ghz">5 GHz</option>
-            <option value="sub1g">sub1g</option>
-            <option value="1.2">1.2</option>
-            <option value="433">433</option>
-          </select>
-          <button id="capbtn" class="pausebtn" onclick="captureRaw()">💾 Save IQ</button>
-        </label>
-        </div>
-      </div>
-      <div id="capresult" class="capresult" hidden></div>
-      <div id="pauseflag" class="pauseflag" hidden>⏸ PAUSED — table frozen for copy/paste (press Space or Resume to resume)</div>
-      <div class="table-scroll">
-        <table class="dets">
-          <colgroup>
-            <col class="c-band"><col class="c-freq"><col class="c-proto">
-            <col class="c-make"><col class="c-manuf"><col class="c-mac"><col class="c-type">
-            <col class="c-str"><col class="c-age"><col class="c-last">
-            <col class="c-conf"><col class="c-status"><col class="c-metric">
-          </colgroup>
-          <thead>
-            <tr>
-              <th data-col="band" onclick="sortCol('band')">Band</th>
-              <th data-col="freq_mhz" onclick="sortCol('freq_mhz')">Freq (MHz)</th>
-              <th data-col="protocol" onclick="sortCol('protocol')">Protocol</th>
-              <th data-col="make_model" onclick="sortCol('make_model')">Make / Model</th>
-              <th data-col="manufacturer" onclick="sortCol('manufacturer')">Manufacturer</th>
-              <th data-col="mac" onclick="sortCol('mac')" title="802.11 BSSID / Source MAC (only when a beacon is actually decoded; — otherwise)">MAC</th>
-              <th data-col="type" onclick="sortCol('type')">Type</th>
-              <th data-col="strength_db" onclick="sortCol('strength_db')">Strength</th>
-              <th data-col="age_s" onclick="sortCol('age_s')">Age</th>
-              <th data-col="last_seen_s" onclick="sortCol('last_seen_s')">Last seen</th>
-              <th data-col="confidence" onclick="sortCol('confidence')">Conf</th>
-              <th data-col="confirmed" onclick="sortCol('confirmed')">Status</th>
-              <th data-col="metric" onclick="sortCol('metric')">Detector metric</th>
-            </tr>
-          </thead>
-          <tbody id="dettbody"><tr><td colspan="13" class="quiet">no detections yet…</td></tr></tbody>
-        </table>
-      </div>
-    </div>
-    <div class="hint"><b>Positive identification:</b> each protocol is labeled only when its
-      <i>own</i> detector fires — nothing is default-binned by elimination.
-      <span class="status-badge confirmed">CONFIRMED</span> = capture-validated detector
-      (LoRa chirp). <span class="status-badge unconfirmed">UNCONFIRMED</span> = correct
-      structure but synthetic-calibrated threshold (802.11 OFDM / OcuSync / analog video /
-      FHSS) — the Detector-metric column shows the raw number a real capture can tune. To
-      confirm an UNCONFIRMED protocol, run <code>python3 -m elrs_sdr capture --band 2.4</code>
-      with the signal present; the saved IQ tunes that detector's threshold.
-      <br><b>Not RF-identifiable:</b> <b>MAVLink</b> and <b>Meshtastic</b> have no RF
-      signature of their own — they are application-layer payloads that ride on a physical
-      layer (LoRa, 2.4 GHz, Wi-Fi). The tool shows the <i>physical layer</i> they're on
-      (e.g. "LoRa"), but telling "this LoRa is Meshtastic" or "this link carries MAVLink"
-      requires demodulating that layer and parsing the payload — a separate, capture-gated
-      pipeline, not an RF detector. OcuSync / Lightbridge are detected at the PHY level
-      (distinct OFDM symbol period) but are UNCONFIRMED until a real capture validates it.
-      <b>Click a column header to sort</b> (click again to flip direction); the arrow
-      shows the active sort.</div>
-  </section>
-  <aside class="panel">
-    <div class="card">
-      <h2>Protocol summary</h2>
-      <div class="summary" id="summary">—</div>
-    </div>
-    <div class="card">
-      <h2>Live detections</h2>
-      <div id="dets"><div class="quiet">listening…</div></div>
-    </div>
-  </aside>
+  <div class="controls">
+    <label>window
+      <select id="window" onchange="setWindow()">
+        <option value="0">all time</option>
+        <option value="30">30 s</option>
+        <option value="120" selected>2 min</option>
+        <option value="600">10 min</option>
+      </select>
+    </label>
+    <button onclick="refresh()">refresh now</button>
+    <span class="sub" id="status"></span>
+  </div>
+  <table>
+    <thead><tr>
+      <th>status</th><th>kind</th><th>protocol</th><th>identity / serial</th>
+      <th>operator</th><th>position</th><th>alt m</th><th>spd m/s</th>
+      <th>freq</th><th>rssi</th><th>metric</th><th>age</th><th>last</th><th>n</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="empty" id="empty">no signals yet &mdash; waiting for sources&hellip;</div>
 </main>
-
 <script>
-const BAND_ORDER = ["2.4","5.8","sub1g","433"];
-let state = null;
-let locked = null;   // null = cycling (follow the auto band)
-// table sort: {col, dir} — dir 1 = asc, -1 = desc. null col = stable default
-// (by first_seen), so rows don't reorder as values tick (no vertical jitter).
-let sortCol_ = null;
-let sortDir = 1;
-const CONF_RANK = {high:0, medium:1, low:2};
-// pause state (freeze the table for copy/paste); declared up top so poll() can
-// read it before the toggle function below is defined.
-let paused = false;
-function sortCol(col){
-  if(sortCol_ === col){ sortDir = -sortDir; }   // toggle direction
-  else { sortCol_ = col; sortDir = 1; }
-  // mark the active column header
-  for(const th of document.querySelectorAll('table.dets th')){
-    th.querySelector('.arrow')?.remove();
-    if(th.dataset.col === col){
-      const a = document.createElement('span');
-      a.className = 'arrow'; a.textContent = sortDir === 1 ? '▲' : '▼';
-      th.appendChild(a);
-    }
-  }
-  renderTable();
+let WINDOW = 120;
+function setWindow() {
+  WINDOW = parseInt(document.getElementById('window').value, 10);
+  fetch('/api/window', {method:'POST', body: JSON.stringify({seconds: WINDOW})})
+    .then(refresh);
 }
-
-function el(id){ return document.getElementById(id); }
-
-function render(){
-  if(!state) return;
-  locked = state.locked_band;
-  // status
-  el('status').textContent = 'scanning 2.4 → 5.8 → sub-1G → 433';
-  // summary
-  el('summary').textContent = state.summary || '—';
-  // detection panel (latest per band)
-  const dets = el('dets');
-  const items = [];
-  for(const b of state.bands){
-    for(const d of b.detections){
-      items.push({b:d, band:b.name, conf:b.detections[0].confidence});
-      items[items.length-1].conf = d.confidence;
-      items[items.length-1].freq=d.freq_hz; items[items.length-1].power=d.power_db;
-      items[items.length-1].proto=d.protocol; items[items.length-1].note=d.note;
-      items[items.length-1].sig=d.signature; items[items.length-1].hop=b.hopping;
-      break; // latest per band
-    }
-  }
-  if(items.length===0){ dets.innerHTML = '<div class="quiet">quiet — no drone-class signal yet</div>'; }
-  else {
-    items.sort((a,b)=>b.power-a.power);
-    dets.innerHTML = items.map(it=>`
-      <div class="det">
-        <div class="f">${(it.freq/1e6).toFixed(1)} MHz <span class="badge ${it.conf}">${it.conf}</span>
-          ${it.hop?'<span class="badge low">hop</span>':''}</div>
-        <div class="p">${it.proto}<br><span class="sig">${it.band} · +${it.power.toFixed(1)} dB · ${it.note}</span></div>
-      </div>`).join('');
-  }
-  // detections table
-  renderTable();
+function fmtPos(r){ return (r.lat==null||r.lon==null) ? '—'
+  : r.lat.toFixed(5)+', '+r.lon.toFixed(5); }
+function num(x, d){ return (x==null) ? '—' : (+x).toFixed(d==null?0:d); }
+function row(r){
+  const st = r.confirmed
+    ? '<span class="ok">● CONFIRMED</span>'
+    : '<span class="warn">○ unconfirmed</span>';
+  return `<tr>
+    <td>${st}</td>
+    <td><span class="tag ${r.kind}">${r.kind}</span></td>
+    <td>${r.protocol}</td>
+    <td><code>${r.identity}</code></td>
+    <td>${r.operator}</td>
+    <td class="mono">${fmtPos(r)}</td>
+    <td class="mono">${num(r.altitude_m)}</td>
+    <td class="mono">${num(r.speed_ms,1)}</td>
+    <td class="mono">${r.freq_mhz==null?'—':r.freq_mhz+' MHz'}</td>
+    <td class="mono">${r.rssi_db==null?'—':num(r.rssi_db)+' dB'}</td>
+    <td class="dim">${r.metric||''}</td>
+    <td class="mono">${num(r.age_s)}s</td>
+    <td class="mono dim">${num(r.last_seen_s)}s</td>
+    <td class="mono">${r.count}</td>
+  </tr>`;
 }
-
-function renderTable(){
-  if(!state || !state.detections) return;
-  let rows = state.detections.slice();
-  const tb = el('dettbody');
-  // STABLE order: by the active sort column if the user picked one, else by
-  // first_seen (a row's position is fixed once it appears, so rows don't jump
-  // as their strength/age values tick). first_seen is the tiebreaker either
-  // way, which makes the sort deterministic across polls.
-  if(sortCol_){
-    const col = sortCol_, dir = sortDir;
-    rows.sort((a,b)=>{
-      let va = a[col], vb = b[col];
-      if(col === 'confidence'){ va = CONF_RANK[va]??3; vb = CONF_RANK[vb]??3; }
-      if(col === 'confirmed'){ va = va?1:0; vb = vb?1:0; }  // boolean
-      if(typeof va === 'string' || typeof vb === 'string'){
-        va = (va==null?'':String(va)); vb = (vb==null?'':String(vb));
-        return va < vb ? -dir : va > vb ? dir : (a.first_seen - b.first_seen);
-      }
-      va = (va==null?-Infinity:va); vb = (vb==null?-Infinity:vb);
-      return (va - vb) * dir || (a.first_seen - b.first_seen);
-    });
-  } else {
-    rows.sort((a,b)=> a.first_seen - b.first_seen);
-  }
-  if(!rows.length){
-    tb.innerHTML = '<tr><td colspan="13" class="quiet">no detections yet…</td></tr>';
-    return;
-  }
-  tb.innerHTML = rows.map(r=>{
-    const manuf = r.manufacturer ? `<span class="manuf">${r.manufacturer}</span>` : '—';
-    const mac = r.mac ? `<span class="mac">${r.mac}</span>` : '—';
-    const lastSeen = r.last_seen_s !== undefined
-      ? (r.last_seen_s < 1.5 ? 'now' : r.last_seen_s.toFixed(0)+'s ago')
-      : '—';
-    const status = r.confirmed
-      ? '<span class="status-badge confirmed">CONFIRMED</span>'
-      : '<span class="status-badge unconfirmed">UNCONFIRMED</span>';
-    return `<tr>
-      <td>${r.band}</td>
-      <td>${r.freq_mhz.toFixed(1)}</td>
-      <td>${r.protocol}</td>
-      <td>${r.make_model}</td>
-      <td>${manuf}</td>
-      <td>${mac}</td>
-      <td>${r.type}${r.hopping?' ⤴':''}</td>
-      <td>+${r.strength_db.toFixed(1)} dB</td>
-      <td class="age">${r.age_s.toFixed(1)}s <span class="sig">×${r.seen_count}</span></td>
-      <td class="age">${lastSeen}</td>
-      <td><span class="conf-badge ${r.confidence}">${r.confidence}</span></td>
-      <td>${status}</td>
-      <td class="metric">${r.metric||'—'}</td>
-    </tr>`;
-  }).join('');
+function refresh(){
+  fetch('/api/state?window='+WINDOW).then(r=>r.json()).then(s=>{
+    document.getElementById('n-total').textContent = s.summary.total;
+    document.getElementById('n-conf').textContent = s.summary.confirmed;
+    const kinds = Object.entries(s.summary.by_kind||{})
+      .map(([k,v])=>k+': '+v).join('  ');
+    document.getElementById('n-kinds').textContent = kinds;
+    document.getElementById('rows').innerHTML = s.drones.map(row).join('');
+    document.getElementById('empty').style.display = s.drones.length?'none':'block';
+    document.getElementById('status').textContent =
+      'updated ' + new Date().toLocaleTimeString();
+  }).catch(e=>{
+    document.getElementById('status').textContent = 'fetch error: '+e;
+  });
 }
-
-async function setWindow(seconds){
-  try{
-    await fetch('/api/window', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({seconds: parseFloat(seconds)})});
-  }catch(e){ console.error(e); }
-}
-
-async function poll(){
-  try{
-    const r = await fetch('/api/state');
-    state = await r.json();
-    // When PAUSED, keep the state current (so the data isn't stale when we
-    // resume) but DO NOT re-render the DOM — the table stays frozen so the
-    // user can select + copy rows.
-    if(!paused){ render(); }
-  }catch(e){ if(!paused){ el('status').textContent = 'server error: '+e; } }
-  setTimeout(poll, 350);
-}
-poll();
-
-// ---- Pause / Resume (freeze the table for copy/paste) ----
-function togglePause(){
-  paused = !paused;
-  const btn = el('pausebtn');
-  const flag = el('pauseflag');
-  if(paused){
-    btn.textContent = '▶ Resume';
-    btn.classList.add('paused');
-    flag.hidden = false;
-    el('status').textContent = 'PAUSED — table frozen for copy/paste';
-  } else {
-    btn.textContent = '⏸ Pause';
-    btn.classList.remove('paused');
-    flag.hidden = true;
-    // re-render immediately so the table jumps back to the latest state
-    if(state){ render(); }
-  }
-}
-// Space toggles pause (unless focus is in a form control, so typing/selection
-// in inputs isn't hijacked). Escape also resumes.
-document.addEventListener('keydown', (e) => {
-  const tag = (e.target && e.target.tagName) || '';
-  if(tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
-  if(e.code === 'Space'){ e.preventDefault(); togglePause(); }
-  else if(e.key === 'Escape' && paused){ togglePause(); }
-});
-
-// ---- Save raw IQ (open in GNU Radio / SDR++ / IQT; or send back to tune) ----
-async function captureRaw(){
-  const band = el('capband').value;
-  const btn = el('capbtn');
-  const out = el('capresult');
-  btn.disabled = true; btn.textContent = '⏳ Capturing…';
-  out.hidden = false; out.classList.remove('err');
-  out.textContent = `Recording ~3s of raw IQ on ${band}…`;
-  try{
-    const r = await fetch('/api/capture', {method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({band: band, seconds: 3})});
-    const d = await r.json();
-    if(d.error){ out.classList.add('err'); out.textContent = 'error: '+d.error; return; }
-    const p = d.paths || {};
-    out.innerHTML =
-      `✓ Saved <b>${d.n_samples}</b> IQ samples on ${d.band} ` +
-      `@ ${(d.srate/1e6).toFixed(2)} MS/s → <code>${p.cf32}</code><br>` +
-      `Open <code>.cf32</code> in <b>GNU Radio</b> (IQ File Source, complex, ` +
-      `sample_rate=${(d.srate/1e6).toFixed(2)}e6) or <b>SDR++</b> / <b>IQT</b>.<br>` +
-      `Also saved <code>${p.complex8}</code> (for ` +
-      `<code>elrs-sdr validate</code>) + <code>${p.meta}</code> (metadata).<br>` +
-      `<span class="sig">Send these files back to tune the protocol detectors.</span>`;
-  }catch(e){
-    out.classList.add('err'); out.textContent = 'capture failed: '+e;
-  }finally{
-    btn.disabled = false; btn.textContent = '💾 Save IQ';
-  }
-}
+setInterval(refresh, 1000);
+refresh();
 </script>
 </body>
-</html>
-"""
+</html>"""
 
 
-class _State:
-    """Holds the live scanner + lock state, shared between the thread and HTTP."""
-    def __init__(self):
-        self.scanner = None
-        self.locked = None
-        self.window_s = 0.0
-        self.error = None
-        self.last_state = {"cycling": True, "locked_band": None,
-                           "window_s": 0.0, "detections": [],
-                           "bands": [], "summary": "starting…"}
+def make_handler(table, state_ref):
+    """Build a request handler bound to the shared TrackTable."""
 
-    def set_lock(self, band):
-        self.locked = band
-        if self.scanner:
-            self.scanner.set_lock(band)
-
-    def set_window(self, seconds):
-        self.window_s = max(0.0, float(seconds))
-        if self.scanner:
-            self.scanner.set_window(seconds)
-
-
-STATE = _State()
-
-
-def _quiet_uhd():
-    """Route UHD's C++ log output (and everything else on stdout/stderr) to
-    /dev/null so the terminal stays clean — including the bare 'O' heartbeat
-    char libuhd writes straight to the file descriptor.
-
-    Real errors are NOT lost: our own Python exceptions are caught in
-    _scan_loop and stored in STATE (shown in the dashboard), and a copy is
-    written to a small error log file. We keep the original fds (1/2) open so
-    nothing breaks, we just point them at /dev/null for the duration.
-
-    Only suppress when we're actually running the radio; on a box without UHD
-    (e.g. CI/selftest) this is a no-op.
-    """
-    import os
-    import sys
-
-    # 1) ask libuhd (if it exposes it) to be quiet too — belt and suspenders
-    os.environ.setdefault("UHD_LOGGER_LEVEL", "ERROR")
-    try:
-        from . import uhd_bootstrap
-        uhd = uhd_bootstrap.load_uhd()
-        log_mod = getattr(uhd, "log", None)
-        if log_mod is not None:
-            for meth in ("setLevel", "set_level", "setLogLevel"):
-                fn = getattr(log_mod, meth, None)
-                if callable(fn):
-                    for val in ("ERROR", 4, 3):
-                        try:
-                            fn(val); break
-                        except Exception:
-                            continue
-    except Exception:
-        pass
-
-    # 2) fd-level: dup the real stdout/stderr, then point 1/2 at /dev/null.
-    #    Works for C++ lib writes (the 'O'), not just Python prints.
-    #    Print the confirmation FIRST, then redirect.
-    print("UHD output routed to /dev/null (terminal muted; errors still shown "
-          "in the dashboard).", flush=True)
-    try:
-        devnull = os.open(os.devnull, os.O_WRONLY)
-        for fd in (1, 2):
-            real = os.dup(fd)              # keep the real fd
-            os.dup2(devnull, fd)           # redirect to /dev/null
-            os.close(real)
-        os.close(devnull)
-        # Also silence Python's sys.stdout/stderr wrappers (they hold the old fd)
-        sys.stdout = open(os.devnull, "w")
-        sys.stderr = open(os.devnull, "w")
-    except Exception:
-        # If fd tricks fail, at least Python prints are muted
-        try:
-            sys.stdout = open(os.devnull, "w")
-            sys.stderr = open(os.devnull, "w")
-        except Exception:
-            pass
-
-
-def _scan_loop():
-    """Background thread: open the radio, run the scanner, update STATE."""
-    import os
-    import traceback
-    try:
-        _quiet_uhd()
-        from . import uhd_bootstrap
-        uhd_bootstrap.load_uhd()
-        from .radio import RadioDevice
-        args = os.environ.get("ELRS_DEVICE", "type=b200")
-        gain = float(os.environ.get("ELRS_GAIN", "30"))
-        dwell = float(os.environ.get("ELRS_DWELL", "0.15"))
-        radio = RadioDevice(args)
-        STATE.scanner = DroneScanner(radio, dwell_s=dwell, gain=gain,
-                                     lock=STATE.locked)
-        while True:
-            try:
-                STATE.last_state = STATE.scanner.step(window_s=STATE.window_s)
-            except Exception as e:  # one bad block shouldn't kill the UI
-                STATE.last_state = {**STATE.last_state, "last_step_error": repr(e)}
-    except Exception as e:  # noqa: BLE001  (radio open failed)
-        STATE.error = repr(e)
-        STATE.last_state = {"cycling": True, "locked_band": None,
-                            "bands": [], "summary": f"radio error: {e}"}
-        raise
-
-
-def make_handler():
     class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *a):  # quiet
+        def log_message(self, *a):  # silence default access logging
             pass
 
-        def _json(self, obj, code=200):
-            data = json.dumps(obj).encode()
+        def _send(self, code, body, ctype="application/json"):
+            data = body.encode() if isinstance(body, str) else body
             self.send_response(code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def _html(self, text, code=200):
-            data = text.encode()
-            self.send_response(code)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
 
         def do_GET(self):
-            if self.path in ("/", "/index.html"):
-                self._html(DASHBOARD)
-            elif self.path == "/api/state":
-                if STATE.error and not STATE.scanner:
-                    self._json({**STATE.last_state, "error": STATE.error})
-                else:
-                    self._json(STATE.last_state)
-            elif self.path == "/api/bands":
-                self._json({"bands": [b.name for b in dronescan.BANDS]})
-            else:
-                self._json({"error": "not found"}, 404)
+            path = self.path.split("?", 1)[0]
+            if path == "/":
+                self._send(200, DASHBOARD, "text/html; charset=utf-8")
+                return
+            if path == "/api/state":
+                window = state_ref.get("window_s", 0.0)
+                q = self.path.split("?", 1)
+                if len(q) == 2:
+                    for part in q[1].split("&"):
+                        if part.startswith("window="):
+                            try:
+                                window = float(part.split("=", 1)[1])
+                            except ValueError:
+                                pass
+                body = json.dumps({
+                    "summary": table.summary(),
+                    "drones": table.rows(window_s=window),
+                    "window_s": window,
+                })
+                self._send(200, body)
+                return
+            self._send(404, json.dumps({"error": "not found"}))
 
         def do_POST(self):
-            if self.path == "/api/lock":
-                n = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(n) if n else b"{}"
-                try:
-                    req = json.loads(body or b"{}")
-                except Exception:
-                    req = {}
-                band = req.get("band")
-                if band is not None and band not in {b.name for b in dronescan.BANDS}:
-                    self._json({"error": f"unknown band {band!r}"}, 400)
-                    return
-                STATE.set_lock(band)
-                # refresh the snapshot immediately so the next /api/state
-                # reflects the lock without waiting for the next scanner step
-                if STATE.scanner is not None:
-                    STATE.last_state = STATE.scanner.state_dict()
-                self._json({"ok": True, "locked_band": band})
-            elif self.path == "/api/capture":
-                # Save raw baseband IQ on a band (CF32 + .complex8 + .meta) so
-                # the user can open it in GNU Radio / SDR++ / IQT, and so they
-                # can send it back to tune the ID detectors.
-                n = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(n) if n else b"{}"
-                try:
-                    req = json.loads(body or b"{}")
-                except Exception:
-                    req = {}
-                band = req.get("band") or STATE.locked or "2.4"
-                if band not in {b.name for b in dronescan.BANDS}:
-                    self._json({"error": f"unknown band {band!r}"}, 400)
-                    return
-                secs = req.get("seconds", 3.0)
-                try:
-                    secs = float(secs)
-                except Exception:
-                    secs = 3.0
-                out_dir = req.get("out_dir") or "."
-                if STATE.scanner is None:
-                    self._json({"error": "scanner not running"}, 503)
-                    return
-                try:
-                    result = STATE.scanner.capture_raw(band, secs, out_dir)
-                except Exception as e:
-                    self._json({"error": f"capture failed: {e!r}"}, 500)
-                    return
-                self._json(result)
-            elif self.path == "/api/window":
-                n = int(self.headers.get("Content-Length", 0))
-                body = self.rfile.read(n) if n else b"{}"
-                try:
-                    req = json.loads(body or b"{}")
-                except Exception:
-                    req = {}
-                ws = req.get("seconds", 0)
-                try:
-                    ws = float(ws)
-                except Exception:
-                    ws = 0.0
-                STATE.set_window(ws)
-                if STATE.scanner is not None:
-                    STATE.last_state = STATE.scanner.state_dict(window_s=STATE.window_s)
-                self._json({"ok": True, "window_s": STATE.window_s})
-            else:
-                self._json({"error": "not found"}, 404)
+            if self.path != "/api/window":
+                self._send(404, json.dumps({"error": "not found"}))
+                return
+            n = int(self.headers.get("Content-Length", 0))
+            try:
+                payload = json.loads(self.rfile.read(n) or b"{}")
+                state_ref["window_s"] = max(0.0, float(payload.get("seconds", 0)))
+            except (ValueError, TypeError):
+                pass
+            self._send(200, json.dumps({"window_s": state_ref["window_s"]}))
 
     return Handler
 
 
-def serve(host: str = "0.0.0.0", port: int = 8090, block: bool = True):
-    # Print the URL FIRST (before the scan thread redirects fds to /dev/null),
-    # so the user always sees where to point the browser.
-    print(f"Drone RF scanner UI:  http://localhost:{port}")
-    print(f"  (bands: {', '.join(CYCLE_ORDER)}  |  Ctrl-C to stop)")
-    t = threading.Thread(target=_scan_loop, daemon=True)
-    t.start()
-    httpd = ThreadingHTTPServer((host, port), make_handler())
-    if block:
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print("\nstopping.")
-        finally:
-            httpd.server_close()
+def serve(table, host: str = "127.0.0.1", port: int = 8090,
+          window_s: float = 120.0) -> ThreadingHTTPServer:
+    """Start the dashboard server (non-blocking). Returns the server."""
+    state_ref = {"window_s": window_s}
+    handler = make_handler(table, state_ref)
+    httpd = ThreadingHTTPServer((host, port), handler)
+    th = threading.Thread(target=httpd.serve_forever, daemon=True)
+    th.start()
+    log.info("dashboard at http://%s:%d", host, port)
     return httpd
-
-
-def main(argv=None):
-    import argparse
-    p = argparse.ArgumentParser(prog="elrs_sdr webui")
-    p.add_argument("--port", type=int, default=8090)
-    p.add_argument("--host", default="0.0.0.0")
-    a = p.parse_args(argv)
-    serve(a.host, a.port, block=True)
-
-
-if __name__ == "__main__":
-    main()
