@@ -11,7 +11,7 @@ Five things got done today, all committed/pushed to `main`:
 |---|------|--------|
 | 1 | Built a **2.4 GHz power scanner** (`--scan` mode) + B200 RX-chain arm fixes | Find *where* the confirmed 2.4 GHz signal is, before decoding |
 | 2 | **Restructured the repo** into a clean `lib / tools / docs` layout; deduped the ELRS decode | 1213 lines removed; 5-way CRC/FHSS/OTA duplication collapsed into `elrs_sdr/core/` |
-| 3 | **Unpacked + deduped the reference zips** (35 archives → 28 clean repos) | Full reference set local; 1 source (ardupilot) found corrupt |
+| 3 | **Unpacked + deduped the reference zips** (35 archives → 28 present / 27 usable) | Full reference set local; 1 source (ardupilot) corrupt, 2 never uploaded |
 | 4 | **Merged the intern's `dronewatch`** into `elrs_sdr` as one package | Unified sensor-fusion dashboard (Remote ID + SDR scan + DJI), identity-keyed |
 | 5 | **Fixed a real LoRa bug** the intern found (verified independently) | `detect_sync_word` matched-filter conjugation was broken |
 
@@ -71,7 +71,9 @@ All moves were `git mv` (history preserved). Verified: selftest + C++ 18/18 + CL
 
 **What was done:** wrote a recursive-unwrap pipeline (auto-detects each tar layer, peels to the inner zip, unpacks), fetched all 35 via the files API, unpacked, and deduped by base repo name (kept the rawest source, dropped the 6 redundant xz-wrapped copies).
 
-**Result:** **28 distinct repos, 428 MB**, at `refwork/deduped/`, with a `manifest.json`.
+**Result:** **28 repos present, 428 MB**, at `refwork/deduped/`, with a `manifest.json`.
+Of the **30 intended**: 2 were never uploaded (`inav`, `MissionPlanner`) → 28 present; of
+those, 1 is corrupt (`ardupilot`, below) → **27 usable**.
 
 **⚠️ One source is corrupt:** `ardupilot.zip.tgz` (76 MB) is **truncated on the server** — its inner zip is a `BadZipFile`. Confirmed the download is byte-complete (matches server size exactly), so it was broken at the original upload. **Needs a fresh re-upload.** Two repos from the intended 30-set were never uploaded: **`inav`** and **`MissionPlanner`**.
 
@@ -108,8 +110,12 @@ Changed:
 **My independent verification** (built my own signal from scratch, not the intern's test):
 | Correlation | Peak location | Peak-to-noise |
 |---|---|---|
-| old `correlate(sig, conj(sw))` | −1 off, **2.0×** | buried in noise — **no detection** |
-| fixed `correlate(sig, sw)` | exact, **44.4×** | clean peak at the true chirp start |
+| old `correlate(sig, conj(sw))` | off (lands on an unrelated index), **~2×** | buried in noise — **no detection** |
+| fixed `correlate(sig, sw)` | exact, **~44×** | clean peak at the true chirp start |
+
+(The absolute ratio depends on the exact test signal/SNR — one independent
+re-run measured ≈2.4× / ≈26×. The conclusion is invariant: the conjugated form
+is ~at-noise-floor, the direct form is a clean, usable peak.)
 
 **Verdict:** the fix is correct. Back-ported into `elrs_sdr/core/lora.py` with a comment. This is a real improvement to the decoder, not just the intern's copy.
 
@@ -131,6 +137,18 @@ No single receiver sees every drone, so **three sources → one fusion layer →
 
 ## Honest status / what's still open
 
+0. **⚠️ Laptop's local `main` carries an orphaned `dronewatch/` (fix before pushing).**
+   The intern's original commit (`65ce304`, `cp -r dronewatch ./dronewatch`) never
+   reached the server — it was redone properly on the enclave as the merge
+   (`64e3e94`). When the laptop pulled, git reconciled the two divergent lines by
+   **keeping both**, so the laptop's HEAD now has *both* the top-level `dronewatch/`
+   (17 files, its own duplicate `crc/fhss/lora/ota`) *and* the correctly-merged
+   `elrs_sdr/`. **The server (`origin/main`) is clean** — no `dronewatch/`. But if
+   this laptop's `main` gets pushed, the duplicate decode tree goes back on the
+   server and undoes the restructure. Fix (explicit, non-destructive):
+   `git rm -r dronewatch/ && git commit` (or `git reset --hard origin/main` after
+   stashing any real work). Also drop stray build artifacts (`cpp/*.bin`,
+   `capture.meta.txt`) the pull left behind.
 1. **Zero-IQ capture is still the gate** for live `--sdr` / `--dji` data. The `--scan` mode + B200 arm fixes are built and pushed but **not yet run on the laptop**. This is the blocker for any real (non-synthetic) row in the dashboard.
 2. **Identity paths, SDR-only reality:** DJI DroneID is the best SDR-native identity win. Standards Remote ID over the SDR alone is a large DSP build (Wi-Fi OFDM unvalidated; no BLE receiver in the repo) — the decoder is ready but needs a monitor-mode NIC + BLE adapter to feed it live bytes.
 3. **Reference set is 27/30:** ardupilot is corrupt (re-upload needed); inav + MissionPlanner were never uploaded.
@@ -138,12 +156,15 @@ No single receiver sees every drone, so **three sources → one fusion layer →
 
 ## Next up (recommended order)
 
-1. **Run the scanner** on the B205 to locate the confirmed 2.4 GHz signal and confirm the RF path is alive:
+1. **Fix the laptop's orphaned `dronewatch/`** (see status #0) before anything else —
+   `git rm -r dronewatch/ && git commit`, drop stray `cpp/*.bin` + `capture.meta.txt`.
+   Prevents the duplicate decode from being pushed back to the server.
+2. **Run the scanner** on the B205 to locate the confirmed 2.4 GHz signal and confirm the RF path is alive:
    `./elrs_intercept --scan type=b200 40 200`
-2. **Wire the DJI DroneID receiver** as the first *real* identity source:
+3. **Wire the DJI DroneID receiver** as the first *real* identity source:
    `python -m elrs_sdr webui --dji "python3 apps/droneid_json_rx.py --device type=b200"`
-3. **Re-upload ardupilot** (+ optionally inav/MissionPlanner) to complete the reference set.
-4. **Add your user as Maintainer** so git works from the laptop going forward.
+4. **Re-upload ardupilot** (+ optionally inav/MissionPlanner) to complete the reference set.
+5. **Add your user as Maintainer** so git works from the laptop going forward.
 
 ---
 
