@@ -27,9 +27,10 @@ Final state: **`elrs_sdr` selftest 133/133 PASS · C++ decode 18/18 PASS · dash
 - A `--scan` mode: sweeps all 80 ISM2G4 channels (2400.4–2479.4 MHz), measures per-channel power (mean + peak magnitude) over a configurable dwell, and prints a ranked table with dB-over-floor. No demod — just "where's the energy."
 - **B200 RX-chain arm fixes** (the classic "all-zero" cures): `set_rx_antenna("RX2")`, `set_dc_offset_mode(ENABLE)`, `set_iq_balance_mode(ENABLE)` — these are the three things that most often leave a B205/B210 producing flat-zero IQ.
 
-**Status:** Built + syntax-checked, pushed. **Not yet run on the laptop** — this is the immediate next test (see "Next up").
+**Status:** Built + pushed, and **live-validated on the laptop 2026-10-05** (via `build.sh`; note the earlier "syntax-checked only" was wrong — the first push had two UHD 4.9 method-name bugs and a missing `issue_stream_cmd`, which the laptop agent found + fixed and we synced back). **This is the fix for the all-zero IQ**: a UHD continuous RX stream delivers nothing until `issue_stream_cmd(STREAM_MODE_START_CONTINUOUS)` is issued — without it `recv()` returns 0 forever. After the fix the scan shows real, channel-selective peaks (`got=62885`, `maxmag≈4e-3`).
 
 ```
+bash build.sh                          # NOT bare g++ — it links libuhd from /usr/local
 ./elrs_intercept --scan type=b200 40 200     # gain=40, dwell=200 ms/channel
 ```
 

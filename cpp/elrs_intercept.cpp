@@ -101,15 +101,26 @@ struct UdhCapture {
         try { usrp->set_rx_antenna("RX2", 0); } catch (const std::exception &e) {
             std::fprintf(stderr, "[init] set_rx_antenna(RX2) failed: %s\n", e.what());
         }
-        try { usrp->set_dc_offset_mode(true, 0); } catch (const std::exception &e) {
-            std::fprintf(stderr, "[init] set_dc_offset_mode failed: %s\n", e.what());
+        try { usrp->set_rx_dc_offset(true, 0); } catch (const std::exception &e) {
+            std::fprintf(stderr, "[init] set_rx_dc_offset failed: %s\n", e.what());
         }
-        try { usrp->set_iq_balance_mode(true, 0); } catch (const std::exception &e) {
-            std::fprintf(stderr, "[init] set_iq_balance_mode failed: %s\n", e.what());
+        try { usrp->set_rx_iq_balance(true, 0); } catch (const std::exception &e) {
+            std::fprintf(stderr, "[init] set_rx_iq_balance failed: %s\n", e.what());
         }
         rx_stream = usrp->get_rx_stream(stream_args);
         // (No stream_info_t / get_stream_info() — not present in this UHD build.
         //  We only need the rate, which we already have from set_rx_rate.)
+        // CRITICAL: a UHD continuous RX stream delivers NOTHING until it is
+        // explicitly started. Without this, recv() times out returning 0
+        // samples forever (the "got=0 / maxmag=0" zero-IQ symptom) even though
+        // the board opened and tuned fine. This mirrors what the Python
+        // radio.py _start_stream() handles. Re-tuning between scan channels is
+        // fine while a continuous stream runs, so we start it once here.
+        {
+            uhd::stream_cmd_t cmd(uhd::stream_cmd_t::STREAM_MODE_START_CONTINUOUS);
+            cmd.stream_now = true;
+            rx_stream->issue_stream_cmd(cmd);
+        }
         return true;
     }
     void set_buf(size_t n) { buf.resize(n); }
@@ -194,7 +205,7 @@ int main(int argc, char **argv) {
         // Use ~100 ms per channel for a stable mean.
         size_t scan_win = (size_t)(srate * 0.100);
         cap.set_buf(scan_win);
-        std::fprintf(stderr, "[scan] sweeping ISM2G4: %lu ch, %.0f ms dwell/ch, gain=%.1f\n",
+        std::fprintf(stderr, "[scan] sweeping ISM2G4: %lu ch, %d ms dwell/ch, gain=%.1f\n",
                      (unsigned long)ELRS_N_FREQ, dwell_ms, gain);
         std::fprintf(stderr, "[scan]  ch  freq_MHz   mean_pk  mean  (pk/mean ratio)\n");
 
