@@ -245,7 +245,7 @@ class Tracker:
             self.feed = self.feed[-MAX_FEED:]
 
     def add_link(self, pkt):
-        """pkt: one decoded ELRS packet dict (from elrs_live --pkts jsonl).
+        """pkt: one decoded ELRS packet dict (from `elrs-sdr monitor` --pkts jsonl).
         Keyed by init (== UID-derived CRC init, stable per link)."""
         key = "elrs:" + str(pkt.get("init") or "unknown")
         with self.lock:
@@ -364,7 +364,7 @@ def replay_loop(tracker, jsonl, interval=0.4):
 
 
 def elrs_tail_loop(tracker, path, poll=0.4):
-    """Follow-tail an ELRS --pkts jsonl file (written by elrs_live.py) and feed
+    """Follow-tail an ELRS --pkts jsonl file (written by `elrs-sdr monitor`) and feed
     each decoded packet into the tracker as a link event. The file may not
     exist yet (ELRS child starts up slowly) — wait for it."""
     offset = 0
@@ -650,7 +650,7 @@ def main():
     ap.add_argument("--jsonl", help="also tee events to this jsonl file")
     ap.add_argument("--elrs-pkts",
                     help="also tail this ELRS --pkts jsonl and show ELRS links "
-                         "in the UI (start elrs_live.py --live --pkts <this>")
+                         "in the UI (start `elrs-sdr monitor --pkts <this>`)")
     args = ap.parse_args()
 
     if args.source == "btmon" and not args.file:

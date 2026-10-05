@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import sys
 
-from . import crc, ota, fhss, lora
-from .crc import Crc2Byte, Crc8, ELRS_CRC14_POLY, ELRS_CRC16_POLY
+from .core import crc, ota, fhss, lora
+from .core.crc import Crc2Byte, Crc8, ELRS_CRC14_POLY, ELRS_CRC16_POLY
 
 
 FAILS = []
@@ -262,7 +262,7 @@ def test_drone_classifier():
     # --- 1) LoRa chirp: a REAL preamble = a train of identical SF7 up-chirp
     #        symbols (each 128 samples), buried in noise ---
     def make_chirp_block(n=8192, sf=7, snr_db=12):
-        from .lora import _base_chirp
+        from .core.lora import _base_chirp
         sym = _base_chirp(sf)                    # 128-sample up-chirp
         # tile identical symbols (a LoRa preamble)
         reps = int(np.ceil(n / len(sym)))

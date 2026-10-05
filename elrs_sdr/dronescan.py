@@ -181,7 +181,7 @@ def lora_chirp_score(samples: np.ndarray, srate: float, sf: int = 7,
     nsym = 1 << sf                      # one LoRa symbol = 2^sf samples
     if n < 2 * nsym:
         return -99.0
-    from .lora import _base_chirp
+    from .core.lora import _base_chirp
     ref = _base_chirp(sf)               # length nsym, unit up-chirp
     ref = ref.astype(np.complex128)
     # FFT matched filter: correlate samples with ref (and its conjugate for

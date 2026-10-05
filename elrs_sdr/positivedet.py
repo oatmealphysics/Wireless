@@ -51,7 +51,7 @@ def lora_chirp(samples: np.ndarray, srate: float, sf: int = 7) -> tuple[float, s
     Returns (score 0..1, metric).
     """
     from .dronescan import lora_chirp_score, _fft_correlate
-    from .lora import _base_chirp
+    from .core.lora import _base_chirp
     db = lora_chirp_score(samples, srate, sf=sf)
     if db < -90:
         return 0.0, "no chirp"
