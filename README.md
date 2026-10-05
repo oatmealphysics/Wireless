@@ -36,24 +36,22 @@ elrs_sdr/            the Python package (the `elrs-sdr` command + webui)
   radio.py           UHD device wrapper (RX+TX symmetric) + .complex8 I/O
   dronscan.py        multi-band presence + protocol scanner
   wifi.py  positivedet.py   band/channel tables + PHY detectors
-  webui.py  cli.py  selftest.py  uhd_bootstrap.py
-
-cpp/                 live UHD tool (C++) — the real-time capture/decode
-  elrs_decode.h      same decode logic as core/ (CRC/FHSS/OTA) for the C++ path
-  lora_demod_cpp.h   C++ LoRa demod
-  elrs_intercept.cpp main tool: --scan (2.4 GHz power sweep) + ELRS decode
-  tests/             CPU unit tests (18 decode checks) + C++<->numpy cross-val
-
-tools/               standalone one-off scripts (NOT the package)
-  lora_ref.py        numpy LoRa generator (the C++ cross-validation depends on it)
-  drone_scan.py  odr_detect.py  odr_web.py  sdr_wifi_preamble.py   (ODID/BLE/Wi-Fi)
-  webui_diag.sh      laptop webui diagnostic helper
-
-docs/                DRONE_RF_ARCHITECTURE.md
-apps/                droneid_json_rx.py (DJI Drone-ID adapter)
-
-DroneSecurity/  gr-ieee802-11/  drone_refs/   vendored external references (untouched)
+  opendroneid.py     Remote ID (ASTM F3411) decoder + synthesiser  [identity]
+  fusion.py          sensor-fusion: sources -> events -> identity-keyed TrackTable
+  webui.py           unified DroneWatch dashboard (all sources fused)  [identity]
+  log.py  cli.py  selftest.py  uhd_bootstrap.py
 ```
+
+The **goal** is one dashboard showing every drone around you, its protocol, and
+its identifiers. No single receiver sees all drones, so three independent
+sources feed one fusion layer (`fusion.py` → `TrackTable`), and `webui.py`
+renders the merged, identity-keyed table:
+
+| Source | Receives | Gives identity? |
+|---|---|---|
+| **Remote ID** (`opendroneid`) | ASTM F3411 over BLE + Wi-Fi beacon/NAN | **Yes** — serial, operator, position |
+| **SDR scan** (`dronescan`+`positivedet`) | band sweep on the USRP | Mostly no — presence + **protocol** |
+| **DJI DroneID** (`fusion.DjiDroneIdSource`) | DJI OcuSync, SDR-only | **Yes** — DJI serial + operator/drone position |
 
 The Python package (`elrs_sdr/`) and the C++ tool (`cpp/`) are **two
 implementations of the same reference ports** — C++ for low-latency live
@@ -191,26 +189,36 @@ python -m elrs_sdr dronescan
 python -m elrs_sdr dronescan --bands 2.4,5.8 --cycles 12 --dwell-s 0.2 --gain 35
 ```
 
-### Live web dashboard (Kismet-style)
+### Unified drone dashboard (DroneWatch)
 
-A real-time multi-band waterfall with **click-to-lock** band tabs (auto-cycles
-2.4 → 5.8 → sub-1G → 433; click a band to lock on it, click again / "Resume"
-to release). Pure stdlib — no extra dependencies.
+One page, fed by the **fusion layer**, showing every drone around you merged
+across all sources (Remote ID / SDR protocol scan / DJI DroneID) in a single
+**identity-keyed** table: status, kind, protocol, serial/identity, operator,
+position, altitude, speed, frequency, RSSI. Pure stdlib — no build step.
 
 ```bash
-python -m elrs_sdr webui                 # http://localhost:8090
-python -m elrs_sdr webui --port 9000
+# No hardware needed — synthetic Remote ID drones, to see the pipeline work:
+python -m elrs_sdr webui --replay            # http://127.0.0.1:8090
+
+# Live SDR band/protocol-scan source (needs the radio):
+python -m elrs_sdr webui --sdr
+
+# Add a DJI DroneID receiver (any cmd emitting one JSON line per frame):
+python -m elrs_sdr webui --dji "python3 apps/droneid_json_rx.py --device type=b200"
+
+# Fuse all three at once:
+python -m elrs_sdr webui --sdr --dji "..." --replay
+
+-v / --verbose  turns on debug logging (UHD binding-probe trail); -q = errors only.
 ```
 
-Environment overrides: `ELRS_DEVICE` (default `type=b200`), `ELRS_GAIN`
-(default 30), `ELRS_DWELL` (default 0.15 s).
-
-> **Honest limits.** One B205mini can't sample all bands at once — the scanner
-> *time-slices* between them (cycling waterfall, not 4 simultaneous scopes).
-> Vendor-level ID (e.g. "it's definitely a DJI Mavic 3") is **not** claimed:
-> OFDM/Wi-Fi and FHSS are identified at the *protocol-family* level with a
-> confidence label, and LoRa/ELRS is the only high-confidence positive.
-> 5.8 GHz sits at the edge of the B205's range (works, noisier).
+**Honest limits.** No single receiver sees every drone — the SDR scan is the
+presence+protocol layer; *identity* comes from Remote ID and DJI DroneID.
+For an SDR-only operator the identity wins are **DJI DroneID** (SDR-native) and
+— with a ~$15 monitor-mode Wi-Fi dongle + BLE adapter — **standards Remote ID**.
+The ODID decoder is ready for whichever transport feeds it bytes. 5.8 GHz sits
+at the edge of the B205's range (works, noisier); prefer a B210 on USB3 for
+wideband DJI/Wi-Fi work.
 
 ### Air rates (2.4 GHz, SX1280)
 

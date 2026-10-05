@@ -814,9 +814,63 @@ def cmd_dronescan(args):
 # ----------------------------------------------------------------------------
 # webui (live dashboard)
 # ----------------------------------------------------------------------------
+def _build_sdr_source(args):
+    """Open the radio + band scanner; return an SdrScanSource or None on failure.
+    The SDR source is the presence+protocol layer (drones that don't broadcast
+    Remote ID). Tolerant: a missing radio just means no live SDR rows."""
+    from .fusion import SdrScanSource, get_logger
+    log = get_logger(__name__)
+    try:
+        from .radio import RadioDevice
+        from .dronescan import DroneScanner
+    except Exception as e:
+        log.warning("SDR source unavailable (import failed): %r", e)
+        return None
+    try:
+        radio = RadioDevice(args.device)
+    except Exception as e:
+        log.warning("could not open radio %r: %r — skipping SDR source",
+                    args.device, e)
+        return None
+    scanner = DroneScanner(radio, gain=args.gain)
+    return SdrScanSource(scanner)
+
+
 def cmd_webui(args):
-    from . import webui
-    webui.serve(args.host, args.port, block=True)
+    """Serve the unified drone-watch dashboard (all sources fused)."""
+    import time
+    from . import fusion, webui
+    from .log import get_logger
+    log = get_logger(__name__)
+
+    table = fusion.TrackTable()
+    sources = []
+
+    if args.sdr:
+        src = _build_sdr_source(args)
+        if src is not None:
+            sources.append(src)
+    if args.dji:
+        sources.append(fusion.DjiDroneIdSource(args.dji.split()))
+    if args.replay or not sources:
+        if not sources and not args.replay:
+            log.warning("no live source available — falling back to --replay "
+                        "(synthetic Remote ID). Use --sdr with a radio, or "
+                        "--dji CMD, for live data.")
+        sources.append(fusion.ReplaySource())
+
+    fusion.start_sources(sources, table)
+    httpd = webui.serve(table, host=args.host, port=args.port,
+                        window_s=args.window)
+    print(f"drone dashboard: http://{args.host}:{args.port}  "
+          f"(sources: {', '.join(s.name for s in sources)})", flush=True)
+    print("Ctrl-C to stop.", flush=True)
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nshutting down.", flush=True)
+        httpd.shutdown()
 
 
 # ----------------------------------------------------------------------------
@@ -1043,6 +1097,9 @@ def build_parser():
     p.add_argument("--rx-chan", type=int, default=0)
     p.add_argument("--tx-chan", type=int, default=0)
     p.add_argument("--antenna", default=None, help="antenna name")
+    p.add_argument("--verbose", "-v", action="store_true",
+                   help="debug logging (UHD binding-probe trail, etc.)")
+    p.add_argument("--quiet", "-q", action="store_true", help="errors only")
 
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -1179,9 +1236,18 @@ def build_parser():
     sp.set_defaults(fn=cmd_dronescan)
 
     sp = sub.add_parser("webui",
-                        help="live multi-band drone scanner dashboard")
-    sp.add_argument("--host", default="0.0.0.0")
+                        help="unified drone dashboard (Remote ID + SDR scan + DJI, fused)")
+    sp.add_argument("--replay", action="store_true",
+                    help="show synthetic Remote ID drones (no hardware needed)")
+    sp.add_argument("--sdr", action="store_true",
+                    help="add the live SDR band/protocol-scan source")
+    sp.add_argument("--dji", metavar="CMD", default=None,
+                    help="add a DJI DroneID source: command emitting one JSON line/frame")
+    sp.add_argument("--gain", type=float, default=30.0, help="RX gain (dB, for --sdr)")
+    sp.add_argument("--host", default="127.0.0.1")
     sp.add_argument("--port", type=int, default=8090)
+    sp.add_argument("--window", type=float, default=120.0,
+                    help="initial display window in seconds (0 = all time)")
     sp.set_defaults(fn=cmd_webui)
 
     return p
@@ -1193,6 +1259,9 @@ def main(argv=None):
     # per-band sensible defaults don't clobber an explicit choice)
     argv = list(sys.argv[1:]) if argv is None else list(argv)
     args = parser.parse_args(argv)
+    # configure logging once (verbosity from the global -v/-q flags)
+    from .log import setup as _log_setup
+    _log_setup(verbose=args.verbose, quiet=args.quiet)
     args._srate_set = ("--srate" in argv)
     args._argv = argv
     args._gain_set = ("--gain" in argv)

@@ -130,7 +130,13 @@ def detect_sync_word(
     if sync_word is None:
         sync_word = params.chirp()
     sw_len = len(sync_word)
-    corr = np.correlate(samples, np.conj(sync_word), mode="valid")
+    # Matched filter: correlate against the sync word. numpy's correlate already
+    # conjugates its second argument (c[k] = sum_n a[n+k]*conj(v[n])), so pass
+    # `sync_word` directly. Passing np.conj(sync_word) double-conjugated the
+    # kernel — for a chirp that correlates an up-chirp against a down-chirp and
+    # never dechirps, so no peak forms (verified: conj form peaks at ~2x noise,
+    # direct form peaks 44x at the true chirp start).
+    corr = np.correlate(samples, sync_word, mode="valid")
     norm = np.abs(sync_word) @ np.abs(sync_word)
     corr = np.abs(corr) / norm
     # peak-pick

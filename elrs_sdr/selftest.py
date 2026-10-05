@@ -679,33 +679,27 @@ def test_detections_table():
     check("state_dict reports the active window_s",
           sc.state_dict().get("window_s") == 60.0,
           f"window_s={sc.state_dict().get('window_s')}")
-    # (4) the dashboard: window dropdown + Last seen column + all-bands label
+    # (4) the dashboard: the unified DroneWatch UI (fusion TrackTable-fed).
+    #     Asserts the identity-focused table + its API contract.
     html = webui.DASHBOARD
-    check("dashboard has the window dropdown", 'id="win"' in html and "setWindow" in html)
-    check("dashboard window dropdown has the expected options",
-          all(o in html for o in ('value="60"', 'value="3600"', 'value="86400"')))
-    check("dashboard table has a Last seen column", "Last seen" in html)
-    check("dashboard table has a MAC column (Wi-Fi BSSID/Source MAC)",
-          'data-col="mac"' in html and "MAC" in html)
-    check("dashboard row template renders the MAC cell", "r.mac" in html)
-    # (pause feature): a Pause/Resume button freezes the table for copy/paste —
-    # the button + banner are in the HTML, togglePause() is in the JS, and
-    # poll() skips render() while paused so the DOM stays selectable.
-    check("dashboard has a Pause button (freeze table for copy/paste)",
-          'id="pausebtn"' in html and "Pause" in html)
-    check("dashboard has a PAUSED banner", 'id="pauseflag"' in html and "PAUSED" in html)
-    check("togglePause() JS freezes the table (poll skips render when paused)",
-          "function togglePause" in html and "if(!paused){ render(); }" in html)
-    check("Space key toggles pause (copy/paste shortcut)",
-          "e.code === 'Space'" in html)
-    # (save raw IQ feature): a Save-IQ button captures baseband IQ on a band
-    # and writes it in CF32 (GNU Radio / SDR++ / IQT) + complex8 + meta, so the
-    # user can look at the drone protocol data and send it back to tune.
-    check("dashboard has a Save-IQ button (raw signal capture)",
-          'id="capbtn"' in html and "Save IQ" in html)
-    check("dashboard has a capture band selector", 'id="capband"' in html)
-    check("captureRaw() JS posts to /api/capture",
-          "function captureRaw" in html and "/api/capture" in html)
+    check("dashboard is the unified DroneWatch UI", "DroneWatch" in html)
+    check("dashboard has a time-window selector", 'id="window"' in html and "setWindow" in html)
+    check("dashboard table has an identity/serial column", "identity / serial" in html)
+    check("dashboard table has an operator column", ">operator<" in html or "operator</th>" in html)
+    check("dashboard renders CONFIRMED status", "CONFIRMED" in html)
+    check("dashboard shows per-kind tags (remote-id/dji/control-link)",
+          "remote-id" in html and "dji-droneid" in html and "control-link" in html)
+    # the API contract: /api/state (tracks + summary) and /api/window (POST)
+    import inspect as _insp
+    wh = _insp.getsource(webui.make_handler)
+    check("dashboard exposes /api/state", "/api/state" in wh)
+    check("dashboard exposes /api/window (POST)", "/api/window" in wh)
+    # the summary/row contract: confirmed is a first-class field
+    from .fusion import DroneTrack, TrackTable
+    check("TrackTable rows carry a confirmed flag",
+          "confirmed" in _insp.getsource(DroneTrack.row))
+    check("TrackTable summary reports confirmed count",
+          '"confirmed"' in _insp.getsource(TrackTable.summary))
     from . import radio as _radio
     check("radio.write_cf32 exists (GNU Radio / SDR++ / IQT format)",
           hasattr(_radio, "write_cf32"))
@@ -723,52 +717,25 @@ def test_detections_table():
           "with self._radio_lock" in inspect.getsource(DroneScanner.step))
     check("capture_raw() holds the same radio lock",
           "with self._radio_lock" in inspect.getsource(DroneScanner.capture_raw))
-    check("dashboard table labeled as all-bands", "(all bands)" in html)
-    check("dashboard has no view-tabs anymore (table always visible)",
-          "vt-table" not in html and "viewtabs" not in html)
-    # the waterfall pane is REMOVED (user found it not useful) — no canvas,
-    # no band-lock tabs, no lock button
-    check("waterfall canvas removed", "<canvas" not in html and "id=\"wf\"" not in html)
-    check("no band-lock tabs / lock button remain",
-          "id=\"tabs\"" not in html and "lockbtn-wrap" not in html
-          and "function lock(" not in html)
-    check("table section is the main view (view-table)",
-          'id="view-table"' in html and html.index('id="view-table"') < html.index("dettbody"))
-    check("table grows with entries (no max-height cap, page scrolls)",
-          "max-height:300px" not in html and "overflow-y:auto" not in html)
-    check("right panel is sticky (stays visible while a long table scrolls)",
-          "position:sticky" in html and "align-self:start" in html)
-    # (5) anti-jitter + sorting: fixed table layout, colgroup widths, sortable
-    #     headers, and a stable default order (first_seen) so rows don't jump
-    check("table uses table-layout:fixed (no column-width jitter)",
-          "table-layout:fixed" in html)
-    check("table has a colgroup with fixed column widths",
-          "<colgroup>" in html and "c-band" in html and "c-conf" in html)
-    check("table headers are clickable to sort (sortCol wired)",
-          "onclick=\"sortCol(" in html and "function sortCol" in html)
-    check("table has a stable default order by first_seen (no row jump)",
-          "a.first_seen - b.first_seen" in html)
-    check("sort arrow indicator present (shows active column + direction)",
-          ".arrow" in html and "textContent = sortDir" in html)
-    # (6) positive-identification: every row carries confirmed + metric; the UI
-    #     has a Status column (CONFIRMED/UNCONFIRMED) + a Detector-metric column,
-    #     and nothing is default-binned to a confident protocol without a
-    #     detector firing (a plain tone is either unidentified or UNCONFIRMED).
+    check("dashboard table has a status column (confirmed/unconfirmed)",
+          "<th>status</th>" in html and "unconfirmed" in html)
+    check("dashboard table has a kind column (remote-id/control-link/...)",
+          "<th>kind</th>" in html)
+    check("dashboard table has protocol + position + rssi columns",
+          all(c in html for c in ("<th>protocol</th>", "<th>position</th>", "<th>rssi</th>")))
+    # (5) the new dashboard auto-polls /api/state and renders rows client-side
+    check("dashboard auto-refreshes (poll /api/state on an interval)",
+          "setInterval" in html and "/api/state" in html)
+    # (6) positive-identification: every row carries confirmed + metric, and a
+    #     plain tone is never a confident claim (the data contract, not the HTML).
     check("every table row carries confirmed + metric (positive-ID state)",
           all("confirmed" in r and "metric" in r for r in rows),
           f"rows missing fields: {[k for r in rows for k in ('confirmed','metric') if k not in r]}")
     check("a plain tone is NOT a confident claim (UNCONFIRMED or unidentified)",
           all((r["confirmed"] is False) for r in rows),
           f"rows claimed confirmed: {[r['protocol'] for r in rows if r.get('confirmed')]}")
-    check("dashboard has a Status column (confirmed/UNCONFIRMED)",
-          'data-col="confirmed"' in html and "status-badge" in html)
-    check("dashboard has a Detector-metric column",
-          'data-col="metric"' in html and 'class="metric"' in html)
-    check("dashboard renders both CONFIRMED and UNCONFIRMED labels",
-          "CONFIRMED" in html and "UNCONFIRMED" in html)
-    check("positive-ID hint explains the CONFIRMED vs UNCONFIRMED model",
-          "Positive identification" in html and "no default-binned" in html.lower()
-          or "default-binned" in html)
+    check("dashboard renders both CONFIRMED and unconfirmed labels",
+          "CONFIRMED" in html and "unconfirmed" in html)
     # (7) 802.11 is a FIRST-CLASS automatic classifier (same row model as
     #     ELRS/LoRa): the scanner accumulates a rolling IQ buffer per band and
     #     runs the L-SIG scan in the classify loop, so a real beacon shows up as
@@ -834,10 +801,64 @@ def test_detections_table():
     # mislabeled, and the UI hint explains MAVLink/Meshtastic are payload-layer
     check("LoRa row is labeled as the family (ELRS/Meshtastic/sub-1G), not 'ELRS' alone",
           "ELRS / Meshtastic / sub-1G telemetry" in inspect.getsource(DroneScanner._classify_positive))
-    check("UI hint marks MAVLink/Meshtastic as payload-layer (not RF-ID-able)",
-          "MAVLink" in html and "Meshtastic" in html and "payload" in html.lower())
-    check("UI hint mentions OcuSync is UNCONFIRMED until capture-validated",
-          "OcuSync" in html and "UNCONFIRMED" in html)
+    # MAVLink/Meshtastic are payload-layer protocols — the scanner must not
+    # claim them as a positively RF-identifiable protocol (they ride the
+    # already-detected link). The classification source marks the family.
+    check("MAVLink/Meshtastic treated as payload-layer (not a separate RF-ID)",
+          ("MAVLink" in inspect.getsource(DroneScanner._classify_positive)
+           or "Meshtastic" in inspect.getsource(DroneScanner._classify_positive)))
+
+
+def test_opendroneid_roundtrip():
+    """Remote ID (ODID) encode->decode round-trip: the identity jackpot."""
+    print("Open Drone ID encode/decode round-trip:")
+    from . import opendroneid as odid
+    serial = "1581F5FMC24210TEST01"
+    operator = "FAA-OP-TEST99"
+    lat, lon = 37.33182, -122.03118
+    pack = odid.build_pack([
+        odid.build_basic_id(serial, id_type=1, ua_type=2),
+        odid.build_location(lat, lon, alt_geo_m=123.0, speed_h_ms=10.0),
+        odid.build_system(lat, lon),
+        odid.build_operator_id(operator),
+    ])
+    dec, consumed = odid.decode_message(pack)
+    check("pack decodes", dec is not None and dec["n_messages"] == 4)
+    rep = odid.summarize(dec["messages"])
+    check("serial recovered", rep.uas_id == serial, f"got {rep.uas_id!r}")
+    check("operator recovered", rep.operator_id == operator,
+          f"got {rep.operator_id!r}")
+    check("latitude recovered (1e-5)", abs((rep.latitude or 0) - lat) < 1e-5,
+          f"got {rep.latitude}")
+    check("longitude recovered (1e-5)", abs((rep.longitude or 0) - lon) < 1e-5,
+          f"got {rep.longitude}")
+    check("identity() prefers serial", rep.identity() == serial)
+
+
+def test_fusion_merge():
+    """The fusion TrackTable: same identity merges, distinct signals separate."""
+    print("Fusion TrackTable merge:")
+    from . import opendroneid as odid
+    from . import fusion
+    table = fusion.TrackTable()
+    serial = "DRONE-XYZ-1"
+    pack = odid.build_pack([
+        odid.build_basic_id(serial), odid.build_location(37.0, -122.0)])
+    ev1 = fusion.remoteid_event(pack, transport="ble")
+    ev2 = fusion.remoteid_event(pack, transport="ble")
+    table.ingest(ev1)
+    table.ingest(ev2)
+    # a different, unidentified SDR control-link -> separate track
+    table.ingest({"source": "sdr", "ts": ev1["ts"], "kind": "control-link",
+                  "identity": None, "protocol": "ELRS LoRa", "confirmed": False,
+                  "fields": {"track_key": "2.4:2440:lora", "freq_mhz": 2440}})
+    rows = table.rows()
+    check("two events one identity merge to one track",
+          sum(1 for r in rows if r["identity"] == serial) == 1)
+    check("distinct signals stay separate", len(rows) == 2, f"rows={len(rows)}")
+    summ = table.summary()
+    check("summary counts confirmed identity", summ["confirmed"] == 1,
+          f"summary={summ}")
 
 
 def main():
@@ -849,6 +870,8 @@ def main():
     test_channel_pack_unpack()
     test_fhss_lcg()
     test_lora_sync_detect()
+    test_opendroneid_roundtrip()
+    test_fusion_merge()
     test_drone_classifier()
     test_wifi_phy()
     test_detections_table()
