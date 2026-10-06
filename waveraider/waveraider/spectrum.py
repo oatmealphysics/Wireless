@@ -672,7 +672,8 @@ def scan_droneid(device: str | None = None, center_hz: float = 2_459_500_000) ->
 
 
 def sweep(center_hz: float, span_hz: float, bins: int = 256,
-          owner: str | None = None, device: str | None = None) -> dict:
+          owner: str | None = None, device: str | None = None,
+          elrs_hint: bool = False) -> dict:
     center, span, band = fit_window(center_hz, span_hz)   # Inspect RF only views the drone bands
     bins = int(_clamp(int(bins or 256), 16, BINS_MAX))
     start, stop = center - span / 2, center + span / 2
@@ -717,16 +718,57 @@ def sweep(center_hz: float, span_hz: float, bins: int = 256,
     dbs = sorted(p[1] for p in points)
     floor = dbs[len(dbs) // 4] if dbs else _FLOOR_DB
     peak = max(points, key=lambda p: p[1]) if points else [int(center), _FLOOR_DB]
+    signals = _find_signals(points, floor, span)
+    # Optional ELRS presence hint: when enabled on a live wideband radio, probe the
+    # strongest carriers with a short IQ grab + the chirp detector, and tag a likely
+    # ELRS/LoRa carrier in rf_candidates. Off by default (keeps the sweep fast and
+    # the existing behavior identical); a hint, never a detection.
+    if elrs_hint and live and status.get("backend") in ("bladerf", "uhd") and signals:
+        _annotate_elrs_hint(signals, status.get("backend"))
     return {
         "center_hz": int(center), "span_hz": int(span), "band": band,
         "start_hz": int(start), "stop_hz": int(stop),
         "points": points,
         "floor_db": round(floor, 1),
         "peak": {"freq_hz": peak[0], "db": peak[1]},
-        "signals": _find_signals(points, floor, span),
+        "signals": signals,
         "bands": _bands_in(start, stop),
         "source": "live" if live else "simulated",
         "device": status.get("device"),
         "note": status["note"],
         "controlled": controlled,
     }
+
+
+def _annotate_elrs_hint(signals: list, backend: str) -> None:
+    """Probe each strong carrier with a short IQ window and tag a likely ELRS/LoRa
+    signal in its rf_candidates. A hint only: a high chirp score adds
+    'ExpressLRS (possible)'; it never sets protocol or identification. Fails soft —
+    if the radio can't grab IQ (busy/unsupported), the sweep is returned unmodified."""
+    if not signals:
+        return
+    try:
+        from .protocols.elrs import elrs_present
+        from . import uhd_backend, bladerf_sweep
+    except Exception:
+        return
+    probe_rate = 2_400_000
+    probe_n = int(probe_rate * 0.05)
+    for sig in signals[:6]:                       # bound the work: strongest few only
+        f = sig.get("freq_hz")
+        if not f:
+            continue
+        try:
+            with _DEVICE_LOCK:
+                if backend == "uhd":
+                    iq, rate = uhd_backend.capture_iq(f, probe_rate, probe_n)
+                else:
+                    iq, rate = bladerf_sweep.capture_iq(f, probe_rate, probe_n)
+            if iq is None or len(iq) < 512:
+                continue
+            score = elrs_present(iq, rate or probe_rate)
+            if score >= 0.5 and "ExpressLRS (possible)" not in sig.get("rf_candidates", []):
+                sig.setdefault("rf_candidates", []).insert(0, "ExpressLRS (possible)")
+                sig["elrs_hint"] = round(score, 2)
+        except Exception:
+            continue
