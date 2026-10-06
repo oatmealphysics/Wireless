@@ -21,13 +21,28 @@ from ...sources import Source
 from . import decode_iq, DEFAULT_RATE
 
 
-# A decode window: how many seconds of IQ to grab before running the LoRa/FHSS/CRC
-# pipeline. ELRS at SF7/800kHz is ~1.2 MSPS; a 250 ms window is long enough to
-# catch several frames but short enough to stay responsive.
-WINDOW_S = 0.25
+# A decode dwell: how long to listen on ONE channel before decoding. ELRS hops
+# every ~6-7 ms at 150 Hz, so a single channel only carries the link ~1-2% of the
+# time. We sweep the channel set ONCE (one dwell per channel, not a tight re-sweep
+# loop — that re-tuned the B205 hundreds of times), and a hopping link is caught
+# on whichever probed channel it happens to occupy during that channel's dwell.
+DWELL_S = 0.06        # ~60 ms per channel — long enough for several frames, short
+                      # enough that 80 channels take ~5 s total (one pass).
 # Sample rate for the ELRS capture. 800 kHz LoRa needs a few MSPS to demod cleanly.
 ELRS_SRATE = 2_400_000
 ELRS_GAIN_DB = 30.0
+
+
+def _elrs_2g4_channels():
+    """The 80 ELRS 2.4 GHz FHSS channels, from the core's canonical domain table
+    (single source of truth — 2400.4–2479.4 MHz, 1.0 MHz spacing)."""
+    try:
+        from elrs_sdr.core.fhss import DOMAINS, DEFAULT_2G4_DOMAIN
+        dom = DOMAINS[DEFAULT_2G4_DOMAIN]
+        return [float(dom.channel_freq(i)) for i in range(dom.freq_count)]
+    except Exception:
+        # fallback if the core isn't importable (shouldn't happen in the plugin)
+        return [2400_400_000 + i * 1_000_000 for i in range(80)]
 
 
 class ElrsSdrSource(Source):
@@ -48,33 +63,40 @@ class ElrsSdrSource(Source):
         self.path = None
 
     def _freqs(self):
-        """If a single freq was given, use it. Else a coarse set across ISM2G4 so a
-        hopping ELRS link is caught on whatever channel it's on right now."""
+        """A single freq if given; else the full 80-channel ELRS 2.4 GHz set. We
+        sweep this ONCE (one dwell per channel) — not in a tight re-sweep loop."""
         if self.freq_hz:
             return [float(self.freq_hz)]
-        # ELRS 2.4 GHz: 80 channels 2400.4–2479.4 MHz. A full per-channel sweep per
-        # window is slow; use a coarse grid for live detection and refine on demand.
-        return [2400_400_000 + i * 2_000_000 for i in range(40)]  # 40 MHz-spaced
+        return _elrs_2g4_channels()
 
     def frames(self):
+        import sys as _sys
         from ... import uhd_backend  # lazy: only imported when a live SDR is used
         if not uhd_backend.available():
             raise RuntimeError(
                 "no live SDR available for ELRS decode — connect an Ettus USRP "
                 "(or set SoapySDR up). See `sdr` readiness.")
-        end = time.monotonic() + self.secs
         freqs = self._freqs()
-        while time.monotonic() < end:
-            for f in freqs:
-                try:
-                    iq, rate = uhd_backend.capture_iq(f, ELRS_SRATE, int(ELRS_SRATE * WINDOW_S))
-                except Exception:
-                    continue
-                if iq is None or len(iq) < 1024:
-                    continue
-                for rec in decode_iq(iq, rate, self.rate, uid=self.uid):
-                    rec["freq_hz"] = int(f)
-                    yield rec
+        dwell_n = int(ELRS_SRATE * DWELL_S)
+        total = len(freqs)
+        # One pass over the channel set: tune, dwell, decode, next. A hopping ELRS
+        # link is caught on whichever probed channel it occupies during the dwell.
+        # (Re-running the command sweeps again — this is deliberately one clean pass
+        #  rather than a re-sweep loop that kept re-tuning the B205.)
+        for i, f in enumerate(freqs):
+            if i % 10 == 0 or i == total - 1:
+                print(f"[elrs] sweeping 2.4 GHz — channel {i+1}/{total} "
+                      f"({f/1e6:.1f} MHz) ...", file=_sys.stderr, flush=True)
+            try:
+                iq, rate = uhd_backend.capture_iq(f, ELRS_SRATE, dwell_n)
+            except Exception:
+                continue
+            if iq is None or len(iq) < 1024:
+                continue
+            for rec in decode_iq(iq, rate, self.rate, uid=self.uid):
+                rec["freq_hz"] = int(f)
+                yield rec
+        print("[elrs] sweep complete", file=_sys.stderr, flush=True)
 
 
 class ElrsFileSource(Source):
