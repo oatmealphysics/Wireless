@@ -1,0 +1,52 @@
+name: Validated offline release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+  bundles:
+    uses: ./.github/workflows/multiarch.yml
+  publish:
+    needs: [tests, bundles]
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: offline-release-promotion
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Download both tested bundles from this run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --name waveraider-amd64 --dir bundles/waveraider-amd64
+          gh run download "$GITHUB_RUN_ID" --name waveraider-arm64 --dir bundles/waveraider-arm64
+          python3 tools/prepare_release.py --bundles bundles --output release --revision "$GITHUB_SHA"
+      - name: Publish a new complete release without changing existing releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # An older queued run must never replace the recommended download.
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/master" --jq .object.sha)
+          if [ "$current" != "$GITHUB_SHA" ]; then
+            echo "Superseded revision; existing release remains recommended."
+            exit 0
+          fi
+          tag="offline-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # gh creates a draft, uploads every asset, then publishes. An upload failure
+          # leaves the previous published release intact. Never overwrite assets/tags.
+          gh release create "$tag" release/* --target "$GITHUB_SHA" --latest \
+            --title "WaveRaider offline build ${GITHUB_SHA:0:12}" --notes-file release-notes.md

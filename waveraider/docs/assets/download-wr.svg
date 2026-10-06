@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="280" height="48" viewBox="0 0 280 48" role="img" aria-label="Open WaveRaider downloads">
+  <rect width="280" height="48" rx="8" fill="#12636e"/>
+  <path d="M26 13v15m-6-6 6 6 6-6M18 30v5h16v-5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="48" y="30" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Download WaveRaider</text>
+</svg>

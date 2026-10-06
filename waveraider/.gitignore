@@ -1,0 +1,26 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.env
+*.key
+# Never commit real captures — only the synthetic samples are tracked.
+data/*.pcap
+!data/sample.pcap
+!data/ble_sample.pcap
+!data/uas_sample.pcap
+# Local model weights (offline reasoning backend, added later)
+models/*.pt
+models/*.onnx
+models/*.gguf
+site/
+
+# Field recordings and node enrollment credentials stay local.
+*.sigmf-data
+*.sigmf-meta
+*.sqlite3
+*.sqlite3-*
+node.json
+coordinator.json

@@ -1,0 +1,50 @@
+[
+  {
+    "name": "ofdm_wifi_2462M_20000k.cs8",
+    "sha256": "8ec8f8e285b61b038330819ab6fa528c369601e2d120530fae3351859c4ffee2",
+    "rate_sps": 20000000,
+    "format": "cs8"
+  },
+  {
+    "name": "ofdm_wifi_frames_2462M_20000k.cs8",
+    "sha256": "1663f80a4b76e3e26cc20373dc7bb37ef9b725a71a78a12e101f75a9af5999a1",
+    "rate_sps": 20000000,
+    "format": "cs8"
+  },
+  {
+    "name": "ofdm_lte_762M_12000k.cs16",
+    "sha256": "945ee40c87df1085a2eae5ada6220c967fc3b9c14feaf40eecb3d8ebc85efe13",
+    "rate_sps": 12000000,
+    "format": "cs16"
+  },
+  {
+    "name": "elrs_100hz_2415M_20000k.cs8",
+    "sha256": "92df807fad81d56ae2031282091caac17322b7f5537d8b817ae95946da4bd916",
+    "rate_sps": 20000000,
+    "format": "cs8"
+  },
+  {
+    "name": "gfsk_ble_2426M_20000k.cs8",
+    "sha256": "dff77e89f26693574e72da1364777fae15f2fe3fbc88d036362a91a3c83f2f7a",
+    "rate_sps": 20000000,
+    "format": "cs8"
+  },
+  {
+    "name": "odid_holybro_2431M_20000k.cs8",
+    "sha256": "caa19040cfe8bdfe6d166f74a7293c6bf57f49263ab33b3ce1bca0269b41e250",
+    "rate_sps": 20000000,
+    "format": "cs8"
+  },
+  {
+    "name": "odid_bt5lr_holybro_2474M_20000k.cs8",
+    "sha256": "9b60c112738c099c359c1d6242bc05eebf5c084a1359c2bf99f054b130c6d372",
+    "rate_sps": 20000000,
+    "format": "cs8"
+  },
+  {
+    "name": "pal_camera_5865M_20000k.cs8",
+    "sha256": "d1aca85ea1e1eddc690acb9fee52f47b139c4753116b06f4bbf58f50f933aa2b",
+    "rate_sps": 20000000,
+    "format": "cs8"
+  }
+]
