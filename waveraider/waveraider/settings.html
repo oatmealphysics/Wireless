@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WaveRaider Settings</title>
+<link rel="icon" type="image/png" href="/brand/icon.png">
+<script id="theme-script">
+// Apply before paint; blocked browser storage must not prevent using the GUI.
+(()=>{
+  const key='waveraider-theme', modes=['system','dark','light'];
+  const media=window.matchMedia('(prefers-color-scheme: dark)');
+  let preference='system';
+  try{const saved=localStorage.getItem(key);if(modes.includes(saved))preference=saved;}catch(e){}
+  function apply(){
+    document.documentElement.dataset.theme=preference==='system'?(media.matches?'dark':'light'):preference;
+    const select=document.getElementById('themeSelect');if(select)select.value=preference;
+    if(typeof drawSpectrum==='function'&&typeof specLast!=='undefined'&&specLast)drawSpectrum(specLast);
+  }
+  apply();
+  media.addEventListener('change',apply);
+  document.addEventListener('DOMContentLoaded',()=>{
+    const select=document.getElementById('themeSelect');select.value=preference;
+    select.addEventListener('change',()=>{
+      preference=modes.includes(select.value)?select.value:'system';
+      try{localStorage.setItem(key,preference);}catch(e){}
+      apply();
+    });
+  });
+  window.addEventListener('storage',event=>{
+    if(event.key===key||event.key===null){preference=modes.includes(event.newValue)?event.newValue:'system';apply();}
+  });
+})();
+</script>
+<style>
+
+/* Quiet Precision: local assets, shared tokens, clear evidence hierarchy. */
+:root{--bg:#111820;--panel:#1a2530;--raise:#24313d;--line:#364754;--line2:#718599;--ink:#e6edf3;--soft:#aab8c5;--muted:#aab8c5;--dim:#aab8c5;--accent:#8bcbff;--ok:#8dd6b0;--warn:#f2c66d;--crit:#ff9a9a;--sel:#24313d;--violet:#c7b9ed;--onaccent:#111820;--hover:#b5deff;--warnbg:#292317;--critbg:#302025;--lightbg:#f2f5f8;--lightpanel:#ffffff;--lightraise:#e8eef4;--lightline:#ccd6df;--lightline2:#687c8e;--lightink:#172633;--lightsoft:#465c6e;--lightmuted:#465c6e;--lightdim:#465c6e;--lightaccent:#005c97;--lightok:#236440;--lightwarn:#795000;--lightcrit:#a82735;--lightsel:#dceaf5;--lightviolet:#694497;--lightonaccent:#ffffff;--lighthover:#004b7b;--lightwarnbg:#fff3d6;--lightcritbg:#ffeaed;color-scheme:dark}
+:root[data-theme="light"]{--bg:var(--lightbg);--panel:var(--lightpanel);--raise:var(--lightraise);--line:var(--lightline);--line2:var(--lightline2);--ink:var(--lightink);--soft:var(--lightsoft);--muted:var(--lightmuted);--dim:var(--lightdim);--accent:var(--lightaccent);--ok:var(--lightok);--warn:var(--lightwarn);--crit:var(--lightcrit);--sel:var(--lightsel);--violet:var(--lightviolet);--onaccent:var(--lightonaccent);--hover:var(--lighthover);--warnbg:var(--lightwarnbg);--critbg:var(--lightcritbg);color-scheme:light}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;min-height:100vh;font:16px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink)}
+button,input,select{font:inherit;accent-color:var(--accent)}
+a{color:var(--accent);text-underline-offset:3px}
+button,.btn,.tab,input[type=text],input[type=number],select{min-height:40px;border-radius:8px}
+button,.btn,.tab{transition:border-color 140ms;color:var(--ink)}
+button:active,.btn:active{background:var(--sel)}
+button:disabled,.btn[disabled]{opacity:.65;cursor:not-allowed}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.top{display:flex;align-items:center;gap:28px;min-height:76px;padding:14px 32px;border-bottom:1px solid var(--line);background:var(--panel)}
+.brand{display:inline-flex;align-items:center;gap:10px;font-size:21px;font-weight:650;letter-spacing:-.5px;white-space:nowrap}
+.brand img{display:block;width:32px;height:32px;flex:none;border-radius:6px}
+.tabs{display:flex;gap:6px}
+.tab{display:inline-flex;align-items:center;justify-content:center;padding:8px 18px;font-size:14px;font-weight:500;text-decoration:none;border:1px solid transparent}
+.tab.on{background:var(--sel);color:var(--ink);box-shadow:inset 0 -2px 0 var(--accent);font-weight:600}
+.tab:hover,.btn:hover{background:var(--raise);border-color:var(--line2)}
+.grow{flex:1}
+.theme-control{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--soft)}
+.theme-control select{min-height:44px;max-width:120px;padding:8px;border:1px solid var(--line2);background:var(--bg);color:var(--ink);border-radius:8px}
+.toast{font-size:14px;color:var(--ok)}
+.toast:empty{display:none}
+.toast.err{color:var(--crit)}
+.ok{color:var(--ok)}
+.warn{color:var(--warn)}
+.crit{color:var(--crit)}
+.dim,.soft,.muted{color:var(--muted)}
+.chip{display:inline-flex;align-items:center;padding:3px 9px;border:1px solid var(--line);border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap;background:var(--bg)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 14px;border:1px solid var(--line2);background:var(--raise);font-size:14px;line-height:1.5;font-weight:500;cursor:pointer;text-decoration:none}
+.btn.primary{background:var(--accent);color:var(--onaccent);border-color:var(--accent);font-weight:650}
+.btn.primary:hover{background:var(--hover);border-color:var(--hover)}
+h1{font-size:30px;line-height:1.2;font-weight:650;letter-spacing:-.8px;margin:0}
+.title{font-size:24px;line-height:1.3;font-weight:600;letter-spacing:-.4px;overflow-wrap:anywhere}
+h2,.h{font-size:15px;line-height:1.4;font-weight:600;color:var(--ink);margin:8px 0 0;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.note,.sub,.caveat,.empty{font-size:14px;color:var(--soft)}
+.note{margin:0;max-width:80ch}
+.eyebrow{font-size:12px;font-weight:600;color:var(--accent);letter-spacing:.04em}
+.caveat{padding:10px 14px;border-left:2px solid var(--warn);border-radius:0 6px 6px 0;background:var(--bg)}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:12px;font-weight:600;color:var(--soft);padding:12px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+td{font-size:14px;padding:16px;vertical-align:top;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+tr:hover td{background:var(--raise)}
+dl{display:grid;grid-template-columns:8.5em minmax(0,1fr);gap:10px 16px;font-size:14px;margin:0}
+dt{color:var(--dim)}
+dd{margin:0;overflow-wrap:anywhere}
+.disclosure{border:1px solid var(--line);border-radius:10px;background:var(--panel);overflow:hidden}
+.disclosure summary{padding:14px 18px;cursor:pointer;color:var(--ink);font-size:14px;font-weight:600}
+.disclosure summary:hover{background:var(--raise)}
+.disclosure[open] summary{border-bottom:1px solid var(--line)}
+.disclosure-body{display:grid;gap:12px;padding:16px 18px}
+@media(max-width:760px){.top{padding:12px 16px;gap:12px;flex-wrap:wrap}.brand{font-size:20px}.top .tabs{margin-left:auto}.tab{padding:8px 14px;min-height:44px}.grow{display:none}.btn,input[type=text],input[type=number],select{min-height:44px}h1{font-size:26px}td,th{padding:12px}dl{grid-template-columns:minmax(0,1fr);gap:4px}dd{margin-bottom:10px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;scroll-behavior:auto!important}}
+
+.split{display:grid;grid-template-columns:220px minmax(0,1fr);max-width:1400px;margin:0 auto;padding:32px;gap:32px;align-items:start}
+.side{display:flex;flex-direction:column;gap:6px;position:sticky;top:24px;padding:8px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.side a{color:var(--muted);padding:12px 14px;font-size:14px;min-height:44px;text-decoration:none;border-radius:7px}
+.side a:hover{color:var(--ink);background:var(--raise)}
+.side a.on{color:var(--ink);background:var(--sel);box-shadow:inset 3px 0 0 var(--accent);font-weight:600}
+.pane{display:grid;align-content:start;min-width:0;gap:20px;padding:28px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.pane:focus{outline:none}
+.pane:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.row{display:flex;align-items:center;flex-wrap:wrap;gap:12px}
+.pane .h{margin-top:14px}
+.fail{padding:14px 16px;border:1px solid var(--crit);border-radius:8px;background:var(--critbg);color:var(--crit);font-size:14px}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+.check{display:flex;align-items:baseline;gap:12px;color:var(--soft);padding:12px;background:var(--bg);border-radius:8px;font-size:14px}
+.check input{margin:0;width:18px;height:18px;flex-shrink:0}
+input[type=text],input[type=number],select{max-width:100%;padding:8px 12px;border:1px solid var(--line2);background:var(--bg);color:var(--ink)}
+input[type=number]{width:7em}
+form{padding:16px;background:var(--bg);border:1px solid var(--line);border-radius:10px}
+code.val{padding:2px 6px;border:1px solid var(--line);border-radius:4px;background:var(--raise);white-space:normal}
+.legacy{display:inline-block;margin-left:6px;padding:0 5px;border:1px solid var(--warn);border-radius:4px;color:var(--warn);font-size:12px}
+.logbox{max-height:340px;overflow:auto;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg);font:13px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
+.lvl-ERROR{color:var(--crit)}
+.lvl-WARN,.lvl-WARNING{color:var(--warn)}
+.lvl-INFO{color:var(--dim)}
+#version{font-size:12px}
+@media(max-width:760px){.split{grid-template-columns:minmax(0,1fr);padding:16px;gap:16px}.side{position:static;flex-direction:row;flex-wrap:wrap;padding:6px;gap:4px}.side a{padding:10px 12px;flex-grow:1;text-align:center}.pane{padding:20px 16px}.row input[type=text],.row select{width:100%}.row .grow{display:block}.tablewrap table{min-width:500px}.top .toast{width:100%}}
+</style>
+</head>
+<body>
+<header class="top">
+  <span class="brand"><img src="/brand/icon.png" alt="" width="40" height="40">WaveRaider</span>
+  <nav class="tabs" aria-label="Main">
+    <a class="tab" href="/monitor">Monitor</a>
+    <a class="tab on" href="/settings" aria-current="page">Settings</a>
+  </nav>
+  <span class="grow"></span>
+  <label class="theme-control">Theme <select id="themeSelect"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
+  <span id="toast" class="toast" role="status"></span>
+  <span id="version" class="dim"></span>
+</header>
+<div class="split">
+  <nav id="side" class="side" aria-label="Settings sections"></nav>
+  <main id="pane" class="pane" tabindex="-1"></main>
+</div>
+<script>
+/* ---- pure renderers ---- */
+const SECTIONS=[["receivers","Receivers"],["monitoring","Monitoring"],["watchlist","Watchlist"],["data","Data & export"],["about","About & activity"]];
+function esc(t){return (t==null?"":String(t)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function sectionFrom(hash){const id=String(hash||"").replace(/^#/,"");return SECTIONS.some(s=>s[0]===id)?id:"receivers";}
+function renderSide(active){
+  return SECTIONS.map(s=>'<a href="#'+s[0]+'"'+(s[0]===active?' class="on" aria-current="page"':'')+'>'+esc(s[1])+'</a>').join("");
+}
+function stateClass(state){return ({ready:"ok",unavailable:"crit",not_set_up:"warn",not_ready:"warn"})[state]||"dim";}
+function uptime(sec){
+  if(sec==null||!isFinite(sec))return "—";
+  const m=Math.floor(sec/60), h=Math.floor(m/60);
+  return h?h+" h "+(m%60)+" min":m?m+" min "+(sec%60)+" s":sec+" s";
+}
+function plural(n,one,many){return n+" "+(n===1?one:many);}
+function renderReceivers(r){
+  r=r||{};
+  const rows=(r.receivers||[]).map(x=>'<tr><td>'+esc(x.name)+(x.usb_id?'<div class="dim">'+esc(x.usb_id)+'</div>':'')+'</td>'+
+    '<td>'+esc(x.role||"")+'</td><td class="'+stateClass(x.state)+'">'+esc(x.state_label)+'</td>'+
+    '<td class="soft">'+esc(x.note||"")+
+      (x.role==="Inspect RF"&&x.usb_id?'<div><a class="btn" href="/monitor#inspect='+encodeURIComponent(x.usb_id)+'">Inspect RF…</a></div>':'')+'</td></tr>').join("");
+  let h='<div class="row"><span class="title">Receivers</span><span class="grow"></span>'+
+    '<button class="btn" type="button" data-act="rescan">Rescan hardware</button></div>'+
+    '<p class="note">Remote ID receive paths and attached radios. Live Remote ID capture isn’t supported yet, so no Remote ID path reads ready.</p>';
+  if(r.error)h+='<div class="fail">'+esc(r.error)+'</div>';
+  h+='<div class="tablewrap"><table><thead><tr><th scope="col">Receiver</th><th scope="col">Used for</th><th scope="col">Status</th>'+
+    '<th scope="col">What to know</th></tr></thead><tbody>'+(rows||'<tr><td colspan="4" class="muted">No receiver information.</td></tr>')+
+    '</tbody></table></div>';
+  const other=r.other_hardware||[];
+  h+='<div class="h">Other capture hardware</div>';
+  if(r.hardware_error)h+='<div class="fail">'+esc(r.hardware_error)+'</div>';
+  if(other.length)h+='<div class="tablewrap"><table><thead><tr><th scope="col">Device</th><th scope="col">Kind</th><th scope="col">What to know</th></tr></thead><tbody>'+
+    other.map(x=>'<tr><td>'+esc(x.model)+'<div class="dim">'+esc(x.id)+'</div></td><td>'+esc(x.kind_label)+'</td>'+
+      '<td class="soft">'+esc(x.caveat)+(x.note?'<div class="dim">'+esc(x.note)+'</div>':'')+'</td></tr>').join("")+'</tbody></table></div>';
+  else if(!r.hardware_error)h+='<p class="note">No other Wi-Fi, Bluetooth or SDR capture hardware recognized.</p>';
+  h+='<details class="disclosure"><summary>'+((r.radio_control||{}).error?'Radio control check failed · view details':'Radio control &amp; technical details')+'</summary><div class="disclosure-body">'+renderRadioControl(r.radio_control)+'</div></details>';
+  return h+'<p class="note">A USB ID shows a device is plugged in, not that its driver, monitor mode or permissions are ready.</p>';
+}
+function renderRadioControl(c){
+  if(!c)return '<p class="note">Radio control status wasn’t included in this check.</p>';
+  if(c.error)return '<div class="fail">'+esc(c.error)+'</div>';
+  const mhz=hz=>(Number(hz)/1e6).toFixed(3);
+  const state=c.held?'<span class="warn">Held</span> by Inspect RF opening <code>'+esc(c.owner)+'</code> for '+esc(c.held_sec)+
+      ' s, tuned to '+esc(mhz(c.center_hz))+' MHz ± '+esc(mhz(c.span_hz/2))+' MHz.':
+    '<span class="ok">Free.</span> No view is holding a radio.';
+  return '<p class="note">'+state+' This is one lease for whichever radio Inspect RF drives, not a per-receiver status. It lapses after '+
+    esc(c.lease_timeout_s)+' s without a sweep.'+(c.checked_at?' Checked '+esc(new Date(c.checked_at*1000).toLocaleTimeString())+'; Rescan hardware refreshes it.':'')+'</p>';
+}
+function renderMonitoring(m){
+  m=m||{};
+  const listen=(m.listen||[]).map(o=>'<label class="check"><input type="checkbox" disabled'+(o.enabled?' checked':'')+'>'+
+    '<span>'+esc(o.label)+'<div class="dim">'+esc(o.reason||"")+'</div></span></label>').join("");
+  return '<div class="title">Monitoring</div>'+
+    '<p class="note">What a monitoring session listens for, and when an observation counts as stale.</p>'+
+    (m.error?'<div class="fail">'+esc(m.error)+'</div>':'')+
+    '<details class="disclosure"><summary>Receive paths · not available yet</summary><div class="disclosure-body">'+listen+
+    '<p class="note">These can be turned on once a live receive path is proven. Until then, Monitor replays a bundled sample.</p></div></details>'+
+    '<div class="h">Stale observations</div>'+
+    '<form class="row" data-form="stale"><label for="staleInput">Mark an observation stale after</label>'+
+      '<input id="staleInput" name="stale" type="number" min="'+esc(m.min_s)+'" max="'+esc(m.max_s)+'" step="1" value="'+esc(m.stale_after_s)+'" required>'+
+      '<span>s</span><button class="btn primary" type="submit">Save</button></form>'+
+    '<p class="note"><span class="warn">Provisional.</span> Default '+esc(m.default_s)+' s, allowed '+esc(m.min_s)+'–'+esc(m.max_s)+
+      ' s. It hasn’t been tuned against live reception. Stale rows dim on Monitor and are never removed.</p>'+
+    '<div class="h">Older observations</div>'+
+    '<form class="row" data-form="lapsed"><label for="lapsedInput">List an observation under Older observations after</label>'+
+      '<input id="lapsedInput" name="lapsed" type="number" min="'+esc(m.stale_after_s)+'" max="'+esc(m.lapsed_max_s)+'" step="1" value="'+esc(m.lapsed_after_s)+'" required>'+
+      '<span>s</span><button class="btn primary" type="submit">Save</button></form>'+
+    '<p class="note"><span class="warn">Provisional.</span> Default '+esc(m.lapsed_default_s)+' s. '+esc(m.lapsed_note)+'</p>'+
+    '<p class="note">'+esc(m.lifecycle_note)+'</p>'+
+    '<p class="note">Saved in <code>'+esc(m.stored_in)+'</code>.</p>';
+}
+function renderWatchlist(w){
+  w=w||{};
+  const types=w.types||[];
+  const rows=(w.entries||[]).map(e=>'<tr><td>'+esc(e.type_label)+
+      (e.legacy?'<span class="legacy" title="Kept from v0.5.1. It matches only identifiers Remote ID observations carry, and can’t be added here.">legacy type</span>':'')+'</td>'+
+    '<td><code class="val">'+esc(e.value)+'</code></td><td class="soft">'+esc(e.note||"")+'</td>'+
+    '<td><button class="btn" type="button" data-act="remove" data-type="'+esc(e.type)+'" data-value="'+esc(e.value)+'">Remove</button></td></tr>').join("");
+  return '<div class="title">Watchlist</div>'+
+    '<p class="note">Identifiers to flag on Monitor. A match means a broadcast identifier matched. It isn’t a threat rating, and broadcast values aren’t authenticated.</p>'+
+    '<form class="row" data-form="watch">'+
+      '<select name="type" aria-label="Identifier type">'+types.map(t=>'<option value="'+esc(t.type)+'">'+esc(t.label)+'</option>').join("")+'</select>'+
+      '<input name="value" type="text" placeholder="Identifier" aria-label="Identifier" required>'+
+      '<input name="note" type="text" placeholder="Note (optional)" aria-label="Note">'+
+      '<button class="btn primary" type="submit">Add</button></form>'+
+    '<p class="note">'+types.map(t=>esc(t.label)+': '+esc(t.hint)).join(" · ")+'.</p>'+
+    '<div class="tablewrap"><table><thead><tr><th scope="col">Type</th><th scope="col">Value</th><th scope="col">Note</th>'+
+      '<th scope="col"><span class="dim">Action</span></th></tr></thead><tbody>'+
+      (rows||'<tr><td colspan="4" class="muted">The watchlist is empty. Add an identifier here, or use “Add to watchlist” on a Monitor observation.</td></tr>')+
+    '</tbody></table></div>'+
+    '<p class="note">Saved in <code>'+esc(w.stored_in)+'</code>.</p>';
+}
+function renderData(d){
+  d=d||{};
+  const sample=d.source==="sample", n=d.observations||0, st=d.storage||{};
+  const chip=d.state==="running"?'<span class="chip '+(sample?'warn">Sample data':'dim">Running')+'</span>':
+    d.state==="stopped"?'<span class="chip dim">'+(sample?"Stopped · sample":"Stopped")+'</span>':'<span class="chip dim">Idle</span>';
+  const exports=(d.formats||[]).map(f=>'<div class="row">'+
+    (n?'<a class="btn" href="'+esc(f.href)+'" download>Export '+esc(f.label)+'</a>':'<button class="btn" type="button" disabled>Export '+esc(f.label)+'</button>')+
+    '<span class="dim">'+esc(f.detail)+'</span></div>').join("");
+  return '<div class="title">Data &amp; export</div>'+
+    '<div class="h">Current session</div>'+
+    '<div class="row">'+chip+'<span>'+plural(n,"observation","observations")+' · '+plural(d.diagnostics||0,"diagnostic issue","diagnostic issues")+'</span></div>'+
+    (d.sample&&d.sample.description?'<p class="note">'+esc(d.sample.description)+'</p>':'')+
+    (d.note?'<div class="caveat">'+esc(d.note)+'</div>':'')+exports+
+    (n?'<p class="note">Exports carry the source label'+(sample?' and this sample note':'')+'. To export one observation, use “Export evidence” on Monitor.</p>':
+      '<p class="note">Nothing to export yet. Start a sample session on <a href="/monitor">Monitor</a>.</p>')+
+    renderHistory(d.history,d.history_error)+
+    '<div class="h">Stored on this computer</div><dl>'+
+      '<dt>Watchlist</dt><dd><code>'+esc(st.watchlist)+'</code></dd>'+
+      '<dt>Monitoring profile</dt><dd><code>'+esc(st.monitoring_profile)+'</code></dd>'+
+      '<dt>Session history</dt><dd><code>'+esc(st.session_history)+'</code></dd>'+
+      '<dt>Session data</dt><dd>'+esc(st.session)+'</dd></dl>';
+}
+function renderHistory(h,problem){
+  h=h||{};
+  const rows=(h.sessions||[]).map(s=>{
+    const when=s.started_at?new Date(s.started_at*1000).toLocaleString():"unknown time";
+    const secs=(s.started_at&&s.stopped_at)?Math.max(0,Math.round(s.stopped_at-s.started_at)):null;
+    const why=s.stop_reason==="error"?"ended by an error":s.stop_reason==="replaced"?"replaced by a new session":s.stop_reason==="stopped"?"stopped":(s.stop_reason||"");
+    return '<tr><td>'+(s.source==="sample"?'<span class="chip dim">Sample</span>':'<span class="chip dim">'+esc(s.source_label||s.source||"Unknown")+'</span>')+'</td>'+
+      '<td>'+esc(when)+(secs==null?'':' · '+esc(secs)+' s')+'<div class="dim">'+esc(why)+(s.error?' · '+esc(s.error):'')+'</div></td>'+
+      '<td>'+plural(s.observations||0,"observation","observations")+' · '+plural(s.diagnostics||0,"diagnostic issue","diagnostic issues")+'</td>'+
+      '<td>'+(s.exports||[]).map(x=>'<a class="btn" href="'+esc(x.href)+'" download>'+esc(x.label)+'</a>').join(" ")+' '+
+      '<button class="btn" type="button" data-act="delete-session" data-id="'+esc(s.session_id)+'">Delete</button></td></tr>';
+  }).join("");
+  const bad=(h.unreadable||[]).length;
+  return '<div class="h">Session history</div>'+
+    (problem?'<div class="caveat">'+esc(problem)+'</div>':'')+
+    '<p class="note">When a session stops, WaveRaider attempts to save it on this computer with where its data came from. Up to '+esc(h.keep||30)+
+    ' readable records with the latest recorded start times are kept; a clock change can affect which. Observations in a saved session are as they stood when it stopped.</p>'+
+    (rows?'<div class="tablewrap"><table><tbody>'+rows+'</tbody></table></div>'+
+      '<div class="row"><button class="btn" type="button" data-act="clear-sessions">Delete all saved sessions</button></div>':
+      '<p class="note">No saved sessions yet.</p>')+
+    (bad?'<p class="note">'+plural(bad,"saved session file","saved session files")+' couldn’t be read, or '+(bad===1?'isn’t':'aren’t')+' a sample-session record this version can use: '+esc((h.unreadable||[]).join(", "))+'.</p>':'');
+}
+function renderLogs(lines){
+  return '<div class="logbox" id="logbox">'+((lines||[]).map(l=>'<div><span class="dim">'+esc(l.t)+'</span> '+
+    '<span class="lvl-'+esc(l.level)+'">'+esc(l.level)+'</span> '+esc(l.msg)+'</div>').join("")||'<div class="muted">No activity yet.</div>')+'</div>';
+}
+function renderAbout(a,lines){
+  a=a||{};
+  const s=a.session||{}, b=a.backends||{}, f=(k,v)=>'<dt>'+k+'</dt><dd>'+v+'</dd>';
+  const session=s.state==="running"?(s.source_label?esc(s.source_label)+" session running":"Session running"):
+    s.state==="stopped"?"Session stopped":"Idle";
+  return '<div class="title">About &amp; activity</div><dl>'+
+    f("Version",esc(a.version))+f("Uptime",esc(uptime(a.uptime_sec)))+f("Monitor",session)+
+    f("Live Remote ID",'<span class="warn">Not supported yet.</span> <span class="dim">'+esc(a.live_note)+'</span>')+
+    f("Watchlist",esc(plural(a.watchlist_entries||0,"entry","entries")))+
+    f("Analysis backends","rules "+esc(b.rules)+" · Ollama "+esc(b.ollama)+' <span class="dim">(for recorded-capture analysis with wr --explain)</span>')+
+    f("Python",esc(a.python))+f("Platform",esc(a.platform))+'</dl>'+
+    '<div class="h">Activity</div>'+renderLogs(lines);
+}
+/* ---- end pure renderers ---- */
+
+const $=id=>document.getElementById(id);
+let current=null, logTimer=null, toastTimer=null;
+async function getJSON(url,opts){
+  let r;
+  try{r=await fetch(url,opts);}catch(e){throw new Error("The WaveRaider server didn’t respond.");}
+  let body={}; try{body=await r.json();}catch(e){}
+  if(!r.ok)throw new Error(body.error||"Request failed ("+r.status+").");
+  return body;
+}
+const postJSON=(url,body)=>getJSON(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+function toast(msg,isError){const t=$("toast");t.textContent=msg;t.className="toast"+(isError?" err":"");
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>{t.textContent="";},6000);}
+
+async function show(section,opts){
+  opts=opts||{};
+  current=section; clearInterval(logTimer); logTimer=null;
+  $("side").innerHTML=renderSide(section);
+  const pane=$("pane");
+  if(!opts.quiet)pane.innerHTML='<div class="muted">Loading…</div>';
+  try{
+    let html;
+    if(section==="receivers")html=renderReceivers(await getJSON("/api/settings/receivers"+(opts.refresh?"?refresh=1":"")));
+    else if(section==="monitoring")html=renderMonitoring(await getJSON("/api/settings/monitoring"));
+    else if(section==="watchlist")html=renderWatchlist(await getJSON("/api/settings/watchlist"));
+    else if(section==="data")html=renderData(await getJSON("/api/settings/data"));
+    else{const [a,l]=await Promise.all([getJSON("/api/settings/about"),getJSON("/api/logs")]);html=renderAbout(a,l.lines);}
+    if(current!==section)return false;
+    pane.innerHTML=html;
+    if(section==="about"){const box=$("logbox");box.scrollTop=box.scrollHeight;logTimer=setInterval(refreshLogs,3000);}
+    return true;
+  }catch(e){
+    if(current===section)pane.innerHTML='<div class="fail"><b>Can’t load this page.</b> '+esc(e.message)+'</div>';
+    return false;
+  }
+}
+async function refreshLogs(){
+  if(current!=="about")return;
+  try{
+    const l=await getJSON("/api/logs"), box=$("logbox"); if(!box||current!=="about")return;
+    const atEnd=box.scrollHeight-box.scrollTop-box.clientHeight<20;
+    box.outerHTML=renderLogs(l.lines);
+    if(atEnd){const nb=$("logbox");nb.scrollTop=nb.scrollHeight;}
+  }catch(e){}
+}
+
+window.addEventListener("hashchange",()=>show(sectionFrom(location.hash)));
+$("side").addEventListener("click",()=>setTimeout(()=>$("pane").focus({preventScroll:true}),0));
+$("pane").addEventListener("click",async e=>{
+  const b=e.target.closest("button[data-act]"); if(!b)return;
+  b.disabled=true;
+  if(b.dataset.act==="rescan"){
+    b.textContent="Rescanning…";
+    if(await show("receivers",{refresh:true,quiet:true}))toast("Hardware rescanned.");
+    else toast("Rescan failed.",true);
+    return;
+  }
+  if(b.dataset.act==="delete-session"||b.dataset.act==="clear-sessions"){
+    try{
+      if(b.dataset.act==="delete-session"){
+        const r=await postJSON("/api/sessions/delete",{session_id:b.dataset.id});
+        toast(r.deleted?"Saved session deleted.":"That session was already deleted.",false);
+      }else{
+        if(!b.dataset.armed){b.dataset.armed="1";b.textContent="Click again to delete all saved sessions";b.disabled=false;return;}
+        const r=await postJSON("/api/sessions/clear",{});
+        toast("Deleted "+plural(r.removed||0,"saved session","saved sessions")+".",false);
+      }
+      await show("data",{quiet:true});
+    }catch(err){toast(err.message,true);b.disabled=false;}
+    return;
+  }
+  try{
+    const r=await postJSON("/api/settings/watchlist/remove",{type:b.dataset.type,value:b.dataset.value});
+    toast(r.removed?"Removed "+JSON.stringify(b.dataset.value)+".":"That entry was already removed.",false);
+    await show("watchlist",{quiet:true});
+  }catch(err){toast(err.message,true);b.disabled=false;}
+});
+$("pane").addEventListener("submit",async e=>{
+  const form=e.target.closest("form[data-form]"); if(!form)return;
+  e.preventDefault();
+  const btn=form.querySelector('button[type="submit"]'), field=name=>form.elements.namedItem(name).value;
+  btn.disabled=true;
+  try{
+    if(form.dataset.form==="stale"){
+      const r=await postJSON("/api/settings/monitoring",{stale_after_s:field("stale")===""?null:Number(field("stale"))});
+      toast("Observations now go stale after "+r.stale_after_s+" s.");
+      await show("monitoring",{quiet:true});
+    }else if(form.dataset.form==="lapsed"){
+      const r=await postJSON("/api/settings/monitoring",{lapsed_after_s:field("lapsed")===""?null:Number(field("lapsed"))});
+      toast("Observations are now listed as older after "+r.lapsed_after_s+" s.");
+      await show("monitoring",{quiet:true});
+    }else{
+      const r=await postJSON("/api/settings/watchlist/add",{type:field("type"),value:field("value"),note:field("note")});
+      toast(r.added?"Added "+JSON.stringify(r.entry.value)+" to the watchlist.":JSON.stringify(r.entry.value)+" is already on the watchlist.");
+      await show("watchlist",{quiet:true});
+    }
+  }catch(err){toast(err.message,true);btn.disabled=false;}
+});
+
+getJSON("/api/settings/about").then(a=>{$("version").textContent="v"+a.version;}).catch(()=>{});
+show(sectionFrom(location.hash));
+</script>
+</body>
+</html>

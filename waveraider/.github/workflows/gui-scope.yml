@@ -1,0 +1,32 @@
+# Keeps the gui-refresh branch to the GUI. On every push to gui-refresh, and on a pull request
+# from gui-refresh into master, lists the files changed against master and fails if any is
+# outside the GUI file list in tools/check_gui_scope.sh. Actions are pinned to full commit SHAs.
+name: GUI scope check
+
+on:
+  push:
+    branches: [gui-refresh]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  scope:
+    name: Only GUI files changed
+    if: github.event_name == 'push' || github.head_ref == 'gui-refresh'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: List files changed against master
+        # fetch-depth 0 above already brought every branch, so origin/master is present
+        run: git diff --name-only "origin/master...HEAD" | tee changed-files.txt
+
+      - name: Check that every changed file is a GUI file
+        run: sh tools/check_gui_scope.sh changed-files.txt

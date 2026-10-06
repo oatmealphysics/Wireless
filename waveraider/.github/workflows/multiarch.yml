@@ -1,0 +1,130 @@
+# Build the Docker image for both CPU types Wave Raider supports, linux/amd64 (Intel and AMD
+# computers such as most NUCs) and linux/arm64 (ARM computers such as Apple Silicon Macs or a
+# Raspberry Pi 5), and smoke-test each one on its native CPU. Tested runtime bundles are attached to the workflow run.
+# Actions are pinned to full commit SHAs.
+name: Multi-arch build
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and smoke-test ${{ matrix.platform }}
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux/amd64, linux/arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          tags: waveraider:ci
+
+      - name: Check the CPU type and the command line
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          expected=$([ "$PLATFORM" = linux/amd64 ] && echo amd64 || echo arm64)
+          test "$(docker image inspect waveraider:ci --format '{{.Architecture}}')" = "$expected"
+          docker run --rm --platform "$PLATFORM" waveraider:ci wr --help | grep -q '^usage: wr '
+          docker run --rm --platform "$PLATFORM" waveraider:ci \
+            wr /usr/local/lib/python3.11/site-packages/waveraider/samples/uas.pcap | grep -q 'DRONE-SN-001A'
+
+      - name: Exercise the installed runtime without internet or hardware
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          docker run --rm --network none --platform "$PLATFORM" -w /tmp \
+            -v "$PWD/tools/smoke_install.py:/tmp/smoke_install.py:ro" \
+            waveraider:ci python /tmp/smoke_install.py --native-bladerf
+
+      - name: Serve Monitor, then stop promptly
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          docker run -d --name wr --platform "$PLATFORM" -p 127.0.0.1:8899:8899 waveraider:ci
+          for i in $(seq 120); do
+            curl -fsS -o /dev/null http://127.0.0.1:8899/ && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8899/ | grep -q 'WaveRaider Monitor'
+          curl -fsS http://127.0.0.1:8899/api/settings/about | grep -q '"version"'
+          start=$(date +%s)
+          docker stop --time 20 wr
+          test $(( $(date +%s) - start )) -lt 10
+          docker logs wr 2>&1 | grep -q 'Wave Raider stopped.'
+
+      - name: Build and test the offline download
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          arch="${PLATFORM#linux/}"
+          python3 tools/build_bundle.py --image waveraider:ci --output "dist/waveraider-$arch" --revision "$GITHUB_SHA"
+          docker rm wr
+          cd "dist/waveraider-$arch"
+          docker compose config --quiet
+          # Remove the image so the launcher must load the bundled archive.
+          docker image rm waveraider:ci "$(docker compose config --images)"
+          sh start.sh > startup.log 2>&1 &
+          launcher=$!
+          trap 'docker compose down; cat startup.log' EXIT
+          for i in $(seq 120); do
+            curl -fsS -o /dev/null http://127.0.0.1:8899/ && break
+            kill -0 "$launcher" || { cat startup.log; exit 1; }
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8899/ | grep -q 'WaveRaider Monitor'
+          # Verify volume data survives a container recreation.
+          docker compose exec -T waveraider sh -c 'echo persistent > /root/.waveraider/install-check'
+          docker compose down
+          docker compose up -d --pull never
+          docker compose exec -T waveraider cat /root/.waveraider/install-check | grep -q persistent
+          docker compose exec -T waveraider rm /root/.waveraider/install-check
+          docker compose down
+          wait "$launcher"
+          if [ "$arch" = amd64 ]; then
+            # Exercise the PowerShell launcher too, against the same Linux engine.
+            pwsh -NoProfile -File start.ps1 > powershell.log 2>&1 &
+            launcher=$!
+            trap 'docker compose down; cat powershell.log' EXIT
+            for i in $(seq 120); do
+              curl -fsS -o /dev/null http://127.0.0.1:8899/ && break
+              kill -0 "$launcher" || { cat powershell.log; exit 1; }
+              sleep 1
+            done
+            curl -fsS http://127.0.0.1:8899/api/settings/about | grep -q '"version"'
+            docker compose down
+            wait "$launcher"
+            rm powershell.log
+          fi
+          rm startup.log
+          trap - EXIT
+          echo "BUNDLE_ARCH=$arch" >> "$GITHUB_ENV"
+
+      - name: Attach the tested offline bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: waveraider-${{ env.BUNDLE_ARCH }}
+          path: dist/waveraider-${{ env.BUNDLE_ARCH }}/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 1
