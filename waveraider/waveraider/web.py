@@ -140,7 +140,9 @@ class Handler(BaseHTTPRequestHandler):
                 bins = int(q.get("bins", ["256"])[0])
                 owner = q.get("owner", [""])[0] or None
                 device = q.get("device", [""])[0] or None
-                return self._send(200, json.dumps(spectrum.sweep(center, span, bins, owner, device)))
+                elrs_hint = q.get("elrs_hint", ["0"])[0] in ("1", "true", "True", "yes")
+                return self._send(200, json.dumps(
+                    spectrum.sweep(center, span, bins, owner, device, elrs_hint=elrs_hint)))
             except Exception as e:
                 return self._send(400, json.dumps({"error": str(e)}))
         if u.path == "/api/sdr":

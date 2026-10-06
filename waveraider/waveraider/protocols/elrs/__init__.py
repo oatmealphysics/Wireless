@@ -119,6 +119,22 @@ def _try_crc(raw: bytes, uid: bytes | None, init: int):
     return None
 
 
+def elrs_present(iq, srate: float, sf: int = 7) -> float:
+    """Cheap PHY-presence hint for the power-sweep view: 0..1 likelihood that an
+    IQ window at a strong carrier contains an ELRS/LoRa signal. Uses the
+    capture-validated chirp detector (peak + symbol-periodic gates). This is a
+    *reference hint*, not a detection — a high score means "ELRS-family activity
+    likely," and the sweep tags it as such rather than claiming an identity."""
+    if not _CORE:
+        return 0.0
+    try:
+        from elrs_sdr import positivedet
+        score, _ = positivedet.lora_chirp(iq, srate, sf=sf)
+        return float(score)
+    except Exception:
+        return 0.0
+
+
 # ---------------------------------------------------------------------------
 # Classifier: decoded frames -> Entities (keyed by link UID)
 # ---------------------------------------------------------------------------
@@ -137,9 +153,37 @@ class ElrsClassifier:
         self._now = time.time
 
     @staticmethod
-    def _packet_and_ctx(pkt, freq_hz=None):
+    def _as_packet(p):
+        """Normalize a decoded frame to something the classifier can read with
+        getattr(). A live frame is a real ota.ElrsPacket; a recorded dump is a
+        to_dict() dict. Wrap a dict in a tiny shim exposing the same attributes so
+        the rest of update() is uniform."""
+        if p is None or not isinstance(p, dict):
+            return p
+        class _P:
+            pass
+        o = _P()
+        o.crc_valid = bool(p.get("crc_valid", False))
+        o.raw = bytes.fromhex(p.get("raw_hex", "")) if p.get("raw_hex") else b""
+        o.uid = p.get("uid")
+        o.is_armed = bool(p.get("is_armed", False))
+        o.channels = p.get("channels", [])
+        # sync: to_dict() nests it as a dict with fhss_index / rf_rate
+        sync = p.get("sync")
+        if isinstance(sync, dict):
+            class _S:
+                def __init__(self, d):
+                    for k, v in d.items():
+                        setattr(self, k, v)
+            o.sync = _S(sync)
+        else:
+            o.sync = sync
+        return o
+
+    @classmethod
+    def _packet_and_ctx(cls, pkt, freq_hz=None):
         if isinstance(pkt, dict):
-            p = pkt.get("packet")
+            p = cls._as_packet(pkt.get("packet"))
             sample = pkt.get("sample")
             inv = pkt.get("invert_iq")
             freq = freq_hz or pkt.get("freq_hz")
@@ -242,7 +286,10 @@ class ElrsClassifier:
 class ElrsPlugin(ProtocolPlugin):
     name = "elrs"
     primary_kinds = ("elrs_link",)
-    input_kind = "text"          # fed decoded frames (dicts), not raw pcap
+    # "pcap" => engine uses source.frames(). An ELRS source yields decoded frame
+    # dicts (live SDR or a recorded capture) — not raw pcap, but frames() is the
+    # right seam: the classifier's update() takes each decoded frame.
+    input_kind = "pcap"
     implemented = _CORE
     requires = _CORE_ERR or ""
     category = "UAS"

@@ -81,7 +81,8 @@ class LiveSource(Source):
 
 def get_source(spec: str) -> Source:
     """Resolve a source from a spec string:
-    'file:<path>' | 'replay:<path>[@rate]' | 'live:<iface>'.
+    'file:<path>' | 'replay:<path>[@rate]' | 'live:<iface>'
+    | 'sdr:[freq@rate]' (live ELRS from the SDR) | 'elrs:<path>' (recorded ELRS).
     A bare path is treated as file:<path>."""
     if ":" not in spec:
         return FileSource(spec)
@@ -94,5 +95,33 @@ def get_source(spec: str) -> Source:
         return ReplaySource(path, rate_hz=float(rate) if rate else 40.0)
     if kind == "live":
         return LiveSource(rest)
+    # ELRS sources (SDR decode) — resolved lazily so the core sources module has
+    # no hard dependency on the ELRS plugin.
+    if kind in ("sdr", "elrs"):
+        from .protocols.elrs import sources as _elrs_src
+        if kind == "sdr":
+            # 'sdr:' (auto) | 'sdr:<freq_hz>' | 'sdr:<freq_hz>@<rate>'
+            freq = rate = None
+            if rest:
+                rest2, _, r = rest.partition("@")
+                rate = r or None
+                freq = _to_hz(rest2)
+            return _elrs_src.ElrsSdrSource(freq_hz=freq, rate=rate or _elrs_src.DEFAULT_RATE)
+        return _elrs_src.ElrsFileSource(rest)
     # Not a known scheme — treat the whole thing as a path.
     return FileSource(spec)
+
+
+def _to_hz(s: str) -> float | None:
+    """'2440' | '2440M' | '2440000000' -> Hz. None if empty/unparseable."""
+    s = s.strip()
+    if not s:
+        return None
+    try:
+        if s.endswith(("M", "m")):
+            return float(s[:-1]) * 1e6
+        v = float(s)
+        # a bare number < 1000 is MHz-ish (e.g. '2440'); otherwise Hz
+        return v * 1e6 if v < 1000 else v
+    except ValueError:
+        return None
