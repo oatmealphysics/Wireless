@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import threading
 
 _RATE = 3_840_000      # sweep sample rate per chunk (Hz) — matches bladerf_sweep
@@ -46,14 +47,45 @@ def _soapy_ok() -> bool:
     return shutil.which("soapy_power") is not None
 
 
+def _ensure_elrs_sdr_on_path() -> None:
+    """elrs_sdr is a sibling of waveraider in the same repo. When WaveRaider is
+    run from the waveraider/ subtree (e.g. `python3 -m waveraider.cli` there),
+    the repo root isn't on sys.path, so `import elrs_sdr` fails even though the
+    code is right next door. Add it, computed from this package's location, so
+    the UHD transport is always reachable regardless of the working dir."""
+    import os
+    from pathlib import Path
+    # .../repo/waveraider/waveraider/uhd_backend.py -> repo root is up 2 levels
+    repo_root = Path(__file__).resolve().parents[2]
+    if repo_root.is_dir() and str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+
 def _native_available() -> bool:
-    """True if the project's UHD transport can open a device. Importing
-    elrs_sdr.radio is cheap (it defers the uhd import until device open)."""
+    """True if the project's UHD transport (elrs_sdr.radio) can open a device.
+    Importing elrs_sdr.radio is cheap (it defers the real uhd import). Distinguishes
+    'elrs_sdr not importable' from 'uhd not installed' so the readiness note is
+    accurate instead of silently claiming 'not installed'."""
     try:
+        _ensure_elrs_sdr_on_path()
         from elrs_sdr import radio  # noqa: F401
         return radio.uhd is not None
     except Exception:
         return False
+
+
+def _native_diagnostic() -> str:
+    """A human reason for why the native UHD path isn't available (for the
+    readiness note). Returns '' when it IS available."""
+    try:
+        _ensure_elrs_sdr_on_path()
+        from elrs_sdr import radio
+        if radio.uhd is not None:
+            return ""
+        err = getattr(radio, "_UHD_ERR", None)
+        return f"UHD python module not importable: {err}" if err else "UHD not importable"
+    except Exception as e:
+        return f"elrs_sdr UHD transport not importable: {e}"
 
 
 def available() -> bool:

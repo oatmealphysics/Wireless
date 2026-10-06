@@ -225,13 +225,21 @@ def _backend_for(sdr):
 def _radio_info(sdr) -> dict:
     b = _backend_for(sdr)
     tool_ok = b[3]() if b else False
+    # A specific, self-diagnosing hint for the UHD backend (the static one is a
+    # generic "install X"; this says which path is actually missing *here*).
+    install_hint = b[4] if (b and not tool_ok) else None
+    if b and b[0] == "uhd" and not tool_ok:
+        from . import uhd_backend
+        diag = uhd_backend._native_diagnostic()
+        if diag:
+            install_hint = f"UHD path not usable — {diag}"
     return {
         "device": sdr["model"], "usb_id": sdr["id"],
         "backend": b[0] if b else None,
         "backend_label": b[1] if b else None,
         "tool_installed": tool_ok,
         "live_capable": bool(b and tool_ok),
-        "install_hint": (b[4] if (b and not tool_ok) else None),
+        "install_hint": install_hint,
     }
 
 
