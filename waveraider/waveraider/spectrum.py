@@ -525,8 +525,15 @@ def analyze_signal(center_hz: float, device: str | None = None) -> dict:
     backend = status.get("backend")
     mhz = center / 1e6
     is_video = (1080 <= mhz <= 1360) or (5645 <= mhz <= 5945)   # analog FPV video bands
-    # bladeRF 2.0 requires at least ~521 kS/s; RTL supports 240 kS/s.
-    rate = 8_000_000 if is_video else (960_000 if backend == "bladerf" else 240_000)
+    # Per-backend capture rate. The Ettus USRP (B200/B205mini/B210) and bladeRF
+    # are wideband: 8 MSPS for analog video, 2 MSPS for control-link demod (well
+    # inside the B205mini's ~56 MHz ceiling). The RTL-SDR is narrow: 240 kS/s.
+    if is_video:
+        rate = 8_000_000
+    elif backend in ("bladerf", "uhd"):
+        rate = 2_000_000
+    else:
+        rate = 240_000
     n = int(rate * 0.05)
     with _DEVICE_LOCK:
         if backend == "bladerf":
@@ -571,7 +578,7 @@ def capture_audio(center_hz: float, device: str | None = None, secs: float = 2.5
     if not demod.available():
         return {"error": "numpy is required for audio."}
     backend = status.get("backend")
-    capture_rate = 960_000 if backend == "bladerf" else 240_000
+    capture_rate = 2_000_000 if backend in ("bladerf", "uhd") else 240_000
     n = int(capture_rate * max(0.5, min(6.0, secs)))
     with _DEVICE_LOCK:
         if backend == "bladerf":
