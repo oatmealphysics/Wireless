@@ -30,8 +30,21 @@ import time
 from ...model import Entity, Finding, Survey
 from ..base import ProtocolPlugin
 
-# The validated ELRS core, shared with the standalone elrs_sdr CLI.
+# The validated ELRS core, shared with the standalone elrs_sdr CLI. elrs_sdr
+# lives at the repo root, a sibling of the waveraider/ package. When WaveRaider
+# is run from the waveraider/ subtree (python3 -m waveraider.cli), the repo root
+# isn't on sys.path, so add it — computed from this file's location — BEFORE the
+# import, or _CORE silently becomes False and decode_iq bails with "no module".
 try:
+    import sys as _sys
+    from pathlib import Path as _Path
+    # Walk up from this file to the repo root (the dir that holds elrs_sdr/),
+    # instead of a hard-coded depth — immune to restructuring.
+    for _p in _Path(__file__).resolve().parents:
+        if (_p / "elrs_sdr").is_dir():
+            if str(_p) not in _sys.path:
+                _sys.path.insert(0, str(_p))
+            break
     from elrs_sdr.core import lora, ota, fhss, crc  # noqa: F401
     _CORE = True
     _CORE_ERR = ""
