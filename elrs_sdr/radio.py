@@ -373,6 +373,13 @@ class RadioDevice:
             except Exception:
                 pass
         self._freq, self._sample_rate, self._gain = freq_hz, sample_rate, gain
+        # brief settle after a frequency/rate change: the B205's RF front-end
+        # needs a moment to lock, and starting the stream immediately (the very
+        # next capture() call) can catch the device mid-transition -> early
+        # 0-sample reads -> the capture stalls. ~50 ms is enough for the PLL/RF
+        # to settle without meaningfully adding to the per-channel dwell.
+        import time as _time
+        _time.sleep(0.05)
 
     def auto_gain(self, freq_hz: float, sample_rate: float,
                   antenna: str | None = None,
@@ -676,11 +683,26 @@ class RadioDevice:
         configured_srate = getattr(self, "_sample_rate", 0.0)
         warned_rate = False
         measured_srate = 0.0
+        # STALL GUARD: if the stream returns 0 samples for too long in a row (a
+        # USB hiccup, device dropped the stream, etc.), don't hang the whole
+        # capture forever — bail out with the partial samples so the caller
+        # (e.g. the ELRS Find sweep) can record the channel and ADVANCE to the
+        # next one. 0.5s per _recv × 40 consecutive empties = ~20s max stall,
+        # well under the per-channel dwell expectation, and a real link delivers
+        # data continuously so this never trips on a working capture.
+        _recv_timeout = 0.5
+        _max_consecutive_empty = 40
+        empty_streak = 0
         try:
             while got < n_samples:
-                n = self._recv(stream, buf, 0.5)
+                n = self._recv(stream, buf, _recv_timeout)
                 if n == 0:
+                    empty_streak += 1
+                    if empty_streak >= _max_consecutive_empty:
+                        # stream stalled — stop waiting, return what we have
+                        break
                     continue
+                empty_streak = 0
                 take = min(n, n_samples - got)
                 out[got:got + take] = buf[:take]
                 got += take
@@ -711,6 +733,22 @@ class RadioDevice:
                                     getattr(self, "_freq", 0.0),
                                     note="PARTIAL capture (Ctrl-C)")
                 print(f"  wrote PARTIAL capture: {path} ({got} samples)", flush=True)
+            self._measured_srate = measured_srate
+            return out
+        # normal completion OR stall-guard break: truncate to the samples actually
+        # received (got < n_samples means the stream stalled and we bailed early —
+        # return the partial so the caller can record the channel + advance).
+        if got < n_samples:
+            out = out[:got]
+            if got == 0:
+                self._measured_srate = measured_srate
+                return out
+            if path:
+                _write_complex8(out, path)
+                _write_capture_meta(path, measured_srate or configured_srate,
+                                    getattr(self, "_freq", 0.0),
+                                    note=f"PARTIAL capture (stream stalled at {got}/{n_samples})")
+                print(f"  wrote PARTIAL capture (stall): {path} ({got} samples)", flush=True)
             self._measured_srate = measured_srate
             return out
         if path:
