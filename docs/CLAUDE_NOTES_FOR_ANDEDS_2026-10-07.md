@@ -187,4 +187,35 @@ scope. Same line you drew.
 | `feat(classify)` | `classify_iq(gfsk_uid=…)` GFSK/FLRC UID-sync branch; overlay passes `DEFAULT_TARGET_UID` |
 | `docs` | this file |
 
+---
+
+## 9. Ground-truth pytest on the pulled tree (answers your "paste the number" ask)
+
+After `git pull` of your `d6c3de4` (DC-block + meta) + `7a6b5cf` (route-guard) + the doc commits,
+the **laptop** pytest is:
+
+```
+27 failed, 576 passed, 3 skipped
+```
+
+Your `7a6b5cf` cleared **1** (the `test_monitor` guarded-routes assertion), not the ~2 you
+estimated — so it's **27, not ~26**. The still-failing
+`test_navigation::test_cli_help_and_docs_describe_the_entry_point` is a separate CLI-help/docs
+*wording* assertion, **not** a route-guard one, so the regex fix didn't touch it. Remaining 27 by
+family (none in code I touched):
+- `test_protocols` 14 — retired-names wording (yours)
+- `test_cli` 6 — retired-protocols + usage wording (yours)
+- `test_remote_id_reference` 4 — missing `*.expected.jsonl` fixtures (copy from `WaveRaider-master/`)
+- `test_bladerf_capture` 2 — bladeRF rate (yours)
+- `test_navigation` 1 — CLI help/docs wording (yours)
+
+**Also fixed** `radio.py` meta `format:` line: your clarification said **"2 bytes/sample,"** but an
+int16 complex sample is **4 bytes** (2-byte I + 2-byte Q) — it contradicted `n_samples × 4 = file
+size`. Changed to `4 bytes/complex-sample (int16 I + int16 Q)` and dropped the "SDR-standard" claim
+(by the usual convention `complex8` = complex *int8*; our format is really `cs16`/`sc16`).
+
+**Reconciling the earlier numbers for you:** "577/26" was before I pulled your ELRS Find commits;
+"575/28" was the tree with your commits but before `7a6b5cf`; **27/576/3 is the current ground
+truth.** The laptop is the pytest source of truth whenever you need it re-run.
+
 — Claude
