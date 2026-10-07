@@ -11,14 +11,15 @@ from .sources import get_source
 _SEV_MARK = {"critical": "[!!]", "warning": "[! ]", "info": "[ i]"}
 
 _USAGE = (
-    "usage: wr [--tui | --explain | --html FILE] [--protocol uas] [--backend NAME] <source>\n"
+    "usage: wr [--tui | --explain | --html FILE] [--protocol uas|elrs] [--backend NAME] <source>\n"
     "       wr serve [--port N] | wr interfaces | wr sdr | wr --help\n"
     "       wr node --help | wr record --help | wr verify-recording DIRECTORY\n"
-    "  <source>: a Remote ID capture (Wi-Fi beacon or Bluetooth legacy advertising pcap),\n"
+    "  <source>: a capture (Remote ID Wi-Fi/BLE pcap, or an ELRS IQ bundle),\n"
     "            or replay:<path>[@rate] | live:<iface>\n"
-    "  --protocol: uas (Remote ID), the default and only supported protocol.\n"
+    "  --protocol: uas (Remote ID, the default) or elrs (ExpressLRS control link, SDR-decoded).\n"
     "  live:<iface> is incomplete; live Remote ID, NAN and BT5 Long Range are unsupported.\n"
-    "  serve: web UI on Monitor + Settings (sample data).\n"
+    "  serve: web UI (Monitor + Settings). The live ELRS 'Find' (2.4 GHz PHY sweep) is a\n"
+    "         button in the Monitor page — run `wr serve` and open http://localhost:8899/.\n"
     "  The general Wi-Fi/Bluetooth, DMR, TETRA, analog and cellular analyzers were retired after v0.5.1."
 )
 
