@@ -831,7 +831,7 @@ def _write_capture_meta(c8_path: str, srate: float, center_hz: float,
         f"center_freq_hz: {center_hz:.6g}\n"
         f"sample_rate_hz: {srate:.6g}\n"
         f"n_samples: {n}\n"
-        f"format: int16 I,Q interleaved, little-endian (.complex8 = SDR-standard int16 I/Q, 2 bytes/sample)\n"
+        f"format: int16 I,Q interleaved, little-endian — 4 bytes/complex-sample (int16 I + int16 Q); file size = n_samples*4\n"
         f"note: {note}\n"
         f"# validate with: python3 -m elrs_sdr validate {os.path.basename(c8_path)}\n"
         f"# (validate auto-reads this file for the sample rate)\n"
