@@ -77,6 +77,22 @@ def core_error() -> str:
 # IQ -> decoded ELRS packets (the glue the standalone CLI's _decode_samples does)
 # ---------------------------------------------------------------------------
 
+def dc_block(iq):
+    """Remove the DC offset from an IQ array (subtract the mean of I and Q).
+
+    The B205 capture path leaves a residual DC offset even with the hardware
+    set_rx_dc_offset (see radio.py) — the 2026-10-07 bench capture showed a huge
+    spike at 0 kHz that corrupts the GFSK/LoRa demod and the correlation
+    detectors. Subtracting the per-band mean is the reliable software backstop.
+    Applied at the sweep/decode entry so every downstream detector sees clean IQ.
+    """
+    import numpy as np
+    iq = np.asarray(iq)
+    if iq.size == 0:
+        return iq
+    return (iq - iq.mean()).astype(iq.dtype if np.iscomplexobj(iq) else iq.dtype)
+
+
 def decode_iq(samples, srate: float, rate: str = DEFAULT_RATE,
               uid: bytes | None = None):
     """Run the ELRS RX pipeline over an IQ array and return decoded packets.
@@ -200,6 +216,10 @@ def decode_gfsk(iq, srate: float, uid: bytes | None = None) -> list[dict]:
     uid = uid or DEFAULT_TARGET_UID
     params = gfsk.FlrcParams(sample_rate=srate)
     sw = gfsk.flrc_sync_word(uid)
+    # DC-block before detection: the B205 residual DC offset corrupts the GFSK
+    # correlation + demod (see dc_block docstring; the 2026-10-07 bench capture
+    # showed a huge 0 kHz spike). Subtracting the mean is the reliable backstop.
+    iq = dc_block(iq)
     starts = gfsk.detect_sync_word(iq, sw, params)
     if not starts:
         return []
@@ -230,6 +250,9 @@ def classify_phy(iq, srate: float, uid: bytes | None = None,
                 "error": _CORE_ERR}
     import numpy as np
     iq = np.asarray(iq, dtype=np.complex64)
+    # DC-block before measuring: the B205 residual DC offset inflates the band
+    # power and corrupts the correlation detectors (see dc_block docstring).
+    iq = iq - iq.mean()
     # band power above the noise floor (default: 10th-percentile sample power)
     p = float(np.mean(np.abs(iq) ** 2))
     nf = noise_floor if (noise_floor and noise_floor > 0) else float(np.percentile(np.abs(iq) ** 2, 10)) + 1e-12
