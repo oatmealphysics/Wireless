@@ -333,7 +333,18 @@ def sweep_phy(radius, srate: float = 10e6, gain: float = 40.0, dwell_ms: int = 2
     # which also corrupts the timing the GFSK demod relies on). log_every=1<<30
     # silences the per-chunk "captured X/Y @ Z MS/s" progress print entirely.
     n_dwell = int(srate * dwell_ms / 1000.0)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+    # SINGLE interleaved loop: tune -> capture -> classify -> report, per channel.
+    # (The previous two-phase structure — capture ALL channels first, then classify
+    # — held the UI's progress bar at 0% for the entire multi-second capture phase,
+    # then jumped to ~100% in a flash when classification ran. Classifying each
+    # window immediately after its capture keeps the live % honest: it tracks
+    # channels actually finished out of the total requested, so even a failed
+    # capture advances the bar instead of stalling it.)
     raw = []
+    results = []
+    last_nf = 0.0
     for c in range(channels):
         f = freq0 + c * spacing
         # real RadioDevice API: tune(freq_hz, sample_rate, gain, antenna=None),
@@ -343,29 +354,34 @@ def sweep_phy(radius, srate: float = 10e6, gain: float = 40.0, dwell_ms: int = 2
         radius.tune(f, srate, gain)
         ch_path = None
         if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
             ch_path = os.path.join(output_dir, f"ch{c}_{f/1e6:.1f}MHz.complex8")
         try:
             samples = radius.capture(n_dwell, path=ch_path, log_every=1 << 30)
         except Exception:
-            continue
-        if samples is None or len(samples) == 0:
-            continue
-        raw.append((c, f, samples, ch_path))
-    all_p = np.concatenate([np.abs(s) ** 2 for _, _, s, _ in raw]) if raw else np.array([0.0])
-    nf = float(np.percentile(all_p, 10)) + 1e-12
-    results = []
-    for i, (c, f, samples, ch_path) in enumerate(raw):
-        r = classify_phy(samples, srate, uid=uid, noise_floor=nf)
+            samples = None
+        # classify immediately (per-window noise floor when the running floor
+        # isn't usable yet — same 10th-percentile rule the two-phase code applied)
+        if samples is not None and len(samples) > 0:
+            raw.append((c, f, samples, ch_path))
+            _p = float(np.mean(np.abs(samples) ** 2))
+            _nf = float(np.percentile(np.abs(samples) ** 2, 10)) + 1e-12
+            last_nf = _nf
+            r = classify_phy(samples, srate, uid=uid,
+                             noise_floor=(_nf if _nf > 0 and _p > 0 else None))
+        else:
+            r = None
+        r = r if r is not None else {"power_db": 0.0, "phy": "none",
+                                     "lora_score": 0.0, "lora_rate": None,
+                                     "gfsk_score": 0.0, "gfsk_sync_starts": []}
         r["channel"] = c
         r["freq_mhz"] = round(f / 1e6, 2)
-        r["n_samples"] = int(len(samples))
+        r["n_samples"] = int(len(samples)) if samples is not None else 0
         if ch_path:
             r["iq_file"] = os.path.basename(ch_path)
         results.append(r)   # keep ALL channels in the manifest (energy + none), not just non-none
         if progress:
             try:
-                progress({"done": i + 1, "total": len(raw), "freq_mhz": round(f / 1e6, 2),
+                progress({"done": c + 1, "total": channels, "freq_mhz": round(f / 1e6, 2),
                           "phy": r["phy"], "channel": c})
             except Exception:
                 pass   # a progress-reporting hiccup must never abort the sweep
@@ -379,7 +395,7 @@ def sweep_phy(radius, srate: float = 10e6, gain: float = 40.0, dwell_ms: int = 2
             "params": {"srate": srate, "gain": gain, "dwell_ms": dwell_ms,
                        "channels": channels, "freq0_hz": freq0, "spacing_hz": spacing,
                        "uid": (uid.hex() if uid else None),
-                       "noise_floor": round(nf, 3)},
+                       "noise_floor": round(last_nf, 3)},
             "channels_with_energy": energy,
             "all_channels": results,
         }
