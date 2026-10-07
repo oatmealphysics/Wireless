@@ -86,6 +86,23 @@ def _open_usrp(args: str):
     On total failure, prints the candidate symbols that actually exist so the
     real name is self-diagnosing (never a blind AttributeError).
     """
+    # Suppress UHD's verbose INFO banner ("UHD ... reference clock rate 16.0 MHz",
+    # device-tree dumps, etc.) that clutters the terminal when wr serve / the sweep
+    # opens the radio. UHD honors the env var across versions; also call the Python
+    # setter if this binding exposes it. Keep it non-fatal — if suppression fails
+    # the device still opens, it's just chatty.
+    try:
+        import os
+        os.environ.setdefault("UHD_LOG_LEVEL", "ERROR")
+        if hasattr(uhd, "set_log_level"):
+            uhd.set_log_level(getattr(uhd, "LOG_LEVEL_ERROR", 2))
+        elif hasattr(uhd, "LOG_LEVEL_ERROR") and hasattr(uhd, "logger"):
+            try:
+                uhd.logger.set_log_level(uhd.LOG_LEVEL_ERROR)
+            except Exception:
+                pass
+    except Exception:
+        pass
     attempts = []
     # 1) 4.9/4.11 pybind: uhd.usrp is a module with MultiUSRP (or multi_usrp)
     mod = getattr(uhd, "usrp", None)
