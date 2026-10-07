@@ -779,7 +779,11 @@ def _annotate_elrs_hint(signals: list, backend: str) -> None:
             # capture-validated; the rest are synthetic-calibrated, confirmed=False).
             try:
                 from elrs_sdr import classify as _wr_classify
-                _c = _wr_classify.classify_iq(iq, rate or probe_rate)
+                from .protocols.elrs import DEFAULT_TARGET_UID as _wr_uid
+                # Pass the configured link UID so the classifier can also run the
+                # FLRC/GFSK UID-sync detector — otherwise a GFSK ELRS link is tagged
+                # "unidentified" by the overlay even though the band sweep sees it.
+                _c = _wr_classify.classify_iq(iq, rate or probe_rate, gfsk_uid=_wr_uid)
                 if _c.signature != "unknown":
                     sig["protocol_hint"] = _c.to_dict()
             except Exception:

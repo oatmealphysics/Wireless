@@ -60,13 +60,20 @@ class Classification:
 
 
 def classify_iq(iq, srate: float, bands: str | None = None,
-                sf: int = 7) -> Classification:
+                sf: int = 7, gfsk_uid: bytes | None = None) -> Classification:
     """Classify one complex IQ window by running every per-window detector.
 
     `bands` optionally restricts which detectors run to the ones that make sense
     for the carrier's band ("2.4", "5.8", "5ghz", "1.2", "sub1g", "433"); None
     runs them all. Returns the highest-scoring positive claim, or an
     'unidentified' Classification when nothing clears its threshold.
+
+    If `gfsk_uid` is given, also run the FLRC/GFSK UID-sync detector
+    (`elrs_sdr.core.gfsk`) against that link UID — this is what lets a live
+    overlay tag an ELRS/FLRC (GFSK) link, which the LoRa-chirp detector alone
+    cannot see (the GFSK sync word is UID-derived, so a UID is required). A gated
+    sync match is a strong hint, reported `confirmed=False`: the GFSK demod is
+    synthetic until a real capture validates it.
     """
     scores: dict = {}
 
@@ -86,6 +93,20 @@ def classify_iq(iq, srate: float, bands: str | None = None,
         vid_s, vid_m = positivedet.analog_video(iq, srate)
         scores["video"] = (vid_s, vid_m)
 
+    # GFSK / FLRC (ELRS) — UID-keyed sync detection. The FLRC sync word is
+    # UID-derived, so this only runs when a candidate link UID is supplied. A
+    # gated sync hit (gfsk.detect_sync_word applies an absolute peak gate) is the
+    # positive tell for an ELRS FLRC link that the LoRa chirp detector can't see.
+    if gfsk_uid is not None:
+        try:
+            from .core import gfsk as _gfsk
+            params = _gfsk.FlrcParams(float(srate))
+            starts = _gfsk.detect_sync_word(iq, _gfsk.flrc_sync_word(gfsk_uid), params)
+            if starts:
+                scores["gfsk"] = (0.9, f"{len(starts)} UID-sync hit(s) @ {gfsk_uid.hex()}")
+        except Exception:
+            pass
+
     # Candidate positive claims: (score, signature, protocol label, confirmed).
     candidates = []
     if lora_s >= _LORA_CLAIM:
@@ -100,6 +121,9 @@ def classify_iq(iq, srate: float, bands: str | None = None,
     if scores.get("video", (0,))[0] >= _VIDEO_CLAIM:
         candidates.append((scores["video"][0], "video",
                            "Analog FPV video", False))
+    if scores.get("gfsk", (0,))[0] >= 0.5:
+        candidates.append((scores["gfsk"][0], "gfsk",
+                           "ELRS / FLRC (GFSK, UID-sync match)", False))
 
     if not candidates:
         metric = " ".join(f"{k}={v[0]:.2f}" for k, v in scores.items())
