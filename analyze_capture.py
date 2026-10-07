@@ -13,9 +13,15 @@ and prints a per-channel table + a verdict. This is the tool I run the moment
 the user uploads a fresh captures/ dir.
 
 Usage:
-    python3 analyze_capture.py <captures_dir> [uid_hex]
-    # e.g. python3 analyze_capture.py waveraider/captures/elrs_find_20261007_182028
-    #      python3 analyze_capture.py /path/to/captures 00000011185b
+    python3 analyze_capture.py                # auto-analyze the LATEST capture (no subfolder typing)
+    python3 analyze_capture.py --fast         # quick read: GFSK + duty + spectrum only (skip slow LoRa decode)
+    python3 analyze_capture.py <captures_dir> # analyze a specific capture dir
+    python3 analyze_capture.py <uid_hex>      # (uid is positional arg 2; default 00000011185b)
+
+`--fast` is the one to use for a quick "did it find anything?" read (~1s/channel, no slow
+LoRa CRC-decode). Full mode runs the CRC-valid LoRa frame count too (capped at 100, ~20s/channel,
+skipped on channels already classified GFSK). The GFSK sync (target UID) is the load-bearing
+signal for a rate_index=2 target; the LoRa frame count is secondary (>=100 = real, ~20-35 = noise).
 """
 import sys, os, re, json, glob
 import numpy as np
@@ -76,18 +82,22 @@ def lora_hits(iq, srate, rate_name):
         return 0
 
 
-def lora_rate_hits(iq, srate, uid):
+def lora_rate_hits(iq, srate, uid, cap=100):
     """CRC-VALID LoRa frames across the 6 ELRS rates, via the real _decode_lora
-    path (the same decode the live 'auto' mode uses). NOTE: a small number of
-    CRC-valid frames on a noise-only channel is EXPECTED (CRC-24 false-accept +
-    the first-order LoRa demod) — a REAL LoRa link shows a consistent stream
-    (hundreds+ of frames), not 20-35. So treat low counts (< ~100) as
-    'possible noise, not a confirmed link'; the GFSK sync (the primary
-    identifier for a rate_index=2 target) is the load-bearing signal."""
+    path (the same decode the live 'auto' mode uses), CAPPED at `cap` frames.
+    A real LoRa link is a consistent stream (hundreds+ of frames); once we hit
+    `cap` we know it's real and stop counting (the decode is ~20s/channel, so
+    capping keeps the full analysis tractable). NOTE: ~20-35 CRC-valid frames on
+    a noise-only channel is EXPECTED (CRC-24 false-accept + the first-order LoRa
+    demod) — that's noise, not a link. The GFSK sync is the load-bearing signal
+    for a rate_index=2 target anyway."""
     total = 0
     for rn in lora.ELRS_2G4_RATES:
         try:
-            total += len(elrs._decode_lora(iq, srate, rn, uid))
+            pkts = elrs._decode_lora(iq, srate, rn, uid)
+            total += len(pkts)
+            if total >= cap:  # enough to call it a real link — stop
+                return cap
         except Exception:
             pass
     return total
@@ -113,12 +123,51 @@ def spectrum_shape(iq, srate, n=2 ** 16):
     return float(band.max() / (band.mean() + 1e-12)), float(f[(f > 100e3) & (f < 4.5e6)][band.argmax()] / 1e6)
 
 
+def find_latest_capture(start=None):
+    """Auto-discover the most recent captures/elrs_find_*/ dir (by dir mtime).
+
+    So you never have to type the timestamped subfolder: just run
+    `python3 analyze_capture.py` (from anywhere) and it analyzes the latest
+    capture. If `start` is a captures/ dir or the repo root, it searches there;
+    if it's a specific elrs_find_* dir, it's used directly.
+    """
+    start = start or os.getcwd()
+    # if `start` is itself an elrs_find_* dir with ch*.complex8, use it directly
+    if re.search(r'elrs_find_', os.path.basename(os.path.normpath(start))) and \
+            glob.glob(os.path.join(start, 'ch*.complex8')):
+        return os.path.normpath(start)
+    # otherwise search for captures/elrs_find_*/ under `start` (or up to the repo root)
+    base = start
+    for _ in range(4):  # walk up at most 4 levels to find the repo root / captures/
+        cand = os.path.join(base, 'captures')
+        if os.path.isdir(cand):
+            break
+        base = os.path.dirname(base)
+    else:
+        cand = os.path.join(start, 'captures')
+    subdirs = [d for d in glob.glob(os.path.join(cand, 'elrs_find_*'))
+               if os.path.isdir(d) and glob.glob(os.path.join(d, 'ch*.complex8'))]
+    if not subdirs:
+        return None
+    # most recent by dir mtime
+    return max(subdirs, key=lambda d: os.path.getmtime(d))
+
+
 def main():
-    if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(1)
-    cap = sys.argv[1]
-    uid_hex = sys.argv[2] if len(sys.argv) > 2 else '00000011185b'
+    # arg parsing: optional captures dir (default: auto-latest), optional uid_hex,
+    # optional --fast (skip the slow LoRa CRC-decode; GFSK + duty + spectrum only)
+    args = [a for a in sys.argv[1:] if a != '--fast']
+    fast = '--fast' in sys.argv[1:]
+    cap = args[0] if len(args) > 0 else None
+    uid_hex = args[1] if len(args) > 1 else '00000011185b'
+    if cap is None:
+        cap = find_latest_capture()
+        if cap is None:
+            print("No captures/elrs_find_*/ dir with ch*.complex8 found.")
+            print("Run from the repo root, or pass the capture dir explicitly:")
+            print("  python3 analyze_capture.py <captures_dir> [uid_hex]")
+            sys.exit(1)
+        print(f"(auto-selected latest capture: {cap})")
     uid = bytes.fromhex(uid_hex)
     sync = gfsk.flrc_sync_word(uid)
     print(f"ELRS Find capture analysis  |  UID {uid.hex()}  |  sync {sync:#010x}")
@@ -149,8 +198,16 @@ def main():
         iq = read_iq(c8)
         iq = elrs.dc_block(iq)  # the DC-block (matches the live path)
         g = gfsk_corr_peak(iq, sync, srate)
-        # LoRa: CRC-valid frames via the real decode path (low = noise, high = real)
-        lora_frames = lora_rate_hits(iq, srate, uid)
+        # LoRa: CRC-valid frames via the real decode path (capped; slow ~20s/ch).
+        # Only run it if (a) not in --fast mode, and (b) the channel didn't already
+        # classify as GFSK (a channel is either GFSK or LoRa, not both). This keeps
+        # the full analysis tractable: GFSK channels skip the slow LoRa decode.
+        if fast:
+            lora_frames = -1  # not measured
+        elif g >= 0.10:
+            lora_frames = -1  # already GFSK — no need to decode LoRa on it
+        else:
+            lora_frames = lora_rate_hits(iq, srate, uid)
         duty = duty_cycle(iq)
         spk, sfreq = spectrum_shape(iq, srate)
         # classification: GFSK sync (>=0.10) is the load-bearing signal for a
@@ -166,8 +223,9 @@ def main():
             phy = "broadband"
         else:
             phy = "unknown"
+        lora_disp = '-' if lora_frames < 0 else str(lora_frames)
         print(f"{ch:>3} {freq_mhz:>9.1f} {srate/1e6:>7.2f}M {phy:>9} {g:>7.4f} "
-              f"{lora_frames:>6} {duty:>6.3f} {spk:>7.1f}x {sfreq:>8.2f}M")
+              f"{lora_disp:>6} {duty:>6.3f} {spk:>7.1f}x {sfreq:>8.2f}M")
     print("-" * 100)
     # manifest (if present)
     mf = os.path.join(cap, 'manifest.json')
