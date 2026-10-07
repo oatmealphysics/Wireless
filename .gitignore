@@ -6,10 +6,19 @@ __pycache__/
 build/
 dist/
 
-# SDR captures (large, regenerable)
+# SDR captures: ELRS Find sweeps (captures/elrs_find_*/) are SYNCED as part of the
+# project (the user pushes/pulls them like any other file — no separate upload).
+# So UN-IGNORE the captures/ dir's IQ + meta + manifest. Everything else that looks
+# like a stray capture (a .complex8/.iq/.jsonl outside captures/) stays ignored.
+#   (the `!` lines re-include the captures/ subtree after the blanket ignores above)
 *.iq
 *.complex8
 *.jsonl
+!captures/
+!captures/**/
+!captures/**/*.complex8
+!captures/**/*.meta.txt
+!captures/**/*.json
 
 # C++ build artifacts (cpp/build.sh produces these)
 cpp/elrs_intercept
