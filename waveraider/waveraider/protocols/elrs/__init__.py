@@ -286,6 +286,12 @@ def sweep_phy(radius, srate: float = 10e6, gain: float = 40.0, dwell_ms: int = 2
     for the web UI's /api/elrs route — it answers "what's there" from the RF."""
     import numpy as np
     uid = uid or DEFAULT_TARGET_UID
+    # Keep the dwell SHORT: a GFSK/FLRC ELRS frame is ~1-2 ms, so 50 ms (500k samples
+    # at 10 MS/s) comfortably captures several frames per channel, and 80 ch x 50 ms
+    # = ~4 s total. A 200 ms dwell (2M samples) flooded the terminal with capture
+    # progress logs and hit USB bandwidth limits (sustained rate dropped to 5-10 MS/s,
+    # which also corrupts the timing the GFSK demod relies on). log_every=1<<30
+    # silences the per-chunk "captured X/Y @ Z MS/s" progress print entirely.
     n_dwell = int(srate * dwell_ms / 1000.0)
     raw = []
     for c in range(channels):
@@ -294,7 +300,7 @@ def sweep_phy(radius, srate: float = 10e6, gain: float = 40.0, dwell_ms: int = 2
         # then capture(n_samples) -> a single np.complex64 array of that length.
         radius.tune(f, srate, gain)
         try:
-            samples = radius.capture(n_dwell)
+            samples = radius.capture(n_dwell, log_every=1 << 30)
         except Exception:
             continue
         if samples is None or len(samples) == 0:

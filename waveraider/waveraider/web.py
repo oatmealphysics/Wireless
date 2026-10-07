@@ -194,7 +194,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 srate = float(q.get("srate", ["10000000"])[0])
                 gain = float(q.get("gain", ["40"])[0])
-                dwell_ms = int(q.get("dwell_ms", ["200"])[0])
+                dwell_ms = int(q.get("dwell_ms", ["50"])[0])
                 channels = int(q.get("channels", ["80"])[0])
                 freq0 = float(q.get("freq0", ["2400400000"])[0])
                 spacing = float(q.get("spacing", ["1000000"])[0])

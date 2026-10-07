@@ -499,13 +499,15 @@ $("elrsFindBtn").addEventListener("click",async()=>{
   panel.hidden=false;
   $("elrsFindStatus").textContent="sweeping…";
   $("elrsFindBody").className="cover";
-  $("elrsFindBody").textContent="Sweeping 80 channels… (a few seconds)";
+  $("elrsFindBody").textContent="Sweeping 80 channels… (~4 s, 50 ms dwell)";
   toast("ELRS Find: sweeping the 2.4 GHz band…");
   try{
     // /api/elrs is in RF_GET_ROUTES, so the server requires the X-WaveRaider-Request
     // marker header (the anti-cross-site-radio-request guard) — same as specApi in
     // inspect_rf.js. getJSON passes opts.headers straight through to fetch.
-    const data=await getJSON("/api/elrs?srate=10000000&gain=40&dwell_ms=200&channels=80",
+    // 50 ms dwell (not 200): a GFSK/FLRC frame is ~1-2 ms, so 50 ms captures several
+    // per channel without flooding the terminal or hitting USB bandwidth limits.
+    const data=await getJSON("/api/elrs?srate=10000000&gain=40&dwell_ms=50&channels=80",
       {headers:{"X-WaveRaider-Request":"1"}});
     renderElrsFind(data);
   }catch(e){

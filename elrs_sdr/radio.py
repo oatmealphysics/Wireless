@@ -78,6 +78,28 @@ except ImportError as e:  # pragma: no cover - uhd_bootstrap itself missing
     _HAVE_UHD = False
     _UHD_ERR = e
 
+# Suppress UHD's verbose INFO banner ("UHD ... reference clock rate 16.0 MHz",
+# device-tree dumps, "Performing register loopback test") that prints at device
+# construction and clutters the wr serve / sweep terminal. Do this AT IMPORT
+# TIME (before any RadioDevice() is constructed) because UHD 4.11 prints the
+# banner at the C++ constructor, before a per-call set_log_level can take
+# effect. UHD_LOG_LEVEL=ERROR is honored across versions; also call the Python
+# setter if this binding exposes it. Non-fatal: if suppression fails the device
+# still opens, it's just chatty.
+if _HAVE_UHD:
+    try:
+        import os as _os
+        _os.environ.setdefault("UHD_LOG_LEVEL", "ERROR")
+        if hasattr(uhd, "set_log_level"):
+            uhd.set_log_level(getattr(uhd, "LOG_LEVEL_ERROR", 2))
+        elif hasattr(uhd, "LOG_LEVEL_ERROR") and hasattr(uhd, "logger"):
+            try:
+                uhd.logger.set_log_level(uhd.LOG_LEVEL_ERROR)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
 
 def _open_usrp(args: str):
     """Open the device, tolerating the constructor name across bindings.
