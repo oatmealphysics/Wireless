@@ -68,7 +68,8 @@ front-end demodulator cannot see the modulation at all.
 
 This reorders the exploit/identity chain. The "initial part" (detect + decode → know what's there
 → then act) was blocked by **one missing component: a GFSK/FLRC demodulator** in `elrs_sdr.core`.
-Everything downstream (live tracker, throw, or the identity fingerprint) depends on it.
+Everything downstream (the live tracker, or the identity fingerprint) depends on it. (The "throw"/
+injection step is out of scope — see §10.)
 
 ### The SX1280 2.4 GHz rate table (authoritative)
 
@@ -138,7 +139,7 @@ conjunction with the Wi-Fi MAC / DJI Drone-ID vectors, not as a standalone hardw
 ## 3. The FLRC/GFSK PHY: `elrs_sdr/core/gfsk.py`
 
 A FLRC/GFSK PHY in the validated core (so `elrs_sdr` CLI, `waveraider`, the future live tracker,
-and the throw all share one codec — no re-port). Public API:
+and the identify all share one codec — no re-port). Public API:
 
 | Function | Purpose |
 |---|---|
@@ -190,7 +191,7 @@ trustworthy.
 |---|---|---|
 | UID → sync word + CRC seed | ✅ **VALIDATED** (faithful port) | Matches `OTA.cpp:OtaGetUidSeed` / `OtaCrcInitializer` exactly; `flrc_sync_word(target_uid)=0x0011185f`, `flrc_crc_seed=0x1c5b`. |
 | CRC-24 (poly 0x0186, seeded) | ✅ **VALIDATED** (standard SX1280) | Known algorithm; seeded with the UID-derived 16-bit seed. |
-| CCSDS (171,133) K=7 CR 1/2 Viterbi | ✅ **VALIDATED** (round-trips encoder) | `_conv_encode` → `_conv_decode` is bit-exact, tested in isolation. |
+| CCSDS (171,133) K=7 CR 1/2 Viterbi | ⚠️ **SELF-CONSISTENT** (round-trips its own encoder) | `_conv_encode` → `_conv_decode` is bit-exact in isolation — but that proves decoder↔encoder consistency, **not** that the code matches the SX1280/ELRS reality. The FLRC conv-code shape (CCSDS 171/133, K=7) + CRC-24 (0x0186) are **asserted from the C source, not yet confirmed against the SX1280 datasheet / a real capture.** |
 | GFSK modulator (BT=1, upsampled, IQ-inv) | ⚠️ **SYNTHETIC** | Self-consistent (mod→demod round-trips), but **not yet compared to a real ELRS FLRC capture** — bit-timing / Gaussian normalization / IQ-polarity must be confirmed on the bench. |
 | GFSK demod (phase-derivative + soft-Viterbi) | ⚠️ **SYNTHETIC** (offline only) | Works on our own modulated signal; **30/30 (100%)** at ~20 dB on random payloads offline. **Not yet exercised on a real capture.** |
 | Sync detection | ⚠️ **SYNTHETIC** | Peak lands exactly on the sync start for our own TX; real-capture performance (AGC, carrier offset) untested. |
@@ -257,10 +258,10 @@ separates `unknown_energy` (real RF, no known PHY match) from `none` (noise). Re
 
 ### 4c. The band sweep (`sweep_phy`)
 
-`Sweeps` the ISM2400 FHSS band (default 80 channels, 2400.4–2479.4 MHz, 1.0 MHz spacing) on the
+Sweeps the ISM2400 FHSS band (default 80 channels, 2400.4–2479.4 MHz, 1.0 MHz spacing) on the
 B205 via the **real** `elrs_sdr.radio.RadioDevice` API:
-- `radius.tune(freq_hz, sample_rate, gain)` per channel, then
-- `radius.capture(n_dwell, log_every=1<<30)` → one `np.complex64` array per dwell.
+- `radio.tune(freq_hz, sample_rate, gain)` per channel, then
+- `radio.capture(n_dwell, log_every=1<<30)` → one `np.complex64` array per dwell.
 - **50 ms dwell** (500k samples at 10 MS/s) — a GFSK frame is ~1–2 ms, so 50 ms captures several
   frames per channel, and 80 × 50 ms ≈ **4 s total.** (The original 200 ms dwell / 2M samples hit
   USB bandwidth limits + flooded the log — see §7.)
@@ -442,9 +443,10 @@ IDENTITY (the stated goal: find + stop a drone by hardware-unique ID, SDR-only)
         │    B205 RX -> classify PHY (ELRS Find) -> GFSK demod -> recover UID + frames
         │    => "know what's there before acting"
         ├─ (next) LIVE LOCK: predict FHSS channel (UID-seeded LCG) + follow running nonce
-        ├─ (next) THROW: B205 TX emits a forged CRC-valid frame (throttle=0) on the live channel
-        │    (rebuild on the real radio.py TX; the old elrc_bench_tx.py is NOT functional)
-        └─ EFFECT: drone drops throttle / can't re-arm while the forged link is active
+        │    (feeds identification only — the channel/nonce fingerprint of the specific link)
+        └─ (OUT OF SCOPE) "throw"/injection: injecting a forged frame on the live link to stop
+           the drone is a remote-kill of an aircraft and is NOT being advanced (see §10).
+           The old elrc_bench_tx.py is both non-functional and out of scope.
 ```
 
 The **decode (step 1) is the load-bearing gate** for the ELRS vector. This doc makes it
@@ -498,18 +500,23 @@ wr serve
 
 **The "assess from the capture" point:** the capture is the ground truth. If it shows the drone is
 *not* on `rate_index=2`/FLRC, we pivot to the LoRa decoder. If it shows FLRC and the demod locks,
-we proceed to the tracker + throw. The bench sweep decides.
+we proceed to the live tracker (channel/nonce fingerprint, for identification). The bench sweep
+decides. (The "throw"/injection step is out of scope — §10.)
 
 ---
 
 ## 10. What is explicitly NOT done yet (so this doesn't overclaim)
 
+- **The "throw" step is out of scope (a stated boundary, not just "not built yet").** The
+  detect/decode/identify half (SDR-only: ELRS fingerprint, Wi-Fi MAC, DJI Drone-ID) is the project.
+  The step of *injecting a forged control frame on the live link to stop the drone* (the §8
+  "throw → effect" chain, the `elrs_frame/` bench-TX line) is a **remote-kill of an aircraft** and
+  is **not being advanced.** The prior `elrc_bench_tx.py` is both non-functional (invented UHD API,
+  dead GFSK shaping, stub FLRC CRC, stub channel/nonce — a Claude review flagged all of it and was
+  correct) **and** out of scope for this reason. Do not treat it as a working or intended tool.
 - **No live channel-lock / nonce-follow** (the tracker) — deliberately deferred until the demod is
-  bench-confirmed.
-- **No working throw.** The earlier `elrc_bench_tx.py` is **not functional** (invented UHD API,
-  dead GFSK shaping, stub FLRC CRC, stub channel/nonce) — a Claude review flagged all of it and
-  was correct. It must be **rebuilt on the real `elrs_sdr/radio.py` TX** using `gfsk.modulate()`
-  for the GFSK, once the demod is confirmed.
+  bench-confirmed. (Note: even if pursued, a tracker exists only to feed identification, not
+  injection.)
 - **`classify.py` has no GFSK branch** — the live Inspect-RF overlay won't tag a GFSK Tinyhawk;
   the band-wide ELRS Find will. Reconcile by having `classify.py` call `gfsk.detect_sync_word`.
 - **`elrs_rcframe.py` is a duplicate** of the validated `elrs_sdr/core/{crc,ota}.py` — should
@@ -530,7 +537,7 @@ we proceed to the tracker + throw. The bench sweep decides.
 | `elrs_sdr/classify.py` | (Claude) **Per-window multi-protocol classifier** for the live Inspect-RF overlay (LoRa/ELRS confirmed + OFDM/Wi-Fi + DJI OcuSync + analog FPV as hints). |
 | `elrs_sdr/core/lora.py` | The existing LoRa PHY (rows 4–9). The LoRa branch of the classifier. |
 | `elrs_sdr/core/{crc,ota,fhss}.py` | The validated CRC + OTA frame codec + UID-seeded FHSS LCG + ISM2400 channel table. |
-| `elrs_sdr/radio.py` | The **real** B205 UHD radio (`tune`/`capture`/TX). Any throw must use this. Now suppresses the UHD INFO banner at import time. |
+| `elrs_sdr/radio.py` | The **real** B205 UHD radio (`tune`/`capture`/TX). The RX path for the sweep/decode. Now suppresses the UHD INFO banner at import time. (TX/injection is out of scope — §10.) |
 | `waveraider/waveraider/protocols/elrs/__init__.py` | **The WaveRaider ELRS plugin** — gained `decode_gfsk`, `decode_iq rate="auto"`, `classify_phy`, `sweep_phy` (the ELRS Find backend). |
 | `waveraider/waveraider/web.py` | The web server — gained `GET /api/elrs` (in `RF_GET_ROUTES`). |
 | `waveraider/waveraider/monitor.html` | The Monitor page — gained the **"ELRS Find" button** + results panel. |
