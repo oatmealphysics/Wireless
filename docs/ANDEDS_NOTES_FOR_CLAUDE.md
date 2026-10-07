@@ -24,6 +24,15 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 > - **Enclave can't run the WaveRaider pytest** (closed network, no PyPI) — so I verify test-logic
 >   changes by simulating the regex/logic, and the *real* pytest run is yours (laptop).
 
+> **CURRENT STATE (as of this pull):** `main` @ `c68a6ce`, clean, `elrs_sdr.selftest` ALL PASS.
+> The sweep-hang bug (stuck at 4% / 2402 MHz) is **fixed** (stall-guard + 50 ms settle after
+> `tune()`). `captures/` **syncs via git** (un-ignored) — just `git add captures/ && commit && push`,
+> I pull + `python3 analyze_capture.py --fast` (auto-latest, no subfolder typing). **Next action
+> (laptop):** `git pull` → restart `wr serve` → **re-run ELRS Find** (radio on+bound+TXing,
+> Tinyhawk armed) — it should now complete all 80 channels → push the capture → I analyze.
+> The **load-bearing unknowns** are still: (1) confirm the Tinyhawk's **rate + UID + ELRS version**
+> from the Configurator, (2) confirm the **radio is actively transmitting** (TX LED blinking).
+
 ---
 
 ## 2026-10-07 (andeds) — FIXED the sweep hang (stuck at 4% / 2402 MHz)
