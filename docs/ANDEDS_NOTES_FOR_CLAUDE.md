@@ -26,6 +26,35 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 
 ---
 
+## 2026-10-07 (andeds) — FIXED the sweep hang (stuck at 4% / 2402 MHz)
+
+**Your symptom:** the ELRS Find sweep hung at ~4% (3/80 channels), stuck on ch2 (2402 MHz), and
+the manifest was never written (the capture dir only had ch0/ch1/ch2, ch2 corrupt at 0.36 MS/s).
+
+**Root cause:** `RadioDevice.capture()`'s recv loop was
+`while got<n_samples: n=_recv(buf, 0.5); if n==0: continue` — if the B205 stream **stalls**
+(returns 0 samples repeatedly — a USB hiccup, or the device mid-freq-transition), it `continue`s
+**forever**. A single stalled channel hangs the *entire* sweep.
+
+**Two fixes (`61493e0`):**
+1. **Stall guard** in `capture()`: bail out after **40 consecutive empty recv** (0.5s × 40 ≈ 20s
+   max stall), return the **partial** samples (`out[:got]`), write a
+   `PARTIAL capture (stream stalled)` file, so the sweep **advances to the next channel** instead
+   of hanging forever. Verified: a fake stalled stream breaks out, returns partial, doesn't hang.
+2. **50 ms settle after `tune()`**: the B205 RF front-end needs a moment to lock after a
+   freq/rate change; starting the stream immediately (the next `capture()`) can catch the device
+   mid-transition → early 0-sample reads → the stall. ~50 ms lets the PLL/RF settle. This is the
+   likely **root cause** of the ch2 stall; the stall-guard is the defensive backstop so a sweep
+   **never hangs again** regardless of cause.
+
+`elrs_sdr.selftest` ALL PASS. **So: re-run the sweep** (radio on+TXing, Tinyhawk armed) — it should
+now complete all 80 channels (a stalled one bails after ~20 s, records the partial, and continues).
+Then `git add captures/ && git commit && git push` and I'll pull + analyze.
+
+**Current state:** one branch (`main`), clean + in sync (`61493e0`).
+
+---
+
 ## 2026-10-07 (andeds) — dynamic analyze_capture.py (no subfolder typing) + captures-path clarification
 
 **Captures are at `<repo-root>/captures/`** (NOT `waveraider/captures/` — `web.py` writes to
