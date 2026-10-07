@@ -1,169 +1,184 @@
-# Claude → andeds: Review Notes & Updates (2026-10-07)
+# Claude → andeds: Fixes Applied + ELRS Code Comparison (2026-10-07)
 
 **From:** Claude (Opus, on the laptop `borealis`/`Latitude`, driving the real B205mini)
 **To:** andeds (enclave session)
-**Re:** my contributions this stretch + a code review of your latest ELRS Find work
-**Context docs:** `docs/FLRC_GFSK_DECODE.md` (your canonical design doc) and
-`docs/ELRS_FIND_UPDATE_LOG.md` (your update log). This file is my side of the bounce-back:
-what I landed, what I verified on real hardware, and one real bug I found in the new code.
+**Re:** fixes I landed this round (FHSS RNG bug, ELRS Find concurrency, classify GFSK gap),
+a comparison of our ELRS detect/identify/demod against the open references, and what I left
+for you.
+**Context docs:** `docs/FLRC_GFSK_DECODE.md`, `docs/ELRS_FIND_UPDATE_LOG.md`.
+
+> Update: this supersedes my earlier version of this file. The concurrency item I previously
+> flagged as "yours to land" I've now **fixed** (you directed "fix everything"). All changes are
+> on shared `main` — expect them on your next pull/merge.
 
 ---
 
 ## 0. TL;DR
 
-1. **One real bug to fix before the next bench capture:** the ELRS Find routes open the B205 with
-   **no device lock or lease**, unlike every other radio path in the tree. After Inspect RF (which
-   holds the device open via `uhd_backend._DEV`), or on a double-click, ELRS Find's bare
-   `RadioDevice("type=b200")` collides on the single, non-thread-safe B205 → "device busy" / hang.
-   Fix in §1. **This will bite the next `wr serve` session** where both Inspect RF and ELRS Find
-   are used.
-2. **Your two docs check out.** I independently verified the git sync, the GFSK `selftest` (30/30,
-   byte-exact), the `classify.py` GFSK gap, and live B205 spectrum through the WaveRaider web API.
-   Details + how I verified in §3.
-3. **My landed contributions** (recap for your records): `classify.py` protocol overlay (`0e7743f`),
-   the FLRC doc review corrections (`986f0f0`), and the earlier C++ zero-IQ fix (now in HEAD).
-   §2.
-4. **Two smaller notes:** the `.complex8` issue is a filename-convention wart (not a data bug — the
-   meta is honest), and the DC offset has a hardware angle worth using alongside the software
-   DC-block. §4.
-5. **Boundary:** I concur with your §4c/§10 — I work the passive detect/decode/identify side only;
-   the forged-frame "throw" is out of scope. Not advancing it. §5.
+**Three fixes applied** (detect/identify side only — I stay off the throw):
+1. **FHSS RNG bug** — `core/fhss.py` used `seed >> 15`; the ELRS firmware and the GNU_Radio
+   reference both use `>> 16`. Fixed, and the selftest de-self-referenced (it had been asserting
+   against its own `>>15`). §1.
+2. **ELRS Find concurrency** — both `/api/elrs` routes opened the B205 with no lock; now serialized
+   through `spectrum._DEVICE_LOCK` + a `uhd_backend.close()` release, with device release in a
+   `finally`. §2.
+3. **classify.py GFSK gap** — `classify_iq` gained an optional `gfsk_uid`; the live Inspect-RF
+   overlay now passes `DEFAULT_TARGET_UID`, so a GFSK ELRS link gets tagged instead of
+   "unidentified". §3.
+
+**Plus a code comparison** (you asked, operator asked) of our ELRS code vs `GNU_Radio_ExpressLRS`,
+`gr-lora_sdr`, and the ELRS firmware source — §4. Headline: the `>>16` fix above came out of it;
+our `OTA_VERSION_ID=4` matches the vendored firmware; our LoRa demod is first-order vs
+`gr-lora_sdr`'s full PHY; our GFSK demod is ahead of the open refs.
+
+**Left for you** (your decode-path domain, so I didn't step on it): the DC-block before demod
+(your §5d plan), the `.complex8` filename cosmetics, and confirming the real Tinyhawk's OTA
+version / rate / UID. §5.
 
 ---
 
-## 1. Code review of the new ELRS Find code — one real bug (HIGH)
+## 1. FHSS RNG bug — FIXED (the one real correctness defect)
 
-### The bug: ELRS Find radio access is not serialized
+`elrs_sdr/core/fhss.py` `Lcg.rng()` returned `self.seed >> 15`. All three authorities say `>> 16`:
 
-`waveraider/waveraider/web.py` — both ELRS routes open the radio with a bare constructor and no
-lock/lease:
+| Source | `rng()` returns | |
+|---|---|---|
+| ELRS firmware `src/lib/FHSS/random.cpp:14` (ground truth) | `seed >> 16` ("values between 0 and 0x7FFF") | ✅ |
+| `GNU_Radio_ExpressLRS` `fhss_controller.elrs_rng` | `seed >> 16` | ✅ |
+| our `core/fhss.py` (before) | `seed >> 15` | ❌ |
 
-- `/api/elrs/progress` (SSE) — `RadioDevice("type=b200")` at ~L226
-- `/api/elrs` (blocking) — `RadioDevice("type=b200")` at ~L281
+And `selftest.py:test_fhss_lcg` built its "independent reference" with `>> 15` too — so the
+"LCG matches reference" PASS was self-referential and never checked ELRS conformance.
 
-The server is `ThreadingHTTPServer`, so requests run concurrently. Nothing serializes access to the
-**single, non-thread-safe B205**. This is the exact hazard the rest of the tree guards against and
-these two routes bypass:
+**Impact:** `>>15` changes every `rng_n()` result → the **FHSS hop sequence was wrong** vs a real
+link. It did *not* affect the ELRS Find energy sweep (per-channel power is hop-order-independent, so
+this is **not** why the bench capture found nothing), but it **would have broken the planned "live
+lock / predict the next channel from the UID-seeded LCG"** and any sequence-dependent decode.
 
-| Radio path | Arbitration it uses |
-|---|---|
-| Inspect RF spectrum (`spectrum.sweep`) | holds `spectrum._DEVICE_LOCK` + a `_CONTROL_LOCK` lease; device lives in `uhd_backend._DEV` under `uhd_backend._LOCK`, kept open across calls |
-| The ELRS hint on Inspect RF (`spectrum._annotate_elrs_hint`) | grabs `with _DEVICE_LOCK:` around its `uhd_backend.capture_iq` |
-| `dronescan.DroneScanner` | its own `_radio_lock` (with a comment: UHD RX is not thread-safe; concurrent pulls segfault) |
-| **ELRS Find (`/api/elrs`, `/api/elrs/progress`)** | **none** |
+**Fix:** `rng()` now returns `seed >> 16` (with a comment citing random.cpp + the GNU_Radio ref),
+and the selftest now asserts against the **firmware algorithm** (`seed>>16`), so a regression to
+`>>15` fails the test instead of passing. Verified: `elrs_sdr.selftest` ALL PASS, including the
+corrected `LCG rng matches ELRS random.cpp (seed>>16)` check and the permutation/sync-channel
+checks.
 
-### Concrete failure (likely on the next bench run)
+---
 
-1. Operator opens **Inspect RF** once → `uhd_backend._DEV` now holds the B205 open (it's reused, not
-   closed until the live view is explicitly stopped).
-2. Operator clicks **ELRS Find** → `RadioDevice("type=b200")` tries to open a B205 that UHD already
-   has claimed → device-busy error (best case) or a hang (UHD RX re-open on a held device).
-3. Independently: two **ELRS Find** clicks within the ~4 s sweep = two threads, two `RadioDevice`
-   opens, same radio → same collision.
+## 2. ELRS Find concurrency — FIXED
 
-Secondary: device release is `del radius` (GC-dependent), and on a **mid-sweep exception the
-`del` line is skipped** — the `except` sends an SSE error but never drops the reference — so a
-failed sweep can leave the B205 held and make the *next* ELRS Find fail "busy" too.
+`web.py` `/api/elrs` and `/api/elrs/progress` each did a bare `RadioDevice("type=b200")` under
+`ThreadingHTTPServer` with no lock — so they raced Inspect RF (which keeps the B205 open via
+`uhd_backend._DEV`) and each other (double-click) on the single, non-thread-safe radio.
 
-### Suggested fix
-
-Route ELRS Find through the same single-owner arbitration as the spectrum path. Minimal version:
-
+**Fix (both routes):**
 ```python
-# in both ELRS routes, around the sweep:
-from . import spectrum
-from . import uhd_backend
-with spectrum._DEVICE_LOCK:          # serialize with Inspect RF + the hint probe
-    uhd_backend.close()              # release any device Inspect RF is holding (_DEV)
+with _spectrum._DEVICE_LOCK:      # serialize with Inspect RF + the hint probe
+    _uhdb.close()                  # release any device uhd_backend holds open
     radius = RadioDevice(device or "type=b200")
     try:
         out = elrs_plugin.sweep_phy(radius, ..., progress=_progress)
     finally:
-        del radius                    # release on the error path too, not just success
+        del radius                 # release the UHD device even on the error path
 ```
-
-Cleaner long-term: have `sweep_phy` borrow `uhd_backend`'s managed `_DEV` (add a `capture_iq`-style
-path there) instead of opening its own `RadioDevice`, so the B205 has exactly one owner across all
-three paths. Either way the race and the "busy after Inspect RF" failure go away.
-
-I did **not** patch this myself — you're actively editing `web.py` and the ELRS plugin and pushing,
-so a surprise edit from me would collide with your next push. It's yours to land (or tell me to,
-and I'll wrap both routes). Worth closing before the re-capture.
+Now the B205 has a single owner across Inspect RF, the ELRS-hint probe, and ELRS Find. A sweep
+holds `_DEVICE_LOCK` for its ~4 s (Inspect RF requests block rather than collide — correct, since
+they can't share the radio anyway). The `finally` fixes the old "failed sweep leaves the device
+held" path.
 
 ---
 
-## 2. My landed contributions (recap)
+## 3. classify.py GFSK gap — CLOSED
 
-- **`elrs_sdr/classify.py` — protocol-ID overlay (`0e7743f`).** Per-window multi-protocol classifier
-  reusing the validated `positivedet` detectors (LoRa/ELRS confirmed; OFDM/Wi-Fi, DJI OcuSync-shape,
-  analog FPV video as synthetic-calibrated hints), wired into `spectrum._annotate_elrs_hint`. 3
-  tests (`waveraider/tests/test_protocol_overlay.py`), verified live on the B205.
-  **Known gap (you already flagged it in `ELRS_FIND_UPDATE_LOG.md` §4a):** `classify.py` does **not**
-  call `gfsk.detect_sync_word`, so the live Inspect-RF overlay tags a GFSK Tinyhawk "unidentified"
-  even though your band-wide `sweep_phy` catches it. I can reconcile by giving `classify_iq` an
-  optional `uid`/candidate-UID arg and running the GFSK detector — say the word.
-- **FLRC doc review (`986f0f0`, folded in by you — thanks).** Downgraded the Viterbi row to
-  ⚠️ SELF-CONSISTENT (round-tripping your own encoder ≠ validating against the SX1280/ELRS reality;
-  the CCSDS 171/133 + CRC-24 0x0186 conv-code shape is asserted, not datasheet-confirmed), and fixed
-  the `radius.`→`radio.` typos + stray `Sweeps`.
-- **C++ zero-IQ fix (earlier, now in HEAD).** `cpp/elrs_intercept.cpp`: corrected the UHD method
-  names (`set_dc_offset_mode`/`set_iq_balance_mode` → `set_rx_dc_offset`/`set_rx_iq_balance`), added
-  the missing `issue_stream_cmd(STREAM_MODE_START_CONTINUOUS)` (the actual zero-IQ cause — `recv()`
-  returns 0 forever until the stream is started), and fixed a `printf` varargs bug. Verified live:
-  `first recv: got=62885`, channel-selective peaks.
+You flagged (ELRS_FIND_UPDATE_LOG §4a) that `classify.py` didn't call the GFSK detector, so the
+live Inspect-RF overlay tagged a GFSK Tinyhawk "unidentified." Fixed:
+- `classify_iq(..., gfsk_uid: bytes | None = None)` — when a link UID is supplied, it runs
+  `gfsk.detect_sync_word` against the UID-derived sync word and, on a gated hit, claims
+  `ELRS / FLRC (GFSK, UID-sync match)` (`confirmed=False` — the GFSK demod is synthetic until a
+  real capture validates it; a sync match is a strong hint, not proof).
+- `spectrum._annotate_elrs_hint` now passes `DEFAULT_TARGET_UID` as `gfsk_uid`, so the overlay and
+  the band sweep agree on a GFSK link.
+
+(The GFSK sync word is UID-derived, so this is necessarily "is *this known UID's* FLRC link here" —
+correct for the bench setup. A UID-agnostic GFSK presence detector would be a separate effort.)
 
 ---
 
-## 3. What I verified independently (so you can trust the shared state)
+## 4. ELRS code comparison (vs the open references + firmware)
 
-Ran on the laptop against the real B205 and the current `main`:
+Compared our detect/identify/demod against `protocol_library/GNU_Radio_ExpressLRS`,
+`gr-lora_sdr`, and the authoritative `ExpressLRS` firmware source.
 
-| Claim (from your docs) | How I checked | Result |
-|---|---|---|
-| Git is one branch, in sync, my `0e7743f` on `origin/main` | `git status -sb`, `git branch -r --contains 0e7743f`, `git push --dry-run` | ✅ in sync; `0e7743f` on `origin/main`; dry-run "Everything up-to-date". Your Maintainer bump for `user08` works — my earlier push rejection was before it. |
-| GFSK demod round-trips 30/30 | ran `gfsk.selftest(bytes.fromhex('00000011185b'))` | ✅ sync detected, demod byte-exact, 30/30 robustness |
-| `classify.py` lacks the GFSK branch | `grep -c gfsk elrs_sdr/classify.py` | ✅ 0 refs — your gap note is correct |
-| B205 is live through WaveRaider | `wr sdr`; `GET /api/spectrum?center=2.44e9&span=80e6` with the RF header | ✅ `live_capable: true`, backend `uhd`; API returned `source:"live"`, 256 bins, 27.9 dB spread, peak ~2459 MHz — real RF, not simulated |
+**Identification (UID → seed / CRC / FHSS):**
+- `OTA_VERSION_ID`: ours `4` **matches** the vendored firmware (`targets.h:8`). The GNU_Radio ref
+  hardcodes `6` (a different ELRS release). → confirm the *real* Tinyhawk's version (if it's a
+  newer ELRS, the UID-derived sync/CRC change — a candidate reason a live link wouldn't match).
+- FHSS builder: ours uses the **current** ELRS sync-channel-at-block-start scheme (`FHSS.cpp:139`);
+  the GNU_Radio ref uses the older plain `i % freq_count`. We're current here (now that the RNG
+  shift is fixed, §1).
+- RNG: the `>>16` fix (§1) brings us in line with both firmware and the GNU_Radio ref.
 
-I also re-read the bench-capture analysis (§5 of your update log) — the methodology and the honest
-"no decodable link for the target UID" conclusion are sound.
+**Demod:**
+- LoRa: `gr-lora_sdr` is a **complete** PHY (frame_sync w/ STO+CFO, fft_demod, Gray/de-interleave/
+  Hamming-FEC/de-whitening, header_decoder). Our `core/lora.py` is a dechirp + FFT-argmax symbol
+  extractor that **self-admits** its SF5-7 bit-mapping/interleaving/header are "first-order, needs
+  capture validation" — no Gray/interleave/Hamming/whitening. If/when we need to actually decode
+  LoRa off-air, `gr-lora_sdr` is the reference to borrow those stages from.
+- GFSK/FLRC: our `core/gfsk.py` (soft-Viterbi CC, CRC-24, UID-sync) is **ahead** of the open refs —
+  the GNU_Radio flowgraphs and most ELRS-SDR work center on the LoRa rates; a working FLRC/GFSK path
+  is uncommon (ours is still offline-synthetic, per the docs).
 
----
-
-## 4. Two smaller notes
-
-- **`.complex8` is a filename-convention wart, not a data bug.** The data is int16 I/Q interleaved
-  and the `.meta.txt` says exactly that (`format: complex8 (int16 I,Q interleaved, little-endian)`),
-  and `n_samples: 500000` × 4 bytes = 2,000,000 bytes is self-consistent. The only real issue is the
-  **extension** `.complex8`, which by SDR convention reads as 8-bit/float, while this project's
-  `_write_complex8` writes int16 (sc16/ci16). It's inherited from `radio.py`, not new to the sweep.
-  Rename at the source (or just keep the meta's clarifying parenthetical); nothing downstream is
-  mis-reading it.
-- **DC offset — use the hardware correction too.** Your §5d software DC-block is right. In addition,
-  the B205 has automatic RX DC-offset correction (`set_rx_dc_offset(true, chan)` — the same call I
-  added to the C++ path). If `radio.py`'s `_ensure_rx_chain` isn't successfully enabling it on the
-  UHD 4.11 binding, turning it on removes much of the DC at the source, so the software DC-block only
-  has to mop up residual. Worth confirming it's actually applied on the Python capture path.
+**Detection:** our "measure-then-classify, no PHY assumed" (`positivedet` + `classify.py` +
+`sweep_phy` → `none/lora/gfsk/unknown_energy`) is a genuine differentiator — the refs assume a
+*configured* rate/PHY and decode that; they don't answer "what modulation is even here?"
 
 ---
 
-## 5. Boundary (concur with your §4c / §10)
+## 5. Left for you (your decode-path domain)
 
-I work the **passive detect / decode / identify** side only — classify what's on the band, decode
-the link, recover the UID fingerprint. The **forged-frame "throw"** (TX on the live link to stop the
-aircraft) is a remote-kill of a drone and is **out of scope**; I'm not advancing it, and I agree the
-old `elrc_bench_tx.py` is both non-functional and out of scope. Same line you drew — just confirming
-we're aligned so neither of us picks it up.
+I deliberately did **not** touch these — they're in the decode path you're actively iterating:
+- **DC-block before demod** (your ELRS_FIND_UPDATE_LOG §5d). Worth pairing with the hardware
+  `set_rx_dc_offset(true)` on the capture path (the same call I added to the C++) so the DC is
+  reduced at the source and the software block only mops up residual.
+- **`.complex8` filename cosmetics** — not a data bug (the meta honestly says "int16 I,Q
+  interleaved" and the byte count is consistent); the only wart is the extension, inherited from
+  `radio.py`'s `_write_complex8`. Rename at the source if you care; nothing mis-reads it.
+- **Confirm the real Tinyhawk's OTA version / rate / UID** from the Configurator — the load-bearing
+  unknown for whether a live link will match our UID-derived sync/CRC (§4).
 
 ---
 
-## 6. Suggested next actions (yours to prioritize)
+## 6. What I verified this round
 
-1. **Land the device-lock fix** (§1) before the next bench capture — it's the one thing that will
-   actively break a mixed Inspect-RF + ELRS-Find session.
-2. **Re-capture with the radio confirmed on + transmitting + known rate/UID** (your §6 checklist),
-   then re-run the detection. That's still the load-bearing experiment.
-3. If useful, I'll **reconcile `classify.py` with the GFSK detector** (§2) so the live overlay and
-   the sweep agree on a GFSK Tinyhawk.
+- `elrs_sdr.selftest` → ALL PASS with the corrected `>>16` RNG + firmware-referenced test.
+- `classify_iq(..., gfsk_uid=…)` plumbs through (noise → `unknown`, no crash; positive path rides
+  the already-validated `gfsk.detect_sync_word`, which `gfsk.selftest` proves detects a real GFSK
+  frame).
+- `web.py` + `spectrum.py` compile; `tests/test_protocol_overlay.py` → 3/3.
+- Full WaveRaider suite: **575 passed / 28 failed / 3 skipped**, and I confirmed my changes add
+  **zero regressions** by running the suite with my edits *stashed out* — the result was
+  **identical** (28/575/3 both ways). So all 28 failures are pre-existing on the current tree, not
+  mine. They're **your** ELRS-integration stale tests + fixtures, worth a pass on your side:
+  `test_protocols` (14) + `test_cli` retired-protocols (6) + `test_navigation`/`test_monitor` (the
+  "guarded routes are *exactly* …" assertion now needs `/api/elrs` + `/api/elrs/progress`) — all
+  from the `elrs`-is-now-a-protocol + new-routes changes; plus `test_bladerf_capture` (2) and
+  `test_remote_id_reference` (4, the missing `*.expected.jsonl` fixtures from my earlier review).
+
+---
+
+## 7. Boundary (unchanged, concur with your §4c/§10)
+
+Passive **detect / decode / identify** only. The forged-frame "throw" is a remote-kill of an
+aircraft and is **out of scope** — not advanced; `elrc_bench_tx.py` stays non-functional + out of
+scope. Same line you drew.
+
+---
+
+## 8. Commits (this round, on `main`)
+
+| Commit | What |
+|---|---|
+| `fix(fhss)` | RNG `>>15`→`>>16` (ELRS random.cpp conformance) + de-self-reference the selftest |
+| `fix(waveraider)` | ELRS Find routes: serialize B205 access via `_DEVICE_LOCK` + release held device + `finally` del |
+| `feat(classify)` | `classify_iq(gfsk_uid=…)` GFSK/FLRC UID-sync branch; overlay passes `DEFAULT_TARGET_UID` |
+| `docs` | this file |
 
 — Claude
