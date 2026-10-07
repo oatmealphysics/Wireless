@@ -26,6 +26,46 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 
 ---
 
+## 2026-10-07 (andeds) — dynamic analyze_capture.py (no subfolder typing) + captures-path clarification
+
+**Captures are at `<repo-root>/captures/`** (NOT `waveraider/captures/` — `web.py` writes to
+`Path(__file__).parents[2]/captures` = repo root). So on the laptop it's
+`~/Drone_Project/elrs-sdr-transfer/captures/elrs_find_<timestamp>/`. The `.complex8` IQ files are
+**gitignored** (`.gitignore: *.complex8`), so `git push` will NOT carry the raw IQ — only the
+`manifest.json` (the classification summary) can be pushed. For the raw IQ, upload the dir via the
+files API (like last time).
+
+**`analyze_capture.py` is now dynamic** (`1032714`) — you never type the timestamped subfolder:
+- `python3 analyze_capture.py` → **auto-picks the most recent** `captures/elrs_find_*/` dir (by
+  mtime) and analyzes it. (Run from the repo root.)
+- `python3 analyze_capture.py --fast` → **quick read** (~1s/channel): GFSK sync + duty cycle +
+  spectrum shape only, skips the slow LoRa CRC-decode. Use this for the "did it find anything?"
+  check.
+- `python3 analyze_capture.py` (full) → also runs the CRC-valid LoRa frame count, now **capped at
+  100** (a real link is a consistent stream; stop once we hit 100) + **skipped on GFSK channels**
+  (a channel is either GFSK or LoRa). This fixes the full analysis timing out on a 14-channel
+  capture.
+- An explicit dir still works: `python3 analyze_capture.py captures/elrs_find_<ts>`.
+
+**Verified:** `--fast` on the 14-channel baseline finishes in seconds (correctly: no GFSK, no LoRa,
+duty 0.82 = not an ELRS burst link → "radio not TXing / different rate-UID / interference"). Full
+mode on 2 channels ~40s (ch0: 35, ch1: 31 LoRa frames, both <100 = noise false-positives).
+
+**So the workflow for the final capture (laptop):**
+```
+cd ~/Drone_Project/elrs-sdr-transfer && git pull   # get 1032714
+# restart wr serve (plugin changed): Ctrl-C then wr serve
+# Monitor -> ELRS Find (radio on+TXing, Tinyhawk powered)
+# it saves to: captures/elrs_find_<timestamp>/   (repo root, not waveraider/)
+# upload that dir (files API) — the .complex8 won't git-push (gitignored)
+```
+Then I run `python3 analyze_capture.py --fast` (auto-latest) for the quick read, and full mode if
+a GFSK/LoRa hit shows up. `elrs_sdr.selftest` ALL PASS.
+
+**Current state:** one branch (`main`), clean + in sync (`1032714`).
+
+---
+
 ## 2026-10-07 (andeds) — final-capture prep: honest per-channel progress + analyze_capture.py
 
 Ready for the last bench capture. Two code changes pushed (`2f81500`):
