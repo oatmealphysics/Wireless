@@ -489,6 +489,10 @@ function renderElrsFind(data){
   }
   h+='<div class="muted" style="margin-top:10px;font-size:13px">srate '+(data.srate/1e6).toFixed(1)+' MS/s · UID '+(data.uid||"default")
     +'</div>';
+  if(data.saved_dir){
+    h+='<div class="muted" style="margin-top:6px;font-size:13px"><b>Capture saved:</b> '
+      + esc(data.saved_dir) +' <span class="soft">(' + data.saved_files + ' IQ file(s) + manifest.json — upload this dir for offline analysis)</span></div>';
+  }
   body.className="";
   body.innerHTML=h;
 }

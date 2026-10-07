@@ -279,11 +279,22 @@ def classify_phy(iq, srate: float, uid: bytes | None = None,
 
 def sweep_phy(radius, srate: float = 10e6, gain: float = 40.0, dwell_ms: int = 200,
               channels: int = 80, freq0: float = 2400.4e6, spacing: float = 1.0e6,
-              uid: bytes | None = None) -> list[dict]:
+              uid: bytes | None = None, output_dir: str | None = None) -> dict:
     """Sweep the ISM2400 FHSS band and classify each channel's PHY (modulation-
     agnostic — no rate/PHY assumed). `radius` is an elrs_sdr.radio.RadioDevice.
-    Returns per-channel results (only channels with energy). This is the backend
-    for the web UI's /api/elrs route — it answers "what's there" from the RF."""
+    This is the backend for the web UI's /api/elrs route — it answers "what's
+    there" from the RF.
+
+    If `output_dir` is given, it ALSO saves the evidence for offline re-analysis:
+      * one raw-IQ file per channel with energy:  <output_dir>/ch<N>_<MHz>MHz.complex8
+        (SDR#/GQRtx format — the same as radio.capture(path=...), re-openable in any SDR tool)
+      * a manifest:  <output_dir>/manifest.json  (params + the per-channel classification
+        summary + which channels had energy + the file names)
+    This is what you upload to hand the capture back for offline analysis.
+
+    Returns {"channels": [...], "saved_dir": output_dir or None, "saved_files": N}.
+    """
+    import os, json, time
     import numpy as np
     uid = uid or DEFAULT_TARGET_UID
     # Keep the dwell SHORT: a GFSK/FLRC ELRS frame is ~1-2 ms, so 50 ms (500k samples
@@ -297,25 +308,51 @@ def sweep_phy(radius, srate: float = 10e6, gain: float = 40.0, dwell_ms: int = 2
     for c in range(channels):
         f = freq0 + c * spacing
         # real RadioDevice API: tune(freq_hz, sample_rate, gain, antenna=None),
-        # then capture(n_samples) -> a single np.complex64 array of that length.
+        # then capture(n_samples, path=...) -> a single np.complex64 array of that
+        # length. Pass a per-channel path when saving so the raw IQ is written to
+        # disk as a .complex8 file (SDR#/GQRtx) alongside the in-memory array.
         radius.tune(f, srate, gain)
+        ch_path = None
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            ch_path = os.path.join(output_dir, f"ch{c}_{f/1e6:.1f}MHz.complex8")
         try:
-            samples = radius.capture(n_dwell, log_every=1 << 30)
+            samples = radius.capture(n_dwell, path=ch_path, log_every=1 << 30)
         except Exception:
             continue
         if samples is None or len(samples) == 0:
             continue
-        raw.append((c, f, samples))
-    all_p = np.concatenate([np.abs(s) ** 2 for _, _, s in raw]) if raw else np.array([0.0])
+        raw.append((c, f, samples, ch_path))
+    all_p = np.concatenate([np.abs(s) ** 2 for _, _, s, _ in raw]) if raw else np.array([0.0])
     nf = float(np.percentile(all_p, 10)) + 1e-12
     results = []
-    for c, f, samples in raw:
+    for c, f, samples, ch_path in raw:
         r = classify_phy(samples, srate, uid=uid, noise_floor=nf)
         r["channel"] = c
         r["freq_mhz"] = round(f / 1e6, 2)
-        if r["phy"] != "none":
-            results.append(r)
-    return results
+        r["n_samples"] = int(len(samples))
+        if ch_path:
+            r["iq_file"] = os.path.basename(ch_path)
+        results.append(r)   # keep ALL channels in the manifest (energy + none), not just non-none
+    # summary: only the channels with energy (what the UI table shows)
+    energy = [r for r in results if r["phy"] != "none"]
+    saved_files = 0
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        manifest = {
+            "captured_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "params": {"srate": srate, "gain": gain, "dwell_ms": dwell_ms,
+                       "channels": channels, "freq0_hz": freq0, "spacing_hz": spacing,
+                       "uid": (uid.hex() if uid else None),
+                       "noise_floor": round(nf, 3)},
+            "channels_with_energy": energy,
+            "all_channels": results,
+        }
+        with open(os.path.join(output_dir, "manifest.json"), "w") as fh:
+            json.dump(manifest, fh, indent=2)
+        saved_files = sum(1 for _, _, _, p in raw if p and os.path.exists(p))
+    return {"channels": energy, "saved_dir": (output_dir if output_dir else None),
+            "saved_files": saved_files, "all_channels": results}
 
 
 

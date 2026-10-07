@@ -203,18 +203,25 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as e:
                 return self._send(400, json.dumps({"error": f"bad param: {e}"}))
             uid = bytes.fromhex(uid_hex) if uid_hex else None
+            # Save the capture to a timestamped dir so the user has a concrete artifact
+            # to upload for offline re-analysis (raw .complex8 per channel + manifest.json).
+            import time as _time
+            cap_root = Path(__file__).resolve().parents[2] / "captures"
+            out_dir = str(cap_root / f"elrs_find_{_time.strftime('%Y%m%d_%H%M%S')}")
             logbuf.log("info", f"ELRS PHY sweep: {channels} ch @ {freq0/1e6:.1f} MHz "
-                               f"(spacing {spacing/1e6:.1f} MHz), srate {srate:.3g}")
+                               f"(spacing {spacing/1e6:.1f} MHz), srate {srate:.3g} -> {out_dir}")
             try:
                 from elrs_sdr.radio import RadioDevice
                 radius = RadioDevice(device or "type=b200")
-                results = elrs_plugin.sweep_phy(radius, srate=srate, gain=gain,
-                                                dwell_ms=dwell_ms, channels=channels,
-                                                freq0=freq0, spacing=spacing, uid=uid)
+                out = elrs_plugin.sweep_phy(radius, srate=srate, gain=gain,
+                                            dwell_ms=dwell_ms, channels=channels,
+                                            freq0=freq0, spacing=spacing, uid=uid,
+                                            output_dir=out_dir)
                 # RadioDevice has no close(); drop the reference so the UHD device is GC'd.
                 del radius
             except Exception as e:
                 return self._send(500, json.dumps({"error": str(e)}))
+            results = out["channels"]   # channels with energy (the UI table)
             # interpret for the UI
             g = [r for r in results if r["phy"] == "gfsk"]
             l = [r for r in results if r["phy"] == "lora"]
@@ -231,8 +238,13 @@ class Handler(BaseHTTPRequestHandler):
                               f"— energy present, neither LoRa nor known-UID GFSK.")
             if not results:
                 interp.append("Nothing found — is the drone's ELRS TX on? On ISM2400?")
+            # tell the UI where the capture was saved (so the user knows what to upload)
+            interp.append(f"Saved {out.get('saved_files', 0)} raw-IQ file(s) + manifest to: "
+                          f"{out.get('saved_dir') or '(not saved)'}")
             return self._send(200, json.dumps({"channels": results, "interpretation": interp,
-                                               "srate": srate, "uid": (uid.hex() if uid else None)}))
+                                               "srate": srate, "uid": (uid.hex() if uid else None),
+                                               "saved_dir": out.get("saved_dir"),
+                                               "saved_files": out.get("saved_files", 0)}))
         if u.path == "/settings":
             return self._send(200, Path(__file__).with_name("settings.html").read_text(), "text/html; charset=utf-8")
         if u.path == "/api/settings/receivers":
