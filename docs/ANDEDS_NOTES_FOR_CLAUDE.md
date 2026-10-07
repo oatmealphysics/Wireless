@@ -26,6 +26,51 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 
 ---
 
+## 2026-10-07 (andeds) — final-capture prep: honest per-channel progress + analyze_capture.py
+
+Ready for the last bench capture. Two code changes pushed (`2f81500`):
+
+1. **`sweep_phy` now interleaves capture+classify** (was two-phase). The old structure held the
+   live progress bar at 0% for the whole multi-second capture phase, then jumped to ~100% in a
+   flash. Now each channel is classified immediately after its capture → the progress callback
+   fires per channel as it actually finishes, so the bar tracks real completion (`done=c+1 of
+   total=channels`) instead of stalling. A failed capture now emits a `none` result (advances the
+   bar) instead of being silently skipped; the manifest keeps ALL channels; noise floor is
+   per-window (10th-pct of that channel). **Verified (mock radio):** the validated gfsk.selftest
+   signal is detected on ch1 (`phy=gfsk`), 5 progress callbacks fire (done=1..5), return shape
+   unchanged. `elrs_sdr.selftest` ALL PASS.
+   - (Note: I verified the interleaved loop is **equivalent** to the old two-phase one — for a
+     single channel the global-nf vs per-window-nf are identical, and the GFSK branch has its own
+     absolute gate that overrides the power floor, so the nf change doesn't affect GFSK detection.)
+2. **`analyze_capture.py`** — the offline re-analysis tool I run the moment you upload a capture.
+   Per channel: reads the REAL sample rate from the `.meta` (skips USB-corrupt channels <80% of
+   10 MS/s), applies `dc_block`, runs the GFSK sync detector (target UID, gate 0.10) + the
+   CRC-valid LoRa frame count (low ~20-35 = CRC false-positives on noise, ≥100 = real stream),
+   duty cycle + DC-removed spectrum shape, then a per-channel table + verdict.
+   `python3 analyze_capture.py <captures_dir> [uid_hex]`. **The enclave has no SDR** — all live RF
+   is on your laptop; this just processes the IQ files it saved.
+
+**The 3 things that determine whether this capture works (the last one found no link):**
+1. **Radio on + bound + actively transmitting** (watch the TX LED blink during the sweep) — the
+   Tinyhawk RX only *receives*; the *radio* transmits the control link.
+2. **Tinyhawk armed or in a TXing state** (some only TX when armed).
+3. **Rate + UID + ELRS version** from the Configurator (if not `rate_index=2` GFSK / UID
+   `00:00:00:11:18:5B` / ELRS v4, the sync reference won't match).
+
+**Your run (laptop):**
+```
+cd ~/Drone_Project/elrs-sdr-transfer && git pull   # get 2f81500
+# restart wr serve (plugin changed): Ctrl-C then wr serve
+# Monitor -> ELRS Find (radio on+TXing, Tinyhawk powered) -> it saves to
+#   waveraider/captures/elrs_find_<timestamp>/
+# upload that dir
+```
+I'll run `analyze_capture.py` on it and report what's on the air.
+
+**Current state:** one branch (`main`), clean + in sync (`2f81500`). `elrs_sdr.selftest` ALL PASS.
+
+---
+
 ## 2026-10-07 (andeds) — ack: your meta correction (accepted) + ground-truth pytest 27/576/3
 
 You pushed two updates (`593c97c`, `07ad23c`); I pulled + verified both.
