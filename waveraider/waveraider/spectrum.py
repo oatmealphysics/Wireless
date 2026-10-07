@@ -770,5 +770,19 @@ def _annotate_elrs_hint(signals: list, backend: str) -> None:
             if score >= 0.5 and "ExpressLRS (possible)" not in sig.get("rf_candidates", []):
                 sig.setdefault("rf_candidates", []).insert(0, "ExpressLRS (possible)")
                 sig["elrs_hint"] = round(score, 2)
+            # Broader protocol hint: run the shared multi-protocol classifier
+            # (elrs_sdr.classify) on the SAME IQ window — OFDM/Wi-Fi-class, DJI
+            # OcuSync-shape, analog FPV video — and attach the best positive
+            # claim as a hint. Positive-ID only: nothing is attached when no
+            # detector clears its threshold. A hint, never a detection — same
+            # contract as the ELRS tag above (only the LoRa chirp detector is
+            # capture-validated; the rest are synthetic-calibrated, confirmed=False).
+            try:
+                from elrs_sdr import classify as _wr_classify
+                _c = _wr_classify.classify_iq(iq, rate or probe_rate)
+                if _c.signature != "unknown":
+                    sig["protocol_hint"] = _c.to_dict()
+            except Exception:
+                pass
         except Exception:
             continue
