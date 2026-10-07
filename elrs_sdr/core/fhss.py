@@ -8,7 +8,7 @@ Ports of:
 The hop *sequence* is a pseudo-random permutation generated from a 32-bit seed
 via a linear congruential generator:
     seed = (214013 * seed + 2531011) % 2147483648      (31-bit modulus)
-    rng  = seed >> 15                                  (15-bit output)
+    rng  = seed >> 16                                  (0..0x7FFF, per random.cpp)
 
 The seed for a bound link is derived from the UID (see ota.uid_seed).
 
@@ -40,9 +40,13 @@ class Lcg:
         self.seed = seed & 0x7FFFFFFF
 
     def rng(self) -> int:
-        # 0 <= x < 0x8000 (15 bits), per random.cpp comment
+        # ELRS src/lib/FHSS/random.cpp rng(): seed=(a*seed+c)%2^31; return seed>>16
+        # (yields 0..0x7FFF). This MUST be >>16 to match the firmware hop sequence;
+        # an earlier >>15 here was non-conformant and produced the wrong permutation
+        # (cross-checked against random.cpp and the GNU_Radio_ExpressLRS reference,
+        # both of which use >>16).
         self.seed = (_LCG_A * self.seed + _LCG_C) % _LCG_M
-        return self.seed >> 15
+        return self.seed >> 16
 
     def rng_n(self, upper: int) -> int:
         # 0 <= x < upper, upper < 256

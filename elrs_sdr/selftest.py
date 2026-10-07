@@ -155,16 +155,18 @@ def test_channel_pack_unpack():
 
 def test_fhss_lcg():
     print("FHSS LCG:")
-    # ELRS LCG: seed=(214013*seed+2531011)%2^31 ; rng=seed>>15
+    # Conformance check against the ELRS FIRMWARE algorithm
+    # (src/lib/FHSS/random.cpp rng(): seed=(214013*seed+2531011)%2^31; return seed>>16),
+    # NOT against our own Lcg — so a regression back to >>15 fails here instead of
+    # silently passing (which is exactly what the old >>15 reference did).
     lcg = fhss.Lcg(12345)
     a = [lcg.rng() for _ in range(4)]
-    # independent reference
     s = 12345
     ref = []
     for _ in range(4):
         s = (214013 * s + 2531011) % 2147483648
-        ref.append(s >> 15)
-    check("LCG rng matches reference", a == ref, f"got {a} want {ref}")
+        ref.append(s >> 16)
+    check("LCG rng matches ELRS random.cpp (seed>>16)", a == ref, f"got {a} want {ref}")
 
     dom = fhss.DOMAINS["ISM2G4"]
     seq = fhss.build_sequence(seed=fhss.uid_seed(_uid()),
