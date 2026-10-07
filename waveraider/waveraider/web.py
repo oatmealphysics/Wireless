@@ -223,12 +223,21 @@ class Handler(BaseHTTPRequestHandler):
 
             try:
                 from elrs_sdr.radio import RadioDevice
-                radius = RadioDevice(device or "type=b200")
-                out = elrs_plugin.sweep_phy(radius, srate=srate, gain=gain,
-                                            dwell_ms=dwell_ms, channels=channels,
-                                            freq0=freq0, spacing=spacing, uid=uid,
-                                            output_dir=out_dir, progress=_progress)
-                del radius
+                from . import spectrum as _spectrum, uhd_backend as _uhdb
+                # Serialize access to the single, non-thread-safe B205 with Inspect
+                # RF (which holds the device open via uhd_backend._DEV). Without this,
+                # a concurrent spectrum sweep or a double-clicked ELRS Find collides
+                # on the radio. Release any held device before we claim it.
+                with _spectrum._DEVICE_LOCK:
+                    _uhdb.close()
+                    radius = RadioDevice(device or "type=b200")
+                    try:
+                        out = elrs_plugin.sweep_phy(radius, srate=srate, gain=gain,
+                                                    dwell_ms=dwell_ms, channels=channels,
+                                                    freq0=freq0, spacing=spacing, uid=uid,
+                                                    output_dir=out_dir, progress=_progress)
+                    finally:
+                        del radius   # release the UHD device even on the error path
                 results = out["channels"]
                 g = [r for r in results if r["phy"] == "gfsk"]
                 l = [r for r in results if r["phy"] == "lora"]
@@ -278,13 +287,19 @@ class Handler(BaseHTTPRequestHandler):
                                f"(spacing {spacing/1e6:.1f} MHz), srate {srate:.3g} -> {out_dir}")
             try:
                 from elrs_sdr.radio import RadioDevice
-                radius = RadioDevice(device or "type=b200")
-                out = elrs_plugin.sweep_phy(radius, srate=srate, gain=gain,
-                                            dwell_ms=dwell_ms, channels=channels,
-                                            freq0=freq0, spacing=spacing, uid=uid,
-                                            output_dir=out_dir)
-                # RadioDevice has no close(); drop the reference so the UHD device is GC'd.
-                del radius
+                from . import spectrum as _spectrum, uhd_backend as _uhdb
+                # Serialize B205 access with Inspect RF (single, non-thread-safe
+                # radio); release any device uhd_backend holds open before claiming it.
+                with _spectrum._DEVICE_LOCK:
+                    _uhdb.close()
+                    radius = RadioDevice(device or "type=b200")
+                    try:
+                        out = elrs_plugin.sweep_phy(radius, srate=srate, gain=gain,
+                                                    dwell_ms=dwell_ms, channels=channels,
+                                                    freq0=freq0, spacing=spacing, uid=uid,
+                                                    output_dir=out_dir)
+                    finally:
+                        del radius   # release the UHD device even on the error path
             except Exception as e:
                 return self._send(500, json.dumps({"error": str(e)}))
             results = out["channels"]   # channels with energy (the UI table)
