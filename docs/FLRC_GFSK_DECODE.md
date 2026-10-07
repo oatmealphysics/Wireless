@@ -206,6 +206,46 @@ trustworthy — without it, every channel would look like GFSK.
 
 ---
 
+## 3c. Running it through the WaveRaider web UI
+
+The finder is wired into WaveRaider's web UI (not just a standalone script), so the whole
+detect/decode chain runs from the browser:
+
+- **`waveraider/protocols/elrs/__init__.py`** — the ELRS plugin gained:
+  - `gfsk` added to the `elrs_sdr.core` import (the plugin already bootstraps `elrs_sdr` onto
+    sys.path at import).
+  - **`decode_gfsk(iq, srate, uid)`** — the GFSK/FLRC decode branch (same dict shape as
+    `decode_iq`, so the classifier is uniform).
+  - **`decode_iq(..., rate="auto")`** — a modulation-agnostic sentinel that tries **both** GFSK
+    and LoRa (the union, sorted by sample). This is the path the UI uses so it never assumes the
+    PHY. (The original LoRa-only logic is extracted to `_decode_lora`, unchanged.)
+  - **`classify_phy(iq, srate, uid, noise_floor)`** — the per-window PHY classifier
+    (`none`/`lora`/`gfsk`/`unknown_energy`), the core of the sweep.
+  - **`sweep_phy(radius, ...)`** — the band sweep that classifies each channel; the backend for
+    the web route.
+- **`waveraider/web.py`** — a new **`GET /api/elrs`** route (added to `RF_GET_ROUTES`) that runs
+  `sweep_phy` and returns per-channel PHY classification + a plain-language interpretation
+  ("GFSK/FLRC link on ch X — decode with the GFSK branch" / "LoRa link, rate Y" / "unidentified
+  RF"). Query params: `srate, gain, dwell_ms, channels, freq0, spacing, uid, device`.
+- **`waveraider/monitor.html`** — an **"ELRS Find"** button in the header + a results panel
+  (a table: channel / MHz / power / PHY / LoRa-score / GFSK-score / detail, plus the
+  interpretation). Clicking it calls `/api/elrs` and renders the sweep.
+
+**Verified (offline, synthetic — the same data the UI would feed it):**
+- `decode_iq(rate="auto")` on a GFSK frame → **1 packet, `crc_valid=True`, UID `00000011185b`** ✓
+- `classify_phy` on a GFSK signal → `gfsk` ✓; on noise → `unknown_energy` (not gfsk) ✓
+- `web.py` imports with `/api/elrs` in `RF_GET_ROUTES` ✓; all three files syntax-clean ✓
+- No regression: `elrs_sdr.selftest` ALL PASS, `gfsk` round-trip PASS, `find_link --selftest` PASS ✓
+
+**Honest caveat:** the WaveRaider `pytest` suite (600 tests) runs on the laptop, not this
+enclave, so I couldn't run it here — the 3 pre-existing failure classes Claude triaged (stale
+test wording, missing fixtures, package-not-installed version metadata) are unrelated to these
+changes and were red before. These changes add new functions + a route + a UI button; they don't
+modify the existing test-covered behavior (the LoRa decode path is preserved verbatim in
+`_decode_lora`). Run `wr` on the laptop and the "ELRS Find" button will be in the Monitor header.
+
+---
+
 ## 4. Where this sits in the exploit chain
 
 ```

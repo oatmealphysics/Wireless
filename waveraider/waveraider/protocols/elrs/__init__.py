@@ -45,7 +45,7 @@ try:
             if str(_p) not in _sys.path:
                 _sys.path.insert(0, str(_p))
             break
-    from elrs_sdr.core import lora, ota, fhss, crc  # noqa: F401
+    from elrs_sdr.core import lora, ota, fhss, crc, gfsk  # noqa: F401
     _CORE = True
     _CORE_ERR = ""
 except Exception as e:  # pragma: no cover - core missing (e.g. partial checkout)
@@ -88,9 +88,35 @@ def decode_iq(samples, srate: float, rate: str = DEFAULT_RATE,
     `uid` is the 6-byte link UID (bytes) if known; else binding-mode init is
     tried (works for bind captures). The nonce is scanned 0..255 for non-sync
     frames (offline decode doesn't track the live counter).
+
+    PHY: if `rate` is a FLRC/GFSK rate (name starts with "FLRC" or is one of the
+    2.4 GHz GFSK indexes), decode with the GFSK branch. Otherwise LoRa. A
+    `rate="auto"` sentinel tries BOTH (LoRa then GFSK) — the modulation-agnostic
+    path used by the web UI so it doesn't need to assume the PHY.
     """
     if not _CORE:
         raise RuntimeError(_CORE_ERR)
+
+    # --- GFSK branch (the FLRC 2.4 GHz rates the LoRa decoder can't see) ---
+    is_gfsk = rate in ("auto",) or (isinstance(rate, str) and rate.upper().startswith("FLRC"))
+    if is_gfsk:
+        g_pkts = decode_gfsk(samples, srate, uid)
+        if rate == "auto":
+            # also try LoRa, merge (a link is either PHY, not both — the union is safe)
+            try:
+                l_pkts = _decode_lora(samples, srate, "150Hz", uid)
+            except Exception:
+                l_pkts = []
+            merged = g_pkts + l_pkts
+            merged.sort(key=lambda d: d["sample"])
+            return merged
+        return g_pkts
+
+    return _decode_lora(samples, srate, rate, uid)
+
+
+def _decode_lora(samples, srate: float, rate: str, uid: bytes | None = None) -> list[dict]:
+    """The original LoRa-only decode (unchanged logic, extracted for the auto path)."""
     if rate not in lora.ELRS_2G4_RATES:
         raise ValueError(f"unknown ELRS rate {rate!r}; "
                          f"valid: {', '.join(lora.ELRS_2G4_RATES)}")
@@ -146,6 +172,143 @@ def elrs_present(iq, srate: float, sf: int = 7) -> float:
         return float(score)
     except Exception:
         return 0.0
+
+
+# --------------------------------------------------------------------------- #
+# GFSK / FLRC branch + modulation-agnostic PHY classification
+# --------------------------------------------------------------------------- #
+# The target (Tinyhawk, rate_index=2) is on FLRC/GFSK, not LoRa — decode_iq above is
+# LoRa-only and is BLIND to it. These functions add the GFSK branch so the WaveRaider
+# UI can SEE a GFSK link, plus a classifier that, per IQ window, MEASURES which ELRS
+# PHY (LoRa vs GFSK vs unknown) is actually transmitting — no rate/PHY assumed.
+# This is the "find out what's there" front-end, wired into the web UI.
+
+# The target's UID (from the CLI dump). The GFSK sync reference is derived from it.
+# If the link is GFSK on a *different* UID, the GFSK branch scores low and the
+# classifier still reports "unknown_energy" (the link is found, the UID is the next step).
+DEFAULT_TARGET_UID = bytes.fromhex("00000011185b")
+
+
+def decode_gfsk(iq, srate: float, uid: bytes | None = None) -> list[dict]:
+    """Decode FLRC/GFSK ELRS frames (the rate_index 0-3 2.4 GHz rates the LoRa
+    decoder can't see). Returns the same dict shape as decode_iq so the classifier
+    is uniform. The sync word + CRC seed are derived from `uid` (default: the
+    target's UID). The payload handed back is the 8-byte OTA frame; CRC-validity
+    is checked by the caller via _try_crc (same as the LoRa branch)."""
+    if not _CORE:
+        return []
+    uid = uid or DEFAULT_TARGET_UID
+    params = gfsk.FlrcParams(sample_rate=srate)
+    sw = gfsk.flrc_sync_word(uid)
+    starts = gfsk.detect_sync_word(iq, sw, params)
+    if not starts:
+        return []
+    out = []
+    for s in starts[:16]:
+        payload = gfsk.demodulate_frame(iq, params, s)
+        if payload is None or len(payload) < gfsk.FLRC_PAYLOAD_LEN:
+            continue
+        # validate the OTA CRC (binding check) — reuse the LoRa branch's _try_crc
+        pkt = _try_crc(payload, uid, ota.ota_uid_crc_init(uid))
+        if pkt is None:
+            continue
+        out.append({"raw": payload, "sample": s, "invert_iq": gfsk.FLRC_INVERT_IQ,
+                    "packet": pkt})
+    return out
+
+
+def classify_phy(iq, srate: float, uid: bytes | None = None,
+                 noise_floor: float | None = None) -> dict:
+    """Modulation-agnostic classifier for ONE IQ window. MEASURES band power,
+    LoRa chirp structure, and GFSK UID-sync match, then CLASSIFIES the PHY —
+    no rate/PHY assumed. Returns {power_db, phy, lora_score, gfsk_score, ...}.
+    phy in {none, lora, gfsk, unknown_energy}. This is the core of the
+    "find out what's there" sweep (exposed to the web UI as /api/elrs)."""
+    uid = uid or DEFAULT_TARGET_UID
+    if not _CORE:
+        return {"power_db": 0.0, "phy": "unknown", "lora_score": 0.0, "gfsk_score": 0.0,
+                "error": _CORE_ERR}
+    import numpy as np
+    iq = np.asarray(iq, dtype=np.complex64)
+    # band power above the noise floor (default: 10th-percentile sample power)
+    p = float(np.mean(np.abs(iq) ** 2))
+    nf = noise_floor if (noise_floor and noise_floor > 0) else float(np.percentile(np.abs(iq) ** 2, 10)) + 1e-12
+    power_db = 10.0 * np.log10(p / nf) if (p > 0 and nf > 0) else 0.0
+
+    # LoRa presence: try the ELRS 2.4 GHz LoRa rates' sync correlation
+    lora_score, lora_rate = 0.0, None
+    try:
+        for rate in lora.ELRS_2G4_RATES:
+            lp = lora.LoRaParams(rate.sf, rate.bw_hz, sample_rate=srate)
+            if lora.detect_sync_word(iq, lp, threshold=0.5):
+                lora_score = min(1.0, lora_score + 0.5)
+                lora_rate = lora_rate or rate
+    except Exception:
+        pass
+
+    # GFSK presence: correlate the UID-derived sync word (absolute-gated in gfsk.py)
+    gfsk_score, gfsk_starts = 0.0, []
+    try:
+        gp = gfsk.FlrcParams(sample_rate=srate)
+        gfsk_starts = gfsk.detect_sync_word(iq, gfsk.flrc_sync_word(uid), gp)
+        if gfsk_starts:
+            gfsk_score = min(1.0, 0.6 + 0.05 * min(len(gfsk_starts), 8))
+    except Exception:
+        pass
+
+    # Decide by which measured signal dominates. A STRONG PHY match (gfsk or lora score
+    # >= 0.6) IS the detection — it overrides the crude band-power gate, because a
+    # full-band GFSK signal has mean power ≈ its own noise floor (power_db ~ 0) yet is
+    # unmistakably present. The power gate only matters when NEITHER PHY matched (to
+    # reject noise as "unknown_energy" vs "none").
+    if gfsk_score >= 0.6 and gfsk_score > lora_score:
+        phy = "gfsk"
+    elif lora_score >= 0.6 and lora_score >= gfsk_score:
+        phy = "lora"
+    elif power_db < 3.0:
+        phy = "none"
+    elif power_db >= 3.0:
+        phy = "unknown_energy"
+    else:
+        phy = "none"
+
+    return {"power_db": round(power_db, 2), "phy": phy,
+            "lora_score": round(lora_score, 3), "lora_rate": lora_rate,
+            "gfsk_score": round(gfsk_score, 3), "gfsk_sync_starts": gfsk_starts[:8]}
+
+
+def sweep_phy(radius, srate: float = 10e6, gain: float = 40.0, dwell_ms: int = 200,
+              channels: int = 80, freq0: float = 2400.4e6, spacing: float = 1.0e6,
+              uid: bytes | None = None) -> list[dict]:
+    """Sweep the ISM2400 FHSS band and classify each channel's PHY (modulation-
+    agnostic — no rate/PHY assumed). `radius` is an elrs_sdr.radio.RadioDevice.
+    Returns per-channel results (only channels with energy). This is the backend
+    for the web UI's /api/elrs route — it answers "what's there" from the RF."""
+    import numpy as np
+    uid = uid or DEFAULT_TARGET_UID
+    n_dwell = int(srate * dwell_ms / 1000.0)
+    raw = []
+    for c in range(channels):
+        f = freq0 + c * spacing
+        radius.rx_tune(f, srate, gain=gain)
+        try:
+            samples = radius.rx_stream(chunk=n_dwell, timeout_s=dwell_ms / 1000.0 + 0.1)
+        except Exception:
+            continue
+        if samples is None or len(samples) == 0:
+            continue
+        raw.append((c, f, samples))
+    all_p = np.concatenate([np.abs(s) ** 2 for _, _, s in raw]) if raw else np.array([0.0])
+    nf = float(np.percentile(all_p, 10)) + 1e-12
+    results = []
+    for c, f, samples in raw:
+        r = classify_phy(samples, srate, uid=uid, noise_floor=nf)
+        r["channel"] = c
+        r["freq_mhz"] = round(f / 1e6, 2)
+        if r["phy"] != "none":
+            results.append(r)
+    return results
+
 
 
 # ---------------------------------------------------------------------------
