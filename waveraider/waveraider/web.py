@@ -275,6 +275,9 @@ class Handler(BaseHTTPRequestHandler):
                 spacing = float(q.get("spacing", ["1000000"])[0])
                 uid_hex = q.get("uid", [""])[0]
                 device = q.get("device", [""])[0] or None
+                detect = q.get("detect", ["window"])[0]        # window | burst
+                strategy = q.get("strategy", ["sweep"])[0]     # sweep | sync
+                sync_dwell_s = float(q.get("dwell_s", ["1.0"])[0])
             except ValueError as e:
                 return self._send(400, json.dumps({"error": f"bad param: {e}"}))
             uid = bytes.fromhex(uid_hex) if uid_hex else None
@@ -294,10 +297,17 @@ class Handler(BaseHTTPRequestHandler):
                     _uhdb.close()
                     radius = RadioDevice(device or "type=b200")
                     try:
-                        out = elrs_plugin.sweep_phy(radius, srate=srate, gain=gain,
-                                                    dwell_ms=dwell_ms, channels=channels,
-                                                    freq0=freq0, spacing=spacing, uid=uid,
-                                                    output_dir=out_dir)
+                        if strategy == "sync":
+                            # secondary scan: long-dwell the ELRS sync channel (ch40,
+                            # 2440.4 MHz) + burst-detect — catches FHSS hops a sweep misses
+                            out = elrs_plugin.sync_dwell_phy(radius, srate=srate, gain=gain,
+                                                             dwell_s=sync_dwell_s, uid=uid,
+                                                             output_dir=out_dir)
+                        else:
+                            out = elrs_plugin.sweep_phy(radius, srate=srate, gain=gain,
+                                                        dwell_ms=dwell_ms, channels=channels,
+                                                        freq0=freq0, spacing=spacing, uid=uid,
+                                                        output_dir=out_dir, detect=detect)
                     finally:
                         del radius   # release the UHD device even on the error path
             except Exception as e:

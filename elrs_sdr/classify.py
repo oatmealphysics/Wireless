@@ -135,3 +135,57 @@ def classify_iq(iq, srate: float, bands: str | None = None,
     score, signature, protocol, confirmed = best
     metric = scores[signature][1]
     return Classification(protocol, signature, score, confirmed, metric, scores)
+
+
+def classify_iq_burst(iq, srate: float, gfsk_uid: bytes | None = None,
+                      sf: int = 7, burst_ms: float = 2.0,
+                      max_slices: int = 400) -> Classification:
+    """Burst-aware ELRS detection — the "detect type: burst" option.
+
+    A fast-hopping ELRS FLRC link lands on any one channel only briefly (~1-2 ms)
+    and intermittently, so in a long capture full of continuous interference
+    (Wi-Fi) a *whole-window* metric dilutes the burst to invisibility. This slices
+    the capture into `burst_ms` windows and looks for a GFSK UID-sync or a LoRa
+    chirp in ANY slice — per-slice, so a brief burst isn't averaged away.
+
+    Returns the first/best positive slice as a Classification, or an
+    'unidentified' one. Only the ELRS-relevant detectors (GFSK UID-sync, LoRa
+    chirp) run per slice — not the OFDM/OcuSync/video suite — to keep it cheap
+    over many slices. Falls back to whole-window classify_iq if the capture is
+    shorter than one slice.
+    """
+    import numpy as np
+    iq = np.asarray(iq, dtype=np.complex64)
+    iq = iq - iq.mean()
+    n = len(iq)
+    win = max(512, int(srate * burst_ms / 1000.0))
+    if n <= win:
+        return classify_iq(iq, srate, sf=sf, gfsk_uid=gfsk_uid)
+    step = win
+    if (n - win) // step + 1 > max_slices:
+        step = max(win, (n - win) // (max_slices - 1))
+    gfsk_mod = None
+    if gfsk_uid is not None:
+        try:
+            from .core import gfsk as gfsk_mod
+        except Exception:
+            gfsk_mod = None
+    best = None
+    for i in range(0, n - win + 1, step):
+        sl = iq[i:i + win]
+        if gfsk_mod is not None:
+            try:
+                if gfsk_mod.detect_sync_word(sl, gfsk_mod.flrc_sync_word(gfsk_uid),
+                                             gfsk_mod.FlrcParams(float(srate))):
+                    return Classification(
+                        "ELRS / FLRC (GFSK, UID-sync match, burst)", "gfsk", 0.9,
+                        False, f"burst@{i / srate * 1000:.1f}ms", {})
+            except Exception:
+                pass
+        ls = positivedet.lora_chirp(sl, srate, sf=sf)[0]
+        if ls >= _LORA_CLAIM and (best is None or ls > best.score):
+            best = Classification(
+                "LoRa (ELRS / Meshtastic / sub-1G telemetry, burst)", "lora", ls,
+                True, f"chirp burst@{i / srate * 1000:.1f}ms", {})
+    return best if best is not None else Classification(
+        "Unidentified RF (no positive burst)", "unknown", 0.0, False, "", {})
