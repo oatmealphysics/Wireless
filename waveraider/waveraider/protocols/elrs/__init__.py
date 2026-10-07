@@ -290,9 +290,11 @@ def sweep_phy(radius, srate: float = 10e6, gain: float = 40.0, dwell_ms: int = 2
     raw = []
     for c in range(channels):
         f = freq0 + c * spacing
-        radius.rx_tune(f, srate, gain=gain)
+        # real RadioDevice API: tune(freq_hz, sample_rate, gain, antenna=None),
+        # then capture(n_samples) -> a single np.complex64 array of that length.
+        radius.tune(f, srate, gain)
         try:
-            samples = radius.rx_stream(chunk=n_dwell, timeout_s=dwell_ms / 1000.0 + 0.1)
+            samples = radius.capture(n_dwell)
         except Exception:
             continue
         if samples is None or len(samples) == 0:

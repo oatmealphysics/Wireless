@@ -211,7 +211,8 @@ class Handler(BaseHTTPRequestHandler):
                 results = elrs_plugin.sweep_phy(radius, srate=srate, gain=gain,
                                                 dwell_ms=dwell_ms, channels=channels,
                                                 freq0=freq0, spacing=spacing, uid=uid)
-                radius.close()
+                # RadioDevice has no close(); drop the reference so the UHD device is GC'd.
+                del radius
             except Exception as e:
                 return self._send(500, json.dumps({"error": str(e)}))
             # interpret for the UI
