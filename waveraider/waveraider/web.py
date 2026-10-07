@@ -40,7 +40,7 @@ CHANGING_ROUTES = frozenset({
 
 # GET routes that start RF work or touch the radio lease (a sweep with an owner takes or renews it).
 # They are reads in form only, so they get their own check: Handler._refuse_foreign_rf_request.
-RF_GET_ROUTES = frozenset({"/api/spectrum", "/api/analyze", "/api/audio", "/api/droneid"})
+RF_GET_ROUTES = frozenset({"/api/spectrum", "/api/analyze", "/api/audio", "/api/droneid", "/api/elrs"})
 OWN_REQUEST_HEADER = "X-WaveRaider-Request"
 
 
@@ -183,6 +183,55 @@ class Handler(BaseHTTPRequestHandler):
                                                   "note": str(e)}))
             logbuf.log("info", f"DroneID scan centered at {center / 1e6:.3f} MHz")
             return self._send(200, json.dumps(spectrum.scan_droneid(device, center)))
+        if u.path == "/api/elrs":
+            # Modulation-agnostic ELRS "what's there" sweep: classifies each ISM2400
+            # channel's PHY (LoRa vs GFSK/FLRC vs unknown) WITHOUT assuming the rate.
+            # Query: srate, gain, dwell_ms, channels, freq0, spacing, uid (hex), device.
+            from .protocols import elrs as elrs_plugin
+            if not elrs_plugin.core_available():
+                return self._send(400, json.dumps({"error": elrs_plugin.core_error()}))
+            q = parse_qs(u.query, keep_blank_values=True)
+            try:
+                srate = float(q.get("srate", ["10000000"])[0])
+                gain = float(q.get("gain", ["40"])[0])
+                dwell_ms = int(q.get("dwell_ms", ["200"])[0])
+                channels = int(q.get("channels", ["80"])[0])
+                freq0 = float(q.get("freq0", ["2400400000"])[0])
+                spacing = float(q.get("spacing", ["1000000"])[0])
+                uid_hex = q.get("uid", [""])[0]
+                device = q.get("device", [""])[0] or None
+            except ValueError as e:
+                return self._send(400, json.dumps({"error": f"bad param: {e}"}))
+            uid = bytes.fromhex(uid_hex) if uid_hex else None
+            logbuf.log("info", f"ELRS PHY sweep: {channels} ch @ {freq0/1e6:.1f} MHz "
+                               f"(spacing {spacing/1e6:.1f} MHz), srate {srate:.3g}")
+            try:
+                from elrs_sdr.radio import RadioDevice
+                radius = RadioDevice(device or "type=b200")
+                results = elrs_plugin.sweep_phy(radius, srate=srate, gain=gain,
+                                                dwell_ms=dwell_ms, channels=channels,
+                                                freq0=freq0, spacing=spacing, uid=uid)
+                radius.close()
+            except Exception as e:
+                return self._send(500, json.dumps({"error": str(e)}))
+            # interpret for the UI
+            g = [r for r in results if r["phy"] == "gfsk"]
+            l = [r for r in results if r["phy"] == "lora"]
+            unk = [r for r in results if r["phy"] == "unknown_energy"]
+            interp = []
+            if g:
+                interp.append(f"GFSK/FLRC link on channel(s) {[r['channel'] for r in g]} "
+                              f"— decode with the GFSK branch (rate_index 0-3).")
+            if l:
+                interp.append(f"LoRa link on channel(s) {[r['channel'] for r in l]} "
+                              f"(rate {l[0].get('lora_rate')}) — decode with the LoRa branch.")
+            if unk:
+                interp.append(f"Unidentified RF on channel(s) {[r['channel'] for r in unk]} "
+                              f"— energy present, neither LoRa nor known-UID GFSK.")
+            if not results:
+                interp.append("Nothing found — is the drone's ELRS TX on? On ISM2400?")
+            return self._send(200, json.dumps({"channels": results, "interpretation": interp,
+                                               "srate": srate, "uid": (uid.hex() if uid else None)}))
         if u.path == "/settings":
             return self._send(200, Path(__file__).with_name("settings.html").read_text(), "text/html; charset=utf-8")
         if u.path == "/api/settings/receivers":

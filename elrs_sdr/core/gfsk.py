@@ -255,6 +255,12 @@ def detect_sync_word(samples: np.ndarray, sync_word: int, params: FlrcParams) ->
     peak = np.max(np.abs(corr))
     if peak == 0:
         return []
+    # ABSOLUTE confidence floor on the PEAK: a real 32-bit sync word peaks at ~0.25
+    # (normalized); pure noise peaks at ~0.026-0.034. 0.10 separates them (~7-10x gap)
+    # without clipping the real signal's lower-amplitude trailing bits (which a raised
+    # per-sample threshold would drop, shifting the alignment).
+    if peak < 0.10:
+        return []
     thr = 0.5 * peak
     above = np.where(corr > thr)[0]
     if len(above) == 0:
@@ -409,18 +415,21 @@ def selftest(uid: bytes, sample_rate: int = 4_000_000) -> bool:
 
 def _demod_with_crc_align(samples, params, approx_start: int,
                           validate=None) -> bytes | None:
-    """Fine-align a detected FLRC frame: scan a small window (bit offsets) around
-    `approx_start`, demodulate each, and return the payload that is *stable* — i.e. the
-    offset where two adjacent sub-tries agree (a real frame decodes identically at the
-    right alignment; wrong alignments give garbage that changes bit-by-bit). If `validate`
-    is provided (e.g. ota.validate_crc), return the offset whose payload passes it —
-    that is the binding check.
+    """Fine-align a detected FLRC frame: scan a small SAMPLE window around
+    `approx_start` (the correlation peak — already the best estimate) and return the
+    payload that is *stable* (decodes identically at `start` and `start+1`).
+
+    Crucially, offsets are tried in order of PROXIMITY to the detected peak (the peak is
+    the strongest correlation, so the true alignment is nearest to it). The first stable
+    offset wins. This avoids a stable-but-wrong alignment farther from the peak being
+    returned before the true one. If `validate` is supplied (e.g. ota.validate_crc), the
+    offset that passes it wins outright (the binding check).
     """
     nspb = int(round(params.samples_per_bit))
     best = None
-    # scan SAMPLE offsets (sub-bit) in a window around the approx sync — the exact
-    # alignment is often a fraction of a bit off the correlation peak.
-    for sample_off in range(-nspb, nspb + 1):
+    # offsets ordered by proximity to the peak (0, -1, +1, -2, +2, ...)
+    offsets = sorted(range(-nspb, nspb + 1), key=lambda o: abs(o))
+    for sample_off in offsets:
         start = approx_start + sample_off
         if start < 0:
             continue

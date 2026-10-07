@@ -166,12 +166,17 @@ tr.group th{padding-top:20px;color:var(--dim)}
   <span id="toast" class="toast" role="status"></span>
   <span id="sourceChip" class="chip dim">Idle</span>
   <span id="clock" class="muted"></span>
+  <button id="elrsFindBtn" class="btn" type="button" title="Sweep the 2.4 GHz band and classify what ELRS PHY is transmitting (LoRa vs GFSK/FLRC) — no rate assumed.">ELRS Find</button>
   <button id="sessionBtn" class="btn primary" type="button" data-action="start">Start sample session</button>
   </div>
 </header>
 <main class="workspace">
 <div class="page-heading"><div><div class="eyebrow">RECORDED EVIDENCE</div><h1>Monitor</h1><p>Explore Remote ID reports from a bundled sample. Not live reception.</p></div><a href="/settings#data">Session history &amp; exports ↗</a></div>
 <div id="banner" class="banner" hidden></div>
+<details class="disclosure" id="elrsFindPanel" hidden>
+<summary>ELRS Find — what's on the 2.4 GHz band <span class="soft" id="elrsFindStatus"></span></summary>
+<div id="elrsFindBody" class="cover">Sweeping… (this takes a few seconds: 80 channels × dwell)</div>
+</details>
 <details class="disclosure receiver-status" id="receiverInfo"><summary>Receiver status &amp; coverage <span class="soft" id="receiverSummary">Live Remote ID unavailable</span></summary>
 <section id="receivers" class="recv" aria-label="Receivers"><div class="cell"><span class="sub">Checking receivers…</span></div></section>
 <div id="coverage" class="cover"></div>
@@ -455,6 +460,57 @@ $("sessionBtn").addEventListener("click",async()=>{
     await refresh();
   }catch(e){toast(e.message,true);}
   finally{btn.disabled=false;}
+});
+// ---- ELRS Find: modulation-agnostic 2.4 GHz PHY sweep (no rate assumed) ----
+function renderElrsFind(data){
+  const panel=$("elrsFindPanel"), body=$("elrsFindBody"), status=$("elrsFindStatus");
+  panel.hidden=false;
+  const chs=data.channels||[];
+  if(!chs.length){
+    status.textContent="nothing found";
+    body.className="cover";
+    body.innerHTML=(data.interpretation||["No energy on the swept channels."]).map(esc).join("<br>");
+    return;
+  }
+  status.textContent=chs.length+" channel(s) with energy";
+  let h='<table><thead><tr><th>Ch</th><th>MHz</th><th>Power (dB)</th><th>PHY</th><th>LoRa</th><th>GFSK</th><th>Detail</th></tr></thead><tbody>';
+  for(const r of chs){
+    const phyCls=r.phy==="gfsk"?"ok":r.phy==="lora"?"warn":"dim";
+    const detail=[];
+    if(r.lora_rate)detail.push("LoRa rate "+esc(r.lora_rate));
+    if(r.gfsk_sync_starts&&r.gfsk_sync_starts.length)detail.push("GFSK sync @ "+r.gfsk_sync_starts.slice(0,3).join(", "));
+    h+='<tr><td>'+r.channel+'</td><td>'+r.freq_mhz.toFixed(1)+'</td><td>'+r.power_db+'</td>'
+      +'<td class="'+phyCls+'">'+esc(r.phy)+'</td><td>'+r.lora_score+'</td><td>'+r.gfsk_score+'</td>'
+      +'<td class="muted">'+detail.map(esc).join(" · ")+'</td></tr>';
+  }
+  h+='</tbody></table>';
+  if(data.interpretation&&data.interpretation.length){
+    h+='<div class="muted" style="margin-top:10px"><b>Interpretation:</b><br>'+data.interpretation.map(esc).join("<br>")+'</div>';
+  }
+  h+='<div class="muted" style="margin-top:10px;font-size:13px">srate '+(data.srate/1e6).toFixed(1)+' MS/s · UID '+(data.uid||"default")
+    +'</div>';
+  body.className="";
+  body.innerHTML=h;
+}
+$("elrsFindBtn").addEventListener("click",async()=>{
+  const btn=$("elrsFindBtn");
+  btn.disabled=true;
+  const panel=$("elrsFindPanel");
+  panel.hidden=false;
+  $("elrsFindStatus").textContent="sweeping…";
+  $("elrsFindBody").className="cover";
+  $("elrsFindBody").textContent="Sweeping 80 channels… (a few seconds)";
+  toast("ELRS Find: sweeping the 2.4 GHz band…");
+  try{
+    const data=await getJSON("/api/elrs?srate=10000000&gain=40&dwell_ms=200&channels=80");
+    renderElrsFind(data);
+  }catch(e){
+    $("elrsFindPanel").hidden=false;
+    $("elrsFindStatus").textContent="error";
+    $("elrsFindBody").className="cover";
+    $("elrsFindBody").textContent=e.message;
+    toast(e.message,true);
+  }finally{btn.disabled=false;}
 });
 function selectObservation(key){
   state.selected=key;paint();
