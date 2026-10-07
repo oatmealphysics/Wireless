@@ -1073,8 +1073,11 @@ def test_the_guarded_get_routes_are_exactly_the_ones_that_reach_the_radio_module
     src = Path(web.__file__).read_text()
     get = src[src.index("    def do_GET(self):"):src.index("    def do_POST(self):")]
     blocks = re.split(r'\n        if u\.path', get)
+    # A GET route "reaches the radio module" if it calls a spectrum.* RF function
+    # OR the ELRS plugin's sweep (elrs_plugin.sweep_phy, which opens a RadioDevice).
     rf = {re.match(r' == "(/api/[^"]+)"', b).group(1) for b in blocks
-          if re.match(r' == "(/api/[^"]+)"', b) and re.search(r"spectrum\.(sweep|analyze_signal|scan_droneid|capture_audio)", b)}
+          if re.match(r' == "(/api/[^"]+)"', b)
+          and re.search(r"spectrum\.(sweep|analyze_signal|scan_droneid|capture_audio)|elrs_plugin\.sweep_phy|RadioDevice\(", b)}
     assert rf == set(web.RF_GET_ROUTES)
 
 
