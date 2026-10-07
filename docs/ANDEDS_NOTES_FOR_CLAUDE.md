@@ -30,10 +30,25 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 
 **Captures are at `<repo-root>/captures/`** (NOT `waveraider/captures/` — `web.py` writes to
 `Path(__file__).parents[2]/captures` = repo root). So on the laptop it's
-`~/Drone_Project/elrs-sdr-transfer/captures/elrs_find_<timestamp>/`. The `.complex8` IQ files are
-**gitignored** (`.gitignore: *.complex8`), so `git push` will NOT carry the raw IQ — only the
-`manifest.json` (the classification summary) can be pushed. For the raw IQ, upload the dir via the
-files API (like last time).
+`~/Drone_Project/elrs-sdr-transfer/captures/elrs_find_<timestamp>/`. (Previously the `.complex8`
+IQ was gitignored so I said "upload via the files API" — that's now superseded: see below,
+`captures/` is synced as part of the project.)
+
+**`captures/` is now a normal synced part of the project** (`a15020c`) — the `.complex8` IQ +
+`.meta.txt` + `manifest.json` under `captures/elrs_find_*/` are **un-ignored**, so they
+`git push`/`git pull` like any other file. **No more files-API upload.** (Stray captures outside
+`captures/` are still ignored.) So the workflow is just:
+```
+# laptop:  after ELRS Find, the capture is in captures/elrs_find_<ts>/
+git add captures/
+git commit -m "bench capture <ts>"
+git push
+# enclave (me):  git pull  ->  python3 analyze_capture.py --fast   (auto-latest)
+```
+The `.complex8` IQ files are ~2 MB each × N channels, so a full 80-ch sweep is ~160 MB per
+capture in the repo. That's fine for the bench (a handful of captures), but if the repo gets bloated
+we can `git rm --cached` the old ones or move them off-branch later. **For now: just commit + push
+the capture, I pull + analyze.**
 
 **`analyze_capture.py` is now dynamic** (`1032714`) — you never type the timestamped subfolder:
 - `python3 analyze_capture.py` → **auto-picks the most recent** `captures/elrs_find_*/` dir (by
