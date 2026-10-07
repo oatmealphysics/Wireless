@@ -153,14 +153,56 @@ processing) reports:
 
 ```
 round-trip (known throttle=0 frame):  PASS, byte-exact
-robustness (30 random payloads, ~20dB): 23/30 (77%) byte-exact
+robustness (30 random payloads, ~20dB): 30/30 (100%) byte-exact
 ```
 
-A real bench capture should do **better** than this sim, because the sim omits: (1) the full
-preamble for AGC/clock, (2) carrier-offset tracking, (3) frame repetition (the RX hops and
-re-transmits — we can average/validate across frames). If the bench capture does *worse*, the
-likely culprits in order are: GFSK bit-timing/Gaussian normalization, IQ polarity, carrier
-offset, then the soft-metric quality. Each is a targeted fix.
+(Up from an earlier 23/30 — the proximity-ordered fine-align + absolute sync gate fixed both the
+stable-but-wrong alignment and the noise false-positive.) A real bench capture should do
+**better** than this sim, because the sim omits: (1) the full preamble for AGC/clock, (2)
+carrier-offset tracking, (3) frame repetition (the RX hops and re-transmits — we can
+average/validate across frames). If the bench capture does *worse*, the likely culprits in order
+are: GFSK bit-timing/Gaussian normalization, IQ polarity, carrier offset, then the soft-metric
+quality. Each is a targeted fix.
+
+---
+
+## 3b. The "find out what's there" front-end: `find_link.py` (modulation-agnostic)
+
+The decoder must not *assume* which ELRS PHY (LoRa vs FLRC/GFSK) or rate the target uses — it
+must **measure** the signal and **classify** what's actually transmitting, then decode with the
+matching demod. `find_link.py` is that front-end:
+
+- **Sweeps** the ISM2400 FHSS band (80 channels, 2400.4–2479.4 MHz) on the B205 via the validated
+  `elrs_sdr/radio.py` RX.
+- **Per channel, measures** (no assumptions): band power above a noise floor, LoRa chirp-structure
+  (`lora.detect_sync_word` across the ELRS LoRa rates), and GFSK sync match (`gfsk.detect_sync_word`
+  against the target's UID-derived sync word).
+- **Classifies each channel** into one of: `none` / `lora` / `gfsk` / `unknown_energy` — by which
+  measured signal dominates, with an absolute band-power gate so noise is rejected.
+- **Reports** which channels have a transmitter, what PHY it is, and (for GFSK) the candidate
+  sync positions — i.e. it *finds out what's there* and tells you which demod to run next.
+
+This is the "core = scan spectrum + identify what's there" principle applied to the PHY layer.
+It's the honest answer to "I don't know if the drone is on LoRa or GFSK — the program should
+figure that out." **Offline self-check** (no radio): it builds a GFSK frame, a LoRa chirp train,
+and a noise segment, and confirms the classifier maps GFSK→`gfsk`, LoRa→*(not gfsk)*,
+noise→*(not gfsk)*.
+
+```bash
+# offline (no radio) — proves the classifier separates the PHYs and rejects noise:
+python3 find_link.py --selftest
+
+# against the bench drone (B205 connected, drone powered + ELRS TX active):
+python3 find_link.py --sweep
+```
+
+**The GFSK false-positive fix (found while building this):** the sync detector originally used a
+*relative* threshold (`0.5 * peak`), which false-positives on pure noise (noise always has a
+correlation peak). Measured: a real 32-bit sync peaks at **~0.25** (normalized correlation);
+noise peaks at **~0.026–0.034** — a ~7–10× gap. The detector now gates the peak absolutely at
+**0.10** (rejects noise, passes real), keeping `0.5*peak` for the per-sample clustering (so the
+real signal's lower-amplitude trailing bits aren't clipped). This is what makes the "find"
+trustworthy — without it, every channel would look like GFSK.
 
 ---
 
@@ -265,8 +307,9 @@ shows FLRC and the demod locks, we proceed to the tracker + throw. The bench tes
 
 | Path | What it is |
 |---|---|
-| `elrs_sdr/core/gfsk.py` | **This work** — the FLRC/GFSK PHY (mod + demod + soft-Viterbi + CRC-24 + UID-derived sync/seed + sync detect). |
-| `elrs_sdr/core/lora.py` | The existing LoRa PHY (rows 4–9 of the rate table). Explicitly "out of scope" for FLRC — hence this module. |
+| `find_link.py` | **The "find out what's there" front-end** — modulation-agnostic band sweep + PHY classifier (LoRa vs GFSK vs unknown). No rate assumed. Offline `--selftest` + live `--sweep`. |
+| `elrs_sdr/core/gfsk.py` | **The FLRC/GFSK PHY** (mod + demod + soft-Viterbi + CRC-24 + UID-derived sync/seed + absolute-gated sync detect). The GFSK branch of the classifier. |
+| `elrs_sdr/core/lora.py` | The existing LoRa PHY (rows 4–9 of the rate table). The LoRa branch of the classifier. Explicitly "out of scope" for FLRC — hence `gfsk.py`. |
 | `elrs_sdr/core/crc.py`, `elrs_sdr/core/ota.py` | The validated CRC + OTA frame codec (the throw's forge uses these). |
 | `elrs_sdr/core/fhss.py` | The UID-seeded FHSS LCG + ISM2400 channel table (the tracker will predict channels from here). |
 | `elrs_sdr/radio.py` | The **real** B205 UHD radio (`tx_tune`/`tx_stream`). Any throw must use this, not the broken `elrc_bench_tx.py`. |
@@ -281,13 +324,16 @@ shows FLRC and the demod locks, we proceed to the tracker + throw. The bench tes
 1. **Why it wasn't working:** the target is on **GFSK/FLRC** (`rate_index=2`), but the decoder
    only does **LoRa** — it was blind to the signal. Not a live-lock problem, a modulation gap.
 2. **What was built:** a GFSK/FLRC PHY in `elrs_sdr.core` (mod + demod + soft-Viterbi + CRC-24 +
-   UID-derived sync/seed). The core primitives are validated against the C source; the RF
-   front-end is synthetic (round-trips our own signal, ~77% at 20 dB offline, never seen a real
-   capture).
+   UID-derived sync/seed) — offline round-trip byte-exact, **30/30 (100%)** at 20 dB on random
+   payloads. Plus **`find_link.py`**, a **modulation-agnostic link finder** that sweeps the band
+   and *classifies* what's actually transmitting (LoRa vs GFSK vs unknown) without assuming the
+   rate — the "find out what's there" front-end.
 3. **The auth model:** UID → sync word + CRC seed. No runtime crypto. **Decode's job #1 is UID
    recovery** — it's the key to the whole chain.
-4. **Next:** **bench capture** (section 5) is the experiment. It tells us if the GFSK demod sees
-   the real link. If yes → build the live tracker (predict channel + follow nonce) → then rebuild
-   the throw on the real `radio.py` TX. If the capture shows a different rate → pivot.
-5. **Honest status:** the decode gate is now *possible* but **not yet proven** on the real link.
-   The bench test is what proves it.
+4. **Next:** run **`find_link.py --sweep`** on the bench — it tells us, from the RF, what PHY +
+   rate the drone is actually on (no assumption). Then decode with the matching demod, build the
+   live tracker (predict channel + follow nonce), then rebuild the throw on the real `radio.py` TX.
+   If the sweep shows a LoRa rate, the GFSK path is moot for this target and the C++ LoRa
+   interceptor is the tool.
+5. **Honest status:** the decode gate is now *possible* and the finder is *offline-validated*;
+   neither is yet **proven on the real link.** The bench sweep is what proves it.
