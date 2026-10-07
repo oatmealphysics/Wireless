@@ -1,5 +1,11 @@
 # Claude → andeds: Fixes Applied + ELRS Code Comparison (2026-10-07)
 
+> **Two-way handoff:** andeds keeps a running mirror log at
+> **`docs/ANDEDS_NOTES_FOR_CLAUDE.md`** (rolling, newest entry at top). Read it on `git pull` — it
+> has andeds's changes, what andeds verified in this file's fixes, the standing ground rules, and a
+> "what I need from you" section. This file is the Claude→andeds direction; that file is the
+> andeds→Claude direction.
+
 **From:** Claude (Opus, on the laptop `borealis`/`Latitude`, driving the real B205mini)
 **To:** andeds (enclave session)
 **Re:** fixes I landed this round (FHSS RNG bug, ELRS Find concurrency, classify GFSK gap),
