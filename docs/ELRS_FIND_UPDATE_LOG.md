@@ -35,11 +35,12 @@ UID `00:00:00:11:18:5B`, ELRS `ISM2400`, assumed `rate_index=2` (FLRC/GFSK).
    than the lower band (in-band interference / AGC). **Most likely cause: the ELRS radio (TX) was
    not actively transmitting the control link during the sweep** (or a different rate/UID than
    assumed).
-5. **Two capture-path bugs to fix before re-capturing:** (a) the raw IQ has a **large DC offset**
-   (huge spike at 0 kHz) that corrupts the demod — needs a high-pass (DC-block) before detection;
-   (b) the per-channel `.meta.txt` mislabels the format as `complex8` when the data is actually
-   **int16 I/Q interleaved** (the file is 2,000,000 bytes = 500k samples × 4 bytes, not float64).
-   Both are small, targeted fixes.
+5. **Two capture-path bugs — NOW FIXED (this round, `d6c3de4`):** (a) the raw IQ has a **large DC
+   offset** (huge spike at 0 kHz) that corrupts the demod — a software **DC-block** (`elrs.dc_block()`)
+   is now applied at the top of `decode_gfsk` + `classify_phy`, so every downstream detector sees
+   clean IQ; (b) the per-channel `.meta.txt` format line now **leads with the unambiguous
+   description** (`int16 I,Q interleaved, little-endian (.complex8 = SDR-standard int16 I/Q, 2
+   bytes/sample)`) — the `.complex8` extension is the SDR standard, not a data bug.
 6. **Honest status:** the GFSK demod + the ELRS Find classifier are **offline-validated** and
    **fully integrated into the web UI** (including saving + live progress), but **they have not
    yet decoded a real ELRS link off the air.** The next re-capture — with the radio **confirmed
@@ -176,6 +177,24 @@ Committed as `0632531 merge(master, selective)`. Then **deleted** the dead branc
 Claude all work on it. (The log still has ~60 "Merge branch 'main'" commits from the push-permission
 fight — harmless; a `rebase --onto` can squash them, but only on explicit request since it rewrites
 shared history.)
+
+---
+
+## 3b. Claude's 3 fixes this round (verified in the code, not just the note)
+
+Claude (on the laptop, driving the real B205) pushed 3 detect-side fixes + a comparison note
+(`docs/CLAUDE_NOTES_FOR_ANDEDS_2026-10-07.md`). I verified each in the actual code:
+
+| Fix | What | Verified |
+|---|---|---|
+| **FHSS RNG `>>15`→`>>16`** (`2f23e8c`) | `Lcg.rng()` returned `seed>>15`; ELRS `random.cpp` + the GNU_Radio ref both use `>>16`. Fixed + the selftest now references the **firmware algorithm** (was self-referential, asserting against its own `>>15`). | ✅ `fhss.py:49` now `return self.seed >> 16`; `selftest.py` asserts `seed>>16`. **Genuine correctness catch** — it would have broken the planned "predict the next channel from the UID-seeded LCG" live lock. (Did *not* affect the energy sweep — per-channel power is hop-order-independent — so it's not why the bench capture found nothing.) |
+| **ELRS Find concurrency** (`a2ba491`) | Both `/api/elrs` routes opened the B205 bare under `ThreadingHTTPServer` with no lock — racing Inspect RF (which holds the device open) + each other (double-click). Now serialized via `spectrum._DEVICE_LOCK` + `uhd_backend.close()` release + `finally: del radius`. | ✅ Both routes (web.py:231, 293) use `with _spectrum._DEVICE_LOCK:` + `_uhdb.close()`. The B205 has a single owner now. |
+| **classify.py GFSK gap** (`6bf070c`) | The gap I flagged in this doc's §4a — `classify_iq` didn't call the GFSK detector, so the live Inspect-RF overlay tagged a GFSK Tinyhawk "unidentified." Now `classify_iq(gfsk_uid=…)` runs `gfsk.detect_sync_word` on a gated hit (claims `ELRS / FLRC (GFSK, UID-sync match)`, `confirmed=False`), and `spectrum._annotate_elrs_hint` passes `DEFAULT_TARGET_UID`. | ✅ `classify.py:100-106` + `spectrum.py:782-786`. The overlay and the band sweep now agree on a GFSK link. |
+
+Plus a **code comparison** vs `GNU_Radio_ExpressLRS` + `gr-lora_sdr` + the ELRS firmware (the
+`>>16` fix came out of it; our `OTA_VERSION_ID=4` matches the vendored firmware; our LoRa demod is
+first-order vs `gr-lora_sdr`'s full PHY; our GFSK demod is ahead of the open refs). Claude left the
+**decode-path items** (DC-block + meta format) for me — **both now done** (`d6c3de4`, §0.5).
 
 ---
 
