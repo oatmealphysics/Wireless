@@ -218,4 +218,46 @@ size`. Changed to `4 bytes/complex-sample (int16 I + int16 Q)` and dropped the "
 "575/28" was the tree with your commits but before `7a6b5cf`; **27/576/3 is the current ground
 truth.** The laptop is the pytest source of truth whenever you need it re-run.
 
+---
+
+## 10. Capture diagnosis + scan/detect strategies (why nothing decoded, + the fix)
+
+**I analyzed the real captures (`142027`, `152728`) directly.** Every real-IQ channel is
+**continuous energy** (`active_1ms ≈ 100%`), `gfsk_sync = 0`, `lora = 0` — i.e. **Wi-Fi/interference,
+not ELRS.** ELRS FLRC would be ~1–2 ms bursts at ~1% duty. So the link isn't in the captured data.
+
+**The `182351`/`182408` "gfsk on ch1" was a MOCK artifact, not a real detection** — both dirs had
+byte-identical `gfsk_sync_starts`, `noise_floor: 0.0`, and were committed in `d671b47` (your SSE
+test with the mock radio that injects GFSK on ch1). **I `git rm`'d both** so they stop reading as a
+real hit. (Operator confirms the radio *was* transmitting, so this isn't "radio off".)
+
+**Root cause (methodology):** ELRS `rate_index=2` is a ~500 Hz link FHSS-hopping across 80 channels.
+A sweep that visits each channel **once for ~50 ms** overlaps a brief FLRC burst only ~30% of the
+time per channel, and even a catch is ~1 ms of signal buried in 50 ms of continuous Wi-Fi — a
+whole-window metric averages it away. So the once-per-channel sweep is a coin-flip for a fast hopper.
+
+**What I added (all OPTIONS; the default sweep is unchanged):**
+1. **Burst detect** — `elrs_sdr.classify.classify_iq_burst()` slices a capture into ~2 ms windows and
+   runs GFSK-UID-sync / LoRa-chirp **per slice**, so a brief burst isn't diluted. In the plugin,
+   `sweep_phy(..., detect="burst")` overlays it on each channel (`_augment_with_burst`).
+2. **Sync-channel long dwell** — `elrs.sync_dwell_phy()` long-dwells the ELRS sync channel
+   (ch40 = 2440.4 MHz, where ELRS sends periodic sync packets) and burst-detects across the whole
+   dwell. Catches hops a once-per-channel sweep misses.
+3. **Strategy cycling** — `elrs.run_scan_matrix()` runs three independent passes in order:
+   `sweep/window` → `sweep/burst` → `sync_dwell/burst`, returning `{"strategies":[…]}`. A link one
+   pass misses, another may catch (the redundancy you wanted).
+4. **Web exposure (URL params on `/api/elrs`):** `?detect=burst` and `?strategy=sync&dwell_s=2`
+   reach the new paths from the browser now (blocking route). Tests:
+   `waveraider/tests/test_classify_burst.py` (3, pass).
+
+**For you (the live-UI cycling):** `run_scan_matrix` is the driver, but I did **not** wire an
+auto-cycling button/SSE into `monitor.html` — that's your UI domain. Suggested hook: a "cycle
+strategies" control that calls `run_scan_matrix` (or hits `/api/elrs` 3× with the param combos) and
+shows the three passes. The matrix is slow (sweep + sweep-burst + sync-dwell), so if you stream it,
+reuse the SSE pattern with a per-strategy progress event. Flagging rather than building it to avoid
+stepping on `monitor.html`/the SSE route you own.
+
+**Still the load-bearing operator check:** confirm rate/UID/**OTA version** from the Configurator —
+if it's a newer ELRS (OTA v6), the v4-derived sync/CRC won't match regardless of scan strategy.
+
 — Claude
