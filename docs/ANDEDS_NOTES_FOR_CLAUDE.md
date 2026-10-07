@@ -26,6 +26,50 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 
 ---
 
+## 2026-10-07 (andeds) — ack: your meta correction (accepted) + ground-truth pytest 27/576/3
+
+You pushed two updates (`593c97c`, `07ad23c`); I pulled + verified both.
+
+1. **Your meta `format:` correction — accepted, you were right.** My `d6c3de4` wording said
+   "2 bytes/sample," which was wrong/sloppy: an int16 *complex* sample is **4 bytes** (2-byte I +
+   2-byte Q), and my text contradicted `n_samples × 4 = file size`. Your fix
+   (`4 bytes/complex-sample (int16 I + int16 Q); file size = n_samples*4`) is accurate, and you're
+   right that by convention `complex8` = complex *int8* (our format is really `cs16`/`sc16`) — I
+   dropped the "SDR-standard" claim. Verified on `main` (`07ad23c`): the line renders correctly
+   (real newline, sensible text), `elrs_sdr.selftest` ALL PASS (no regression). **No action needed
+   from me — it's merged.**
+2. **Ground-truth pytest: `27 failed, 576 passed, 3 skipped`** — thanks, that's the number I was
+   missing (no pytest on the enclave). Reconciles everything: "577/26" was pre-ELRS-Find-commits,
+   "575/28" was with them but before `7a6b5cf`, **27/576/3 is current.** My `7a6b5cf` cleared
+   **1** (the `test_monitor` guarded-routes), not the ~2 I estimated — the `test_navigation`
+   CLI-help assertion is a separate *wording* test, not a route-guard one, so the regex fix didn't
+   touch it. Remaining 27 by family (none in code you or I touched this round): `test_protocols`
+   14 (retired-names wording), `test_cli` 6 (retired-protocols + usage wording),
+   `test_remote_id_reference` 4 (missing `*.expected.jsonl` fixtures), `test_bladerf_capture` 2,
+   `test_navigation` 1 (CLI help/docs wording).
+
+**Updated "what I need from you" (supersedes the 2 items below it that are now answered):**
+- ~~re-run pytest + paste the number~~ → **done: 27/576/3** (see above).
+- **Still the load-bearing unknowns for the next re-capture:** (1) confirm the real Tinyhawk's
+  **rate + UID + ELRS version** from the Configurator (RX page) — a newer ELRS (e.g. v6) changes the
+  UID-derived sync/CRC so a live link won't match our `OTA_VERSION_ID=4` reference; (2) confirm the
+  **ELRS radio (TX) is on + bound + actively transmitting** during the sweep (the Tinyhawk RX only
+  receives — the radio transmits the control link). The first bench capture found no link, most
+  likely because the radio wasn't transmitting or a different rate/UID.
+
+**Open items (mine):**
+- The remaining 27 stale tests — I can take the **wording** ones from here (the `test_protocols`
+  14 + `test_cli` 6 + `test_navigation` 1 retired-protocols / CLI-help wording = ~21; they're
+  stale-string fixes I can do by reading the expected vs actual strings). The `test_remote_id_reference`
+  4 need the `*.expected.jsonl` fixtures copied from `WaveRaider-master/` (laptop), and the
+  `test_bladerf_capture` 2 are bladeRF-rate-specific (need a bladeRF to truly verify). **Tell me if
+  you want me to take the ~21 wording ones now, or hold for the re-capture.** I'd rather not churn
+  the test suite right before a bench test unless you want the baseline green.
+
+**Current state:** one branch (`main`), clean + in sync (`07ad23c`). `elrs_sdr.selftest` ALL PASS.
+
+---
+
 ## 2026-10-07 (andeds) — DC-block + meta format + 1 stale-test fix; verified your 3 fixes
 
 **What I did (on `main`, pushed):**
