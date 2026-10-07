@@ -502,23 +502,53 @@ $("elrsFindBtn").addEventListener("click",async()=>{
   const panel=$("elrsFindPanel");
   panel.hidden=false;
   $("elrsFindStatus").textContent="sweeping…";
-  $("elrsFindBody").className="cover";
-  $("elrsFindBody").textContent="Sweeping 80 channels… (~4 s, 50 ms dwell)";
+  // Live progress: the body shows a % + a thin bar + the current channel/freq,
+  // updated from the SSE stream as each channel is classified.
+  const body=$("elrsFindBody");
+  body.className="";
+  body.innerHTML='<div style="font-size:13px">Sweeping 80 channels… (50 ms dwell)<div id="elrsFindPct" class="muted" style="margin-top:4px">0%</div><div style="height:6px;background:var(--panel,#222);border-radius:3px;overflow:hidden;margin-top:4px"><div id="elrsFindBar" style="height:100%;width:0%;background:#4caf50;transition:width .2s"></div></div><div id="elrsFindCur" class="muted" style="margin-top:4px;font-size:12px"></div></div>';
+  const pctEl=$("elrsFindPct"), barEl=$("elrsFindBar"), curEl=$("elrsFindCur");
   toast("ELRS Find: sweeping the 2.4 GHz band…");
   try{
-    // /api/elrs is in RF_GET_ROUTES, so the server requires the X-WaveRaider-Request
-    // marker header (the anti-cross-site-radio-request guard) — same as specApi in
-    // inspect_rf.js. getJSON passes opts.headers straight through to fetch.
-    // 50 ms dwell (not 200): a GFSK/FLRC frame is ~1-2 ms, so 50 ms captures several
-    // per channel without flooding the terminal or hitting USB bandwidth limits.
-    const data=await getJSON("/api/elrs?srate=10000000&gain=40&dwell_ms=50&channels=80",
+    // Read the SSE stream (the blocking /api/elrs would give no progress mid-sweep).
+    // /api/elrs/progress is in RF_GET_ROUTES, so the X-WaveRaider-Request header is
+    // required (same anti-cross-site-radio guard as specApi in inspect_rf.js).
+    const resp=await fetch("/api/elrs/progress?srate=10000000&gain=40&dwell_ms=50&channels=80",
       {headers:{"X-WaveRaider-Request":"1"}});
-    renderElrsFind(data);
+    if(!resp.ok||!resp.body){throw new Error("ELRS Find failed: "+(await resp.text()));}
+    const reader=resp.body.getReader();
+    const dec=new TextDecoder();
+    let buf="";
+    while(true){
+      const {value,done}=await reader.read();
+      if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      // SSE frames are `data: {json}\n\n` — split on the blank-line boundary.
+      let idx;
+      while((idx=buf.indexOf("\n\n"))>=0){
+        const frame=buf.slice(0,idx); buf=buf.slice(idx+2);
+        const line=frame.replace(/^data:\s*/m,"").trim();
+        if(!line)continue;
+        let ev; try{ev=JSON.parse(line);}catch(_){continue;}
+        if(ev.type==="progress"){
+          const pct=Math.round(100*ev.done/ev.total);
+          pctEl.textContent=pct+"%  ("+ev.done+"/"+ev.total+")";
+          barEl.style.width=pct+"%";
+          curEl.textContent=ev.freq_mhz+" MHz → "+ev.phy;
+        }else if(ev.type==="result"){
+          renderElrsFind(ev);   // ev has channels/interpretation/saved_dir/…
+          return;
+        }else if(ev.type==="error"){
+          throw new Error(ev.error||"sweep error");
+        }
+      }
+    }
+    throw new Error("ELRS Find stream ended without a result.");
   }catch(e){
     $("elrsFindPanel").hidden=false;
     $("elrsFindStatus").textContent="error";
-    $("elrsFindBody").className="cover";
-    $("elrsFindBody").textContent=e.message;
+    body.className="cover";
+    body.textContent=e.message;
     toast(e.message,true);
   }finally{btn.disabled=false;}
 });

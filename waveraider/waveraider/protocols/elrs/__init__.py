@@ -279,7 +279,8 @@ def classify_phy(iq, srate: float, uid: bytes | None = None,
 
 def sweep_phy(radius, srate: float = 10e6, gain: float = 40.0, dwell_ms: int = 200,
               channels: int = 80, freq0: float = 2400.4e6, spacing: float = 1.0e6,
-              uid: bytes | None = None, output_dir: str | None = None) -> dict:
+              uid: bytes | None = None, output_dir: str | None = None,
+              progress=None) -> dict:
     """Sweep the ISM2400 FHSS band and classify each channel's PHY (modulation-
     agnostic — no rate/PHY assumed). `radius` is an elrs_sdr.radio.RadioDevice.
     This is the backend for the web UI's /api/elrs route — it answers "what's
@@ -292,7 +293,12 @@ def sweep_phy(radius, srate: float = 10e6, gain: float = 40.0, dwell_ms: int = 2
         summary + which channels had energy + the file names)
     This is what you upload to hand the capture back for offline analysis.
 
-    Returns {"channels": [...], "saved_dir": output_dir or None, "saved_files": N}.
+    If `progress` is callable, it is invoked after each channel with
+    {"done": i, "total": channels, "freq_mhz": f, "phy": <classification>} — used by
+    the /api/elrs/progress SSE route to stream a live % to the UI.
+
+    Returns {"channels": [...], "saved_dir": output_dir or None, "saved_files": N,
+    "all_channels": [...]}.
     """
     import os, json, time
     import numpy as np
@@ -326,7 +332,7 @@ def sweep_phy(radius, srate: float = 10e6, gain: float = 40.0, dwell_ms: int = 2
     all_p = np.concatenate([np.abs(s) ** 2 for _, _, s, _ in raw]) if raw else np.array([0.0])
     nf = float(np.percentile(all_p, 10)) + 1e-12
     results = []
-    for c, f, samples, ch_path in raw:
+    for i, (c, f, samples, ch_path) in enumerate(raw):
         r = classify_phy(samples, srate, uid=uid, noise_floor=nf)
         r["channel"] = c
         r["freq_mhz"] = round(f / 1e6, 2)
@@ -334,6 +340,12 @@ def sweep_phy(radius, srate: float = 10e6, gain: float = 40.0, dwell_ms: int = 2
         if ch_path:
             r["iq_file"] = os.path.basename(ch_path)
         results.append(r)   # keep ALL channels in the manifest (energy + none), not just non-none
+        if progress:
+            try:
+                progress({"done": i + 1, "total": len(raw), "freq_mhz": round(f / 1e6, 2),
+                          "phy": r["phy"], "channel": c})
+            except Exception:
+                pass   # a progress-reporting hiccup must never abort the sweep
     # summary: only the channels with energy (what the UI table shows)
     energy = [r for r in results if r["phy"] != "none"]
     saved_files = 0
