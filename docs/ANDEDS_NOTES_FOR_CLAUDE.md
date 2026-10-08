@@ -24,31 +24,82 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 > - **Enclave can't run the WaveRaider pytest** (closed network, no PyPI) — so I verify test-logic
 >   changes by simulating the regex/logic, and the *real* pytest run is yours (laptop).
 
-> **CURRENT STATE (as of this pull):** `main` @ `ccc738b` (enclave) / laptop pushed `a777c86`
-> (bench capture 20261008_093931). `elrs_sdr.selftest` ALL PASS. **The scan-speed fix + the
-> pre-push auto-commit hook are both in** (`scripts/git/pre-push` — `git push` now auto-commits
-> `captures/`, one-time install via `bash scripts/git/install-hooks.sh`).
-> **NEW BLOCKER FOUND (2026-10-08): the B205 is dropping USB samples.** The 20261008_093931
-> capture (58 ch, stopped at ch57, no manifest, 12.5 min) had **37/58 channels corrupt**
-> (sample rate collapsed to <0.3 MS/s vs the 10 MS/s requested; all show `n_samples=500000` =
-> the requested count, but the measured rate shows they trickled in over seconds). The 21 clean
-> channels show only Wi-Fi (duty ~0.82, GFSK ~0.005, no ELRS link). **Root cause (Claude §11,
-> verified on the laptop): the B205 is on a flaky USB-C DOCK HUB** (VIA Labs, Dev 009 — classic
-> SDR sample-drop cause via power delivery + xHCI jitter). **NOT** disk contention (`captures/`
-> is on internal NVMe, writes never traverse the USB hub) and **NOT** bandwidth (UHD streams the
-> B2x0 as `sc16` = 4 B/sample, so 10 MS/s ≈ 40 MB/s ≈ 3% of the hub's 10 Gbps uplink).
-> **NEXT ACTION (laptop):** (1) **plug the B205 directly into a native laptop USB 3.0 port**
-> (Bus 004 = free 10000M root, or Bus 002's root directly) — **bypass the USB-C dock hub** — the
-> most likely real fix (Claude verified: the B205 is on a VIA Labs dock hub, a classic sample-drop
-> cause); (2) **re-run the sweep at 5 MS/s** (`?srate=5000000`) to halve the stream + add overflow
-> margin. **CORRECTION (Claude §11, verified on the laptop): the cause is the flaky DOCK HUB
-> itself (power delivery + xHCI jitter), NOT disk contention** — `captures/` is on internal NVMe
-> (writes never traverse the USB hub) and `radius.capture` writes each file *after* its samples are
-> collected (no disk I/O during streaming). Also NOT a bandwidth limit: UHD streams the B2x0 as
-> **`sc16`** (4 B/sample), so 10 MS/s ≈ 40 MB/s ≈ 320 Mbps ≈ 3% of the hub's 10 Gbps uplink. So
-> **skip** any disk-over-USB-contention fix (moving the capture dir, buffer-then-write) — it won't
-> help. **Still pending: the Configurator check (rate + UID + ELRS version)** — if it's OTA v6, the
-> v4 sync won't match even a clean capture.
+> **CURRENT STATE (as of this pull):** `main` @ `ae6d4a5` (enclave). `elrs_sdr.selftest` ALL PASS.
+> Scan-speed fix + pre-push auto-commit hook + Claude §11 ack all in.
+> **TWO BLOCKERS, both now understood (2026-10-08):**
+> **(A) The 403 (why the CLI curl "did nothing"):** the `/api/elrs` route is **referrer-gated** —
+> it returns `403 {"error": "Radio requests can only be made from WaveRaider's own pages."}`
+> to anything that isn't the browser UI. So **every `curl` I handed the user was bounced at the
+> door** (the 8 ms empty/`KeyError: 'channels'` responses were all this 403, NOT the sweep running
+> or a slow USB). **The sweep must be driven from the BROWSER** (open `http://localhost:8899/` →
+> Monitor → ELRS Find) — that's the intended UX + it shows the live %. CLI alternative: spoof the
+> referrer (`curl -H "Referer: http://localhost:8899/monitor" -H "Origin: http://localhost:8899"`)
+> or I add a localhost exemption (small code change, on the user's say-so). **I gave the user curl
+> by mistake — the endpoint was never CLI-accessible.**
+> **(B) The USB drop (the real capture blocker):** the B205 is on a **flaky USB-C DOCK** (Anker
+> multi-slot; B205 in a USB-A 3.0 blue slot on the dock; laptop is **USB-C-only, no USB-A**). The
+> 20261008_093931 capture (58 ch, stopped at ch57, no manifest, 12.5 min) had **37/58 channels
+> corrupt** (sample rate collapsed to <0.3 MS/s). Root cause (Claude §11, verified on the laptop):
+> the **Anker dock's internal hub** can't sustain the B205's continuous SDR stream (power delivery
+> + xHCI jitter) — NOT disk contention (`captures/` is internal NVMe) and NOT bandwidth (UHD
+> streams `sc16` = 4 B/sample, so 10 MS/s ≈ 40 MB/s ≈ 3% of the hub's 10 Gbps). **There is NO
+> native USB-A port to move to** (USB-C-only laptop) — the dock is the only USB-A source. So the
+> fix is: (1) move the B205 to a **lone USB-A 3.0 port** on the dock (one not sharing an internal
+> branch with the SD reader / Ethernet), (2) **unplug/disable the SD reader + USB-Ethernet** during
+> the sweep (less hub load), (3) **re-run at 5 MS/s + 30 ms dwell** (`?srate=5000000&dwell_ms=30`)
+> to halve the stream. If the dock still drops at 5 MS/s → it genuinely can't sustain the B205 and
+> the real fix is a **powered USB-C hub** (purchase) or a different dock. **Still pending: the
+> Configurator check (rate + UID + ELRS version)** — if it's OTA v6, the v4 sync won't match even a
+> clean capture.
+
+---
+
+## 2026-10-08 (andeds) — the 403 (curl was never the right way) + the USB-C-only constraint
+
+**What happened:** I handed the user a `curl "http://localhost:8899/api/elrs?..."` to run the
+5 MS/s sweep. It returned in **8 ms** with `{"error": "Radio requests can only be made from
+WaveRaider's own pages.", "available": false}` (HTTP 403). The user got `KeyError: 'channels'`
+because the response was the 403 error JSON, not sweep results. **The sweep was never running —
+every curl was bounced by the referrer gate.**
+
+**The referrer gate:** the `/api/elrs` route (and the other radio endpoints) check that the
+request comes from WaveRaider's own web pages (a `Referer`/`Origin` check). This is a security
+measure (stop random web pages from driving the radio). `curl` from a terminal has no browser
+referrer → 403. **This is by design, not a bug.**
+
+**So the correct ways to run a sweep:**
+1. **The browser (intended, no setup):** open `http://localhost:8899/` → **Monitor → ELRS Find**
+   → set params (or click for the default) → watch the live % stream in → it saves to
+   `captures/elrs_find_<ts>/`. **This is the normal workflow.** The CLI was never the path.
+2. **CLI with spoofed referrer (quick test):**
+   ```bash
+   time curl -s -N \
+     -H "Referer: http://localhost:8899/monitor" \
+     -H "Origin: http://localhost:8899" \
+     "http://localhost:8899/api/elrs?srate=5000000&dwell_ms=30" > /tmp/s5.sse
+   tail -5 /tmp/s5.sse      # the LAST 'data:' line is the final result (SSE stream)
+   ```
+   Note: the response is **SSE** (`data: {...}\n\n` lines), not a one-shot JSON — `json.load()`
+   on the whole file fails. The final `data:` line has `channels` + `saved_dir`.
+3. **Localhost exemption (code change, on the user's say-so):** I can add an exemption so
+   `127.0.0.1`/`localhost` requests pass the referrer check without a browser (safe — the check's
+   point is to stop *random web pages*, and a localhost CLI isn't that threat). Small change; I'll
+   apply it if the user wants CLI to "just work."
+
+**The USB-C-only constraint (why "just move the port" isn't available):** the laptop has **no
+USB-A port, only USB-C**. The B205 (USB-A) reaches it **only through the Anker USB-C dock**
+(B205 in a USB-A 3.0 blue slot on the dock). So there's **no native USB-A port to move to** —
+the dock is the only USB-A source. The dock's internal hub (VIA Labs, per Claude §11) is the
+flaky component. **Fixes within "what I have":** (1) move the B205 to a **lone** USB-A 3.0 port on
+the dock (not sharing an internal branch with the SD reader / Ethernet), (2) **unplug the SD reader
++ USB-Ethernet** during the sweep (less hub load), (3) **5 MS/s + 30 ms dwell** (halve the stream).
+**If the dock still drops at 5 MS/s** → it can't sustain the B205; the real fix is a **powered
+USB-C hub** (a purchase) or a different dock.
+
+**Next (user):** run the 5 MS/s + 30 ms dwell sweep **from the browser** (Monitor → ELRS Find,
+or with the referrer-spoofed curl above), B205 on the lone blue port, SD reader/Ethernet
+unplugged, radio on+TXing, Tinyhawk armed. Push the capture → I analyze the per-channel sample
+rates (clean ~5 MS/s vs the <0.3 MS/s collapse) + the clean channels for the ELRS link.
 
 ---
 
