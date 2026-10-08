@@ -276,8 +276,11 @@ class Handler(BaseHTTPRequestHandler):
                 uid_hex = q.get("uid", [""])[0]
                 device = q.get("device", [""])[0] or None
                 detect = q.get("detect", ["window"])[0]        # window | burst
-                strategy = q.get("strategy", ["sweep"])[0]     # sweep | sync
+                strategy = q.get("strategy", ["sweep"])[0]     # sweep | sync | matrix
                 sync_dwell_s = float(q.get("dwell_s", ["1.0"])[0])
+                sync_srate = float(q.get("sync_srate", ["5000000"])[0])
+                max_slices = int(q.get("max_slices", ["200"])[0])
+                early_exit = q.get("early_exit", ["1"])[0] not in ("0", "false", "no")
             except ValueError as e:
                 return self._send(400, json.dumps({"error": f"bad param: {e}"}))
             uid = bytes.fromhex(uid_hex) if uid_hex else None
@@ -302,7 +305,18 @@ class Handler(BaseHTTPRequestHandler):
                             # 2440.4 MHz) + burst-detect — catches FHSS hops a sweep misses
                             out = elrs_plugin.sync_dwell_phy(radius, srate=srate, gain=gain,
                                                              dwell_s=sync_dwell_s, uid=uid,
-                                                             output_dir=out_dir)
+                                                             output_dir=out_dir,
+                                                             sync_srate=sync_srate,
+                                                             max_slices=max_slices)
+                        elif strategy == "matrix":
+                            # redundancy: sweep/window -> sweep/burst -> sync_dwell/burst,
+                            # early-exiting on the first GFSK/LoRa hit (fast)
+                            out = elrs_plugin.run_scan_matrix(
+                                radius, srate=srate, gain=gain, uid=uid,
+                                output_root=out_dir, channels=channels,
+                                sweep_dwell_ms=dwell_ms, sync_dwell_s=sync_dwell_s,
+                                sync_srate=sync_srate, max_slices=max_slices,
+                                early_exit=early_exit, progress=_progress)
                         else:
                             out = elrs_plugin.sweep_phy(radius, srate=srate, gain=gain,
                                                         dwell_ms=dwell_ms, channels=channels,
@@ -312,12 +326,36 @@ class Handler(BaseHTTPRequestHandler):
                         del radius   # release the UHD device even on the error path
             except Exception as e:
                 return self._send(500, json.dumps({"error": str(e)}))
-            results = out["channels"]   # channels with energy (the UI table)
+            # two result shapes: the sweep/sync ({channels:[...], ...}) and the
+            # matrix ({strategies:[{name,result}], hit, hit_strategy}). Normalize
+            # the matrix to a combined channels list (union across passes, by
+            # channel number) + report which pass hit, so the UI table + the
+            # "Saved N files" line work the same either way.
+            matrix_info = None
+            if strategy == "matrix":
+                seen = {}
+                for s in out["strategies"]:
+                    for c in s["result"].get("all_channels", []):
+                        # prefer the hit (gfsk/lora) entry for a channel over a none/unknown one
+                        cur = seen.get(c.get("channel"))
+                        if cur is None or (c.get("phy") in ("gfsk", "lora")
+                                           and cur.get("phy") not in ("gfsk", "lora")):
+                            seen[c.get("channel")] = c
+                results = sorted(seen.values(), key=lambda c: c.get("channel", 0))
+                results = [c for c in results if c.get("phy") != "none"]
+                matrix_info = {"hit": out.get("hit"),
+                               "hit_strategy": out.get("hit_strategy"),
+                               "strategies": [s["name"] for s in out["strategies"]]}
+            else:
+                results = out["channels"]   # channels with energy (the UI table)
             # interpret for the UI
             g = [r for r in results if r["phy"] == "gfsk"]
             l = [r for r in results if r["phy"] == "lora"]
             unk = [r for r in results if r["phy"] == "unknown_energy"]
             interp = []
+            if matrix_info and matrix_info["hit"]:
+                interp.append(f"Matrix HIT via strategy: {matrix_info['hit_strategy']} "
+                              f"(passes run: {', '.join(matrix_info['strategies'])}).")
             if g:
                 interp.append(f"GFSK/FLRC link on channel(s) {[r['channel'] for r in g]} "
                               f"— decode with the GFSK branch (rate_index 0-3).")
@@ -332,10 +370,13 @@ class Handler(BaseHTTPRequestHandler):
             # tell the UI where the capture was saved (so the user knows what to upload)
             interp.append(f"Saved {out.get('saved_files', 0)} raw-IQ file(s) + manifest to: "
                           f"{out.get('saved_dir') or '(not saved)'}")
-            return self._send(200, json.dumps({"channels": results, "interpretation": interp,
-                                               "srate": srate, "uid": (uid.hex() if uid else None),
-                                               "saved_dir": out.get("saved_dir"),
-                                               "saved_files": out.get("saved_files", 0)}))
+            resp = {"channels": results, "interpretation": interp,
+                    "srate": srate, "uid": (uid.hex() if uid else None),
+                    "saved_dir": out.get("saved_dir"),
+                    "saved_files": out.get("saved_files", 0)}
+            if matrix_info:
+                resp["matrix"] = matrix_info
+            return self._send(200, json.dumps(resp))
         if u.path == "/settings":
             return self._send(200, Path(__file__).with_name("settings.html").read_text(), "text/html; charset=utf-8")
         if u.path == "/api/settings/receivers":

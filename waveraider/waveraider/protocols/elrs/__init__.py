@@ -422,13 +422,22 @@ FHSS_SYNC_CHANNEL = 40                      # ch40 of the 80-ch ISM2400 map
 FHSS_SYNC_FREQ = 2400.4e6 + 40 * 1.0e6      # = 2440.4 MHz (ELRS sync channel)
 
 
-def _augment_with_burst(r: dict, samples, srate: float, uid: bytes) -> dict:
+def _augment_with_burst(r: dict, samples, srate: float, uid: bytes,
+                        max_slices: int | None = None) -> dict:
     """Overlay burst-aware GFSK/LoRa detection onto a whole-window classify_phy
     result: keep its power/energy fields, but if a per-slice burst scan finds a
-    GFSK UID-sync or LoRa chirp the whole-window pass missed, promote the phy."""
+    GFSK UID-sync or LoRa chirp the whole-window pass missed, promote the phy.
+
+    `max_slices` caps the per-slice burst scan (None = classify_iq_burst's
+    default of 400). The sync-dwell pass passes a small cap (e.g. 200) so its
+    long buffer doesn't make the burst scan slow; the per-channel sweep leaves
+    it at the default."""
     try:
         from elrs_sdr import classify as _cls
-        bc = _cls.classify_iq_burst(samples, srate, gfsk_uid=uid)
+        if max_slices is None:
+            bc = _cls.classify_iq_burst(samples, srate, gfsk_uid=uid)
+        else:
+            bc = _cls.classify_iq_burst(samples, srate, gfsk_uid=uid, max_slices=max_slices)
     except Exception:
         return r
     if bc.signature in ("gfsk", "lora"):
@@ -441,21 +450,31 @@ def _augment_with_burst(r: dict, samples, srate: float, uid: bytes) -> dict:
 
 def sync_dwell_phy(radius, srate: float = 10e6, gain: float = 40.0,
                    dwell_s: float = 1.0, freq_hz: float = FHSS_SYNC_FREQ,
-                   uid: bytes | None = None, output_dir: str | None = None) -> dict:
+                   uid: bytes | None = None, output_dir: str | None = None,
+                   sync_srate: float | None = None, max_slices: int = 200) -> dict:
     """SECONDARY scan strategy: long-dwell a SINGLE channel (default the ELRS sync
     channel, ch40 = 2440.4 MHz) and burst-detect across the whole dwell. A long
     dwell catches multiple FHSS hops / the periodic sync packets that a
     once-per-channel sweep misses. Returns the same per-channel dict shape as
-    sweep_phy (one entry), under {"channels", "strategy", "all_channels", ...}."""
+    sweep_phy (one entry), under {"channels", "strategy", "all_channels", ...}.
+
+    SPEED: the dwell buffer is `sync_srate * dwell_s` samples. The FLRC/GFSK link
+    only needs ~3.9 MHz of bandwidth, so we capture the sync channel at 5 MS/s
+    (default, `sync_srate`) — 2× less than the 10 MS/s sweep rate — and cap the
+    burst scan at `max_slices` slices (a 1-2 ms FLRC burst is still caught). This
+    keeps the sync-dwell pass in ~1-2 s instead of ~8-10 s at 10 MS/s / uncapped."""
     import os, json, time
     import numpy as np
     uid = uid or DEFAULT_TARGET_UID
-    radius.tune(float(freq_hz), srate, gain)
+    # capture the sync channel at a lower rate than the sweep (FLRC needs ~3.9MHz;
+    # 5 MS/s is plenty and halves the buffer vs the 10 MS/s sweep rate)
+    eff_srate = float(sync_srate) if sync_srate else min(float(srate), 5e6)
+    radius.tune(float(freq_hz), eff_srate, gain)
     ch_path = None
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
-        ch_path = os.path.join(output_dir, f"sync_{freq_hz/1e6:.1f}MHz_dwell{dwell_s:g}s.complex8")
-    n = int(srate * dwell_s)
+        ch_path = os.path.join(output_dir, f"sync_{freq_hz/1e6:.1f}MHz_dwell{dwell_s:g}s_{eff_srate/1e6:g}Msps.complex8")
+    n = int(eff_srate * dwell_s)
     try:
         samples = radius.capture(n, path=ch_path, log_every=1 << 30)
     except Exception:
@@ -466,19 +485,21 @@ def sync_dwell_phy(radius, srate: float = 10e6, gain: float = 40.0,
     else:
         _p = float(np.mean(np.abs(samples) ** 2))
         _nf = float(np.percentile(np.abs(samples) ** 2, 10)) + 1e-12
-        r = classify_phy(samples, srate, uid=uid,
+        r = classify_phy(samples, eff_srate, uid=uid,
                          noise_floor=(_nf if _nf > 0 and _p > 0 else None))
-        r = _augment_with_burst(r, samples, srate, uid)
+        r = _augment_with_burst(r, samples, eff_srate, uid, max_slices=max_slices)
     r["channel"] = FHSS_SYNC_CHANNEL
     r["freq_mhz"] = round(freq_hz / 1e6, 2)
+    r["srate"] = eff_srate
     r["n_samples"] = int(len(samples)) if samples is not None else 0
     if ch_path:
         r["iq_file"] = os.path.basename(ch_path)
     energy = [r] if r["phy"] != "none" else []
     if output_dir:
         manifest = {"captured_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    "params": {"strategy": "sync_dwell", "srate": srate, "gain": gain,
+                    "params": {"strategy": "sync_dwell", "srate": eff_srate, "gain": gain,
                                "dwell_s": dwell_s, "freq_hz": freq_hz,
+                               "max_slices": max_slices,
                                "uid": (uid.hex() if uid else None)},
                     "channels_with_energy": energy, "all_channels": [r]}
         with open(os.path.join(output_dir, "manifest.json"), "w") as fh:
@@ -490,32 +511,68 @@ def sync_dwell_phy(radius, srate: float = 10e6, gain: float = 40.0,
 def run_scan_matrix(radius, srate: float = 10e6, gain: float = 40.0,
                     uid: bytes | None = None, output_root: str | None = None,
                     channels: int = 80, sweep_dwell_ms: int = 50,
-                    sync_dwell_s: float = 1.0, progress=None) -> dict:
+                    sync_dwell_s: float = 1.0, sync_srate: float | None = None,
+                    max_slices: int = 200, early_exit: bool = True,
+                    progress=None) -> dict:
     """Cycle through scan x detect strategies for redundancy / cross-checking.
     Runs, in order, three independent passes (a link one misses, another may
     catch):
       1. wideband sweep + window detect   (the original behaviour)
       2. wideband sweep + burst detect    (per-slice, catches brief FLRC bursts)
       3. sync-channel long-dwell + burst  (catches the periodic sync packets)
-    Returns {"strategies": [{name, result}, ...]}. Each pass can save under its
-    own subdir of `output_root`."""
+    Returns {"strategies": [{name, result}, ...], "hit": <bool>,
+    "hit_strategy": <name or None>}. Each pass can save under its own subdir of
+    `output_root`.
+
+    SPEED: with `early_exit` (default True) the matrix STOPS as soon as a pass
+    finds a GFSK/LoRa hit, so the common "found it on pass 1" case is ~one pass,
+    not all three. `sync_srate` (default 5 MS/s) + `max_slices` keep the
+    sync-dwell pass fast (~1-2 s) instead of ~8-10 s."""
     import os
     uid = uid or DEFAULT_TARGET_UID
 
     def _od(tag):
         return os.path.join(output_root, tag) if output_root else None
 
+    def _has_hit(result) -> tuple[bool, str | None]:
+        """True if this pass found a GFSK or LoRa channel (a real ELRS hit)."""
+        for c in result.get("all_channels", []):
+            if c.get("phy") in ("gfsk", "lora"):
+                return True, c.get("phy")
+        return False, None
+
     strategies = []
-    strategies.append({"name": "sweep/window", "result": sweep_phy(
-        radius, srate=srate, gain=gain, dwell_ms=sweep_dwell_ms, channels=channels,
-        uid=uid, output_dir=_od("sweep_window"), progress=progress, detect="window")})
-    strategies.append({"name": "sweep/burst", "result": sweep_phy(
-        radius, srate=srate, gain=gain, dwell_ms=sweep_dwell_ms, channels=channels,
-        uid=uid, output_dir=_od("sweep_burst"), progress=progress, detect="burst")})
-    strategies.append({"name": "sync_dwell/burst", "result": sync_dwell_phy(
-        radius, srate=srate, gain=gain, dwell_s=sync_dwell_s, uid=uid,
-        output_dir=_od("sync_dwell"))})
-    return {"strategies": strategies}
+    hit = False
+    hit_strategy = None
+    # pass 1: wideband sweep + window detect
+    r1 = sweep_phy(radius, srate=srate, gain=gain, dwell_ms=sweep_dwell_ms,
+                   channels=channels, uid=uid, output_dir=_od("sweep_window"),
+                   progress=progress, detect="window")
+    strategies.append({"name": "sweep/window", "result": r1})
+    hit, hit_strategy = _has_hit(r1)
+    # pass 2: wideband sweep + burst detect (skip if early_exit + pass 1 hit)
+    if not (early_exit and hit):
+        r2 = sweep_phy(radius, srate=srate, gain=gain, dwell_ms=sweep_dwell_ms,
+                       channels=channels, uid=uid, output_dir=_od("sweep_burst"),
+                       progress=progress, detect="burst")
+        strategies.append({"name": "sweep/burst", "result": r2})
+        if not hit:
+            hit, hit_strategy = _has_hit(r2)
+    # pass 3: sync-channel long-dwell + burst (skip if early_exit + already hit)
+    if not (early_exit and hit):
+        r3 = sync_dwell_phy(radius, srate=srate, gain=gain, dwell_s=sync_dwell_s,
+                            uid=uid, output_dir=_od("sync_dwell"),
+                            sync_srate=sync_srate, max_slices=max_slices)
+        strategies.append({"name": "sync_dwell/burst", "result": r3})
+        if not hit:
+            hit, hit_strategy = _has_hit(r3)
+    # aggregate the save info so the route's "Saved N files" line works the same
+    # for the matrix as for a single pass.
+    saved_files = 0
+    for s in strategies:
+        saved_files += int(s["result"].get("saved_files", 0) or 0)
+    return {"strategies": strategies, "hit": hit, "hit_strategy": hit_strategy,
+            "saved_dir": output_root, "saved_files": saved_files}
 
 
 
