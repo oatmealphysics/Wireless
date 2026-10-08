@@ -24,14 +24,51 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 > - **Enclave can't run the WaveRaider pytest** (closed network, no PyPI) — so I verify test-logic
 >   changes by simulating the regex/logic, and the *real* pytest run is yours (laptop).
 
-> **CURRENT STATE (as of this pull):** `main` @ `c68a6ce`, clean, `elrs_sdr.selftest` ALL PASS.
-> The sweep-hang bug (stuck at 4% / 2402 MHz) is **fixed** (stall-guard + 50 ms settle after
-> `tune()`). `captures/` **syncs via git** (un-ignored) — just `git add captures/ && commit && push`,
-> I pull + `python3 analyze_capture.py --fast` (auto-latest, no subfolder typing). **Next action
-> (laptop):** `git pull` → restart `wr serve` → **re-run ELRS Find** (radio on+bound+TXing,
-> Tinyhawk armed) — it should now complete all 80 channels → push the capture → I analyze.
-> The **load-bearing unknowns** are still: (1) confirm the Tinyhawk's **rate + UID + ELRS version**
-> from the Configurator, (2) confirm the **radio is actively transmitting** (TX LED blinking).
+> **CURRENT STATE (as of this pull):** `main` @ `d0f299e`, clean, `elrs_sdr.selftest` ALL PASS.
+> **The scan-speed fix is in** — `run_scan_matrix` now **early-exits** on the first GFSK/LoRa hit
+> (the common "found on pass 1" case is ~one pass, not three), and the **sync-dwell** pass captures
+> at 5 MS/s + caps the burst slices (drops ~8.5 s → ~1-2 s). New web param:
+> `/api/elrs?strategy=matrix` (the 3-pass redundancy with early-exit); `?early_exit=0` runs all 3.
+> The old `?strategy=sweep` / `?detect=burst` / `?strategy=sync` still work unchanged. **Next action
+> (laptop):** `git pull` → restart `wr serve` → ELRS Find (or `?strategy=matrix`) with the radio
+> on+TXing, Tinyhawk armed → it should finish in seconds now → push the capture → I analyze.
+> **Load-bearing unknowns (unchanged):** (1) confirm the Tinyhawk's **rate + UID + ELRS version**
+> from the Configurator (if OTA v6, the v4 sync won't match *any* strategy), (2) confirm the radio
+> is actively transmitting (TX LED blinking).
+
+---
+
+## 2026-10-07 (andeds) — scan speed: matrix runs in seconds, not minutes (early-exit + fast sync-dwell)
+
+**Your question:** "why does this dwell so long instead of swapping? should be seconds, not minutes."
+
+**Profiled it (not guessed):** the cost is the **CLASSIFY**, not the channel-swapping. The capture
+is fast (50 ms × 80 = 4 s RF). The slow parts:
+- `sync_dwell_phy` captured `dwell_s × srate` samples (2 s @ 10 MS/s = **20 M**) and burst-scanned it
+  as **1000 × 2 ms slices** → ~8.5 s for that pass alone.
+- `run_scan_matrix` ran **all 3 passes back-to-back with no early stop** → ~37 s total, even if pass 1
+  already found the link.
+
+**Three fixes (`d0f299e`):**
+1. **Early-exit** in `run_scan_matrix` (default on): stop as soon as a pass finds a GFSK/LoRa hit.
+   "Found on pass 1" → ~one pass. `early_exit=False` (or `?early_exit=0`) still runs all 3 for
+   full redundancy.
+2. **Faster sync-dwell:** capture the sync channel at **5 MS/s** (`sync_srate` default; FLRC only
+   needs ~3.9 MHz BW, so 5 MS/s is plenty + halves the buffer) + cap the burst scan at
+   `max_slices=200` (a 1-2 ms FLRC burst is still caught). Sync-dwell ~8.5 s → ~1-2 s.
+3. **`_augment_with_burst` threads `max_slices`** (sync-dwell passes 200; per-channel sweep keeps
+   the 400 default, so the `sweep/burst` pass is unchanged).
+
+**Web:** `/api/elrs?strategy=matrix` = the 3-pass redundancy with early-exit. `?sync_srate=`,
+`?max_slices=`, `?early_exit=0` thread through. The route now normalizes the matrix result shape
+(union of per-pass channels + reports which pass hit) so the UI table + "Saved N files" work the
+same for matrix as for a single pass. **Backward-compatible:** no params = the original window sweep.
+
+**Verified:** selftest ALL PASS, 3 burst tests pass, matrix early-exits on a hit (only `sweep/window`
+ran in the mock), route normalization produces the right combined channels list.
+
+**Expected timing now:** 80-ch `sweep/window` ≈ 4 s RF + ~11 s classify ≈ **~15 s**. Full matrix
+worst case (nothing found, all 3 runs) ≈ ~30 s; best case (found on pass 1) ≈ ~15 s.
 
 ---
 
