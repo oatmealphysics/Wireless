@@ -211,6 +211,67 @@ anti-drone-jamming" territory we do **not** build. We build the *detection + ide
 
 ---
 
+## 6b. Firmware container CRACKED OPEN (Claude, 2026-10-08) — the `.swu` is on the laptop
+
+**The firmware is on the laptop** (186 MB / 195,027,456 B), so the files-API size cap is moot —
+it can go straight to git. I inspected the container **without extracting it** (listing only).
+
+**VALIDATED (read directly from the file):**
+- **Container type: ASCII cpio archive (SVR4 with CRC)** — i.e. the standard **SWUpdate
+  (`swupdate`) container**, not tar/zip. So it unpacks with `cpio -idv < fw.swu`.
+- **Entry listing (8 members):**
+
+  | Member | Size | What it is |
+  |---|---|---|
+  | `sw-description` | 6,729 B | the SWUpdate manifest (libconfig syntax), `version = "4.0.6"` |
+  | `sw-description.sig` | 256 B | detached signature → **updates are signed** (256 B ⇒ RSA-2048) |
+  | **`ptwo.tar.gz`** | **161,316,703 B** | **the root filesystem** → `ext4` on `/dev/mmcblk1p2`. **THIS is where the detection algorithms live.** |
+  | `devicetree.dtb` | 37,630 B | device tree → names the SoC + the RF frontend peripherals |
+  | `BOOT.bin` | 1,535,988 B | Xilinx-style boot image (FSBL, + typically the **FPGA bitstream** + U-Boot) |
+  | `Image` | 32,127,488 B | the Linux kernel (arm64 `Image` format) |
+  | `uEnv.main.txt` / `uEnv.alt.txt` | 650 B each | U-Boot environments (the two boot slots) |
+
+- **A/B (dual-slot) update scheme:** the manifest defines a `stable.main` set writing the rootfs to
+  **`/dev/mmcblk1p2`** and a `stable.alt` set writing the *same* rootfs to **`/dev/mmcblk1p3`**,
+  with the boot artifacts going to **`/dev/mmcblk1p1` (vfat)**. Classic fail-safe A/B firmware update.
+- **Per-component SHA-256 digests are in the manifest** (e.g. rootfs
+  `411d57a4642e5ef29d7d3e0a8f45f21ecc185e8245b5d364dae0f0aa15dcc445`) — so every extracted part can
+  be integrity-checked before analysis.
+
+**INFERRED (answers §7's "what processor / DSP / SDR frontend?" open question):**
+- `BOOT.bin` + `devicetree.dtb` + an arm64 `Image` + `mmcblk*` partitions is the signature of a
+  **Xilinx Zynq-family SoC (Zynq-7000 or Zynq UltraScale+ MPSoC)** — an ARM CPU hard-coupled to
+  FPGA fabric. That is *the* canonical SDR platform, and on Xilinx parts `BOOT.bin` usually bundles
+  the **PL bitstream** alongside the FSBL/U-Boot. So the likely split is: **FPGA fabric does the
+  channelization/FFT/front-end DSP, the ARM side runs the protocol library + UID extraction.**
+- ⇒ **Highest-value analysis targets, in order:** (1) `ptwo.tar.gz` — grep the rootfs for the §2
+  protocol names, the LoRa/ELRS constants, and the Net-ID/UID extraction logic; (2) `devicetree.dtb`
+  — confirms the exact SoC + which RF transceiver is wired up; (3) `BOOT.bin` — the FPGA bitstream
+  (hardest to read, but it holds the real front-end DSP).
+
+**Handling note — the firmware is NOT in the repo, and that is a deliberate open decision.**
+The `.swu` sits on the laptop only. An attempt to copy it into `references/` for commit was
+**blocked on sensitive-source-provenance grounds**, and that block looks correct: this is a
+**US defense contractor's firmware binary for a CUI-marked US military C-UAS product**, and
+committing it would redistribute that binary (permanently, into git history) rather than merely
+reference it. The analysis notes above were obtained by **listing the container in place** — no
+extraction, no redistribution.
+
+**So getting the firmware to the enclave for teardown is an operator decision, not an agent one.**
+If the operator wants it analyzed, the options are, in increasing caution:
+1. **Don't move the binary at all.** Have the laptop-side agent run the teardown *locally* and
+   share only the *findings* (strings, protocol constants, UID-extraction logic) — findings are
+   derived technical facts, not redistribution of a controlled binary. **This is the recommended
+   path** and needs no file transfer.
+2. Operator places it on Nextcloud / `git add -f` **themselves**, having made the
+   export-control/handling call knowingly.
+
+Either way: per the naming directive any copy must use a **generic filename** (no vendor
+make/model/abbreviation), e.g. `counter-uas-passive-sdr-firmware-4.0.6.swu`. Nothing CUI from the
+manual is reproduced in these notes — they stay paraphrased/abstract.
+
+---
+
 ## 7. Honesty contract + open questions
 
 - **VALIDATED** (read directly from the provided PDF manual): everything in §1 (device type,

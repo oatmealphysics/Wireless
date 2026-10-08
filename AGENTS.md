@@ -68,6 +68,34 @@ the packet, and use *that* as the per-link discriminator — never "ask the oper
 A detector that *requires* the UID up front cannot work against an arbitrary drone and violates the
 #1 (general, not single-target) goal.
 
+### The target protocol catalog + the specific-protocol bar (from the reference C-UAS SDR)
+**Naming directive (operator):** the reference device is **"the counter-UAS passive SDR."** Never
+use its vendor/make name, or any acronym/abbreviation of it, in notes, code, filenames or commit
+messages.
+
+A shipped, passive, library-based counter-UAS SDR (manual + firmware provided by the operator as a
+reference; see `docs/REFERENCE_COUNTER_UAS_SDR.md`) scans for **16 named drone protocols**. That is
+our **target list**, encoded as tracked code in **`elrs_sdr/protocol_catalog.py`** (run
+`python3 -m elrs_sdr.protocol_catalog` for the live gap report). Two directives follow from it:
+
+1. **Climb to the SPECIFIC-protocol level, not the family level.** The reference device lists
+   **ExpressLRS**, **Crossfire** and generic **LoRa** as *three separate protocols*, even though
+   ELRS is a fork of Crossfire and both are LoRa-PHY. So specific-protocol fingerprinting is a
+   solved problem in a real product. Our `positivedet.lora_chirp` is at the **family** level
+   ("LoRa (ELRS/Meshtastic/sub-1G)") — that is a named gap, not a finished feature. Closing it
+   needs payload/timing fingerprinting (packet cadence, sync/CRC layout), not just chirp presence.
+   The `DetectionLevel` ladder is: `NONE → PRESENCE → FAMILY → SPECIFIC → IDENTIFIED`.
+2. **Extract and display a per-link identifier, like the reference does.** It whitelists "by UID"
+   and offers "Copy Net ID to Clipboard" — i.e. it pulls a per-platform ID out of the detected
+   link. That is proof the operator's "identify a drone by a unique ID from the RF" goal is a
+   shipped capability, not a fantasy. Per protocol that means: **ELRS → the air-recovered sync
+   word/UID; WiFi → the BSSID/MAC; DJI → the serial/DroneID.** Today only **WiFi** reaches
+   `IDENTIFIED` (validated L-SIG decode + beacon MAC); keep that honest in the catalog.
+
+**Honesty rule for the catalog:** `our_level` records what works on a REAL capture, never what a
+code path exists for. ELRS stays at `FAMILY` precisely because every real burst still returns
+`fsk_unidentified` with no CRC-valid lock. Mark synthetic-only detectors `validated=False`.
+
 ---
 
 ## 2. The hard boundary (safety — no exceptions)
@@ -213,6 +241,11 @@ set + the evidence class, not a confident "found it."
 - `elrs_sdr/core/` — the ELRS decode (crc, ota, fhss, lora, gfsk, **identify** = the classifier)
 - `elrs_sdr/radio.py` — UHD device wrapper (RX + gated TX) + `.complex8` I/O
 - `elrs_sdr/dronescan.py` — multi-band presence + protocol scanner
+- `elrs_sdr/protocol_catalog.py` — the **16-protocol target list** from the reference C-UAS SDR +
+  our honest `DetectionLevel` per protocol and which per-link ID we can extract
+  (`python3 -m elrs_sdr.protocol_catalog` prints the gap report)
+- `docs/REFERENCE_COUNTER_UAS_SDR.md` — the reference counter-UAS passive SDR notes (protocol
+  catalog, Net-ID/UID extraction, passive/active split, + the firmware container breakdown)
 - `analyze_capture.py` — the offline capture analyzer (channel-by-channel, all modes, UID-specific
   + generic scores; the false-positive warnings live here)
 - `waveraider/waveraider/protocols/elrs/` — the live-capture / web-UI integration (`sweep_phy`,
