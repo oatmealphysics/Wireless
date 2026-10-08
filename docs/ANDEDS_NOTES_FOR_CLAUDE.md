@@ -32,16 +32,23 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 > capture (58 ch, stopped at ch57, no manifest, 12.5 min) had **37/58 channels corrupt**
 > (sample rate collapsed to <0.3 MS/s vs the 10 MS/s requested; all show `n_samples=500000` =
 > the requested count, but the measured rate shows they trickled in over seconds). The 21 clean
-> channels show only Wi-Fi (duty ~0.82, GFSK ~0.005, no ELRS link). **Root cause is NOT USB 2.0**
-> (the B205 is on USB 3.0 @ 5000M) — it's **USB hub contention**: the B205 (Dev 012) shares a
-> 4-port hub (Dev 009) with a Mass Storage device (Dev 010, the external SSD) + an r8152 Ethernet
-> adapter (Dev 011), all 5 Gbps-class. Disk I/O (writing the `.complex8` captures) contends with
-> the B205's stream over the same hub → stalls.
-> **NEXT ACTION (laptop):** (1) **plug the B205 directly into a laptop USB 3.0 port** (bypass the
-> 4-port hub sharing with the SSD/Ethernet) — most likely real fix; (2) **re-run the sweep at
-> 5 MS/s** (`?srate=5000000`) to halve the USB load. If clean + fast → contention confirmed, then
-> re-analyze for the actual ELRS link. **Still pending: the Configurator check (rate + UID + ELRS
-> version)** — if it's OTA v6, the v4 sync won't match even a clean capture.
+> channels show only Wi-Fi (duty ~0.82, GFSK ~0.005, no ELRS link). **Root cause (Claude §11,
+> verified on the laptop): the B205 is on a flaky USB-C DOCK HUB** (VIA Labs, Dev 009 — classic
+> SDR sample-drop cause via power delivery + xHCI jitter). **NOT** disk contention (`captures/`
+> is on internal NVMe, writes never traverse the USB hub) and **NOT** bandwidth (UHD streams the
+> B2x0 as `sc16` = 4 B/sample, so 10 MS/s ≈ 40 MB/s ≈ 3% of the hub's 10 Gbps uplink).
+> **NEXT ACTION (laptop):** (1) **plug the B205 directly into a native laptop USB 3.0 port**
+> (Bus 004 = free 10000M root, or Bus 002's root directly) — **bypass the USB-C dock hub** — the
+> most likely real fix (Claude verified: the B205 is on a VIA Labs dock hub, a classic sample-drop
+> cause); (2) **re-run the sweep at 5 MS/s** (`?srate=5000000`) to halve the stream + add overflow
+> margin. **CORRECTION (Claude §11, verified on the laptop): the cause is the flaky DOCK HUB
+> itself (power delivery + xHCI jitter), NOT disk contention** — `captures/` is on internal NVMe
+> (writes never traverse the USB hub) and `radius.capture` writes each file *after* its samples are
+> collected (no disk I/O during streaming). Also NOT a bandwidth limit: UHD streams the B2x0 as
+> **`sc16`** (4 B/sample), so 10 MS/s ≈ 40 MB/s ≈ 320 Mbps ≈ 3% of the hub's 10 Gbps uplink. So
+> **skip** any disk-over-USB-contention fix (moving the capture dir, buffer-then-write) — it won't
+> help. **Still pending: the Configurator check (rate + UID + ELRS version)** — if it's OTA v6, the
+> v4 sync won't match even a clean capture.
 
 ---
 
@@ -59,39 +66,36 @@ stopped early, 13:39:33→13:52:06 = 12.5 min):
   ELRS ~1% burst), broadband ~4x spectral peak** → **Wi-Fi/interference, no ELRS link present**
   (same signature as every prior capture).
 
-**Diagnosis — the blocker is USB sample drops, not detection:**
+**Diagnosis — the blocker is USB sample drops (Claude §11 corrected the mechanism):**
 1. **Not USB 2.0** — `lsusb -t` shows the B205 on **USB 3.0 @ 5000M** (Bus 002 → hub Dev 009 →
    Port 003 → Dev 012). So the port speed is fine.
-2. **USB hub contention (the likely cause):** the B205 **shares a 4-port hub (Dev 009)** with a
-   **Mass Storage device (Dev 010 — the external SSD, 5000M)** and an **r8152 Ethernet adapter
-   (Dev 011, 5000M)**. All three are 5 Gbps-class on the same hub. The sweep **writes the
-   `.complex8` captures to disk DURING the capture** (the interleaved loop writes each channel's
-   file as it's captured), so disk I/O to that SSD contends with the B205's stream over the same
-   hub → the stream stalls while disk I/O happens → 37/58 channels drop to <0.3 MS/s.
-3. **10 MS/s is 2.5× the FLRC's 3.9 MHz bandwidth** — 80 MB/s sustained is a heavy USB load.
-
-**Fixes to try (laptop), in order:**
-1. **Plug the B205 directly into a laptop USB 3.0 port** (bypass the 4-port hub that shares with
-   the SSD + Ethernet). The laptop has a 10000M USB 3.1 root (Bus 004) + a 20000M/x2 root (Bus
-   002) — use a direct laptop port, not the hub.
-2. **Re-run the sweep at 5 MS/s** (`?srate=5000000`) — halves the USB data rate (40 MB/s). The
-   FLRC/GFSK link only needs ~3.9 MHz BW, so 5 MS/s (2× oversampling) is plenty for detection.
+2. **The flaky DOCK HUB (the verified cause, per Claude §11):** the B205 is on a **VIA Labs USB-C
+   dock hub** (Dev 009) sharing with an SD reader (Dev 010) + Realtek USB-Ethernet (Dev 011). VIA/
+   Realtek dock hubs commonly can't sustain a continuous SDR stream (power delivery + xHCI
+   scheduling jitter) — independent of raw bandwidth. **My earlier "disk-contention" mechanism was
+   WRONG** (Claude refuted it, verified on the laptop): `captures/` is on **internal NVMe**
+   (`/dev/nvme0n1p2`), so the `.complex8` writes never traverse the USB hub; and `radius.capture`
+   writes each file *after* its samples are collected (stream torn down between channels), so no
+   disk I/O overlaps streaming. **My "80 MB/s heavy load" bandwidth claim was also wrong** — UHD
+   streams the B2x0 as **`sc16`** (4 B/sample), so 10 MS/s ≈ 40 MB/s ≈ 320 Mbps ≈ 3% of the hub's
+   10 Gbps uplink. **So the fix is the same (native port + lower rate) but the reason is the dock
+   hub's flakiness, not disk contention or bandwidth.**
+3. **Fixes (laptop):** (1) **plug the B205 into a native laptop USB 3.0 port** (Bus 004 = free
+   10000M root, or Bus 002's root directly) — bypass the dock. (2) **Re-run at 5 MS/s**
+   (`?srate=5000000`) — halves the stream (~20 MB/s), more overflow margin; 2× the FLRC 3.9 MHz BW
+   is plenty for detection.
    ```bash
    time curl -s "http://localhost:8899/api/elrs?srate=5000000" > /tmp/s5.json
    python3 -c "import json; d=json.load(open('/tmp/s5.json')); print('ch:', len(d['channels']), d.get('saved_dir'))"
    ```
-   **If 5 MS/s → clean channels + finishes in ~15–30 s** → contention confirmed; re-analyze the
-   clean data. **If it still drops** → it's the hub (move the B205 to a direct port).
+   **If 5 MS/s on a native port → clean channels + finishes in ~15–30 s** → dock-hub confirmed;
+   re-analyze the clean data. **SKIP** any disk-over-USB-contention fix (moving the capture dir,
+   buffer-then-write) — it won't help (writes are internal NVMe).
 
 **Open question (the other load-bearing unknown):** even on the 21 *clean* channels there's **no
 ELRS link** — only Wi-Fi. So *independently* of the USB issue, confirm from the Configurator:
 **rate + UID + ELRS version.** If the Tinyhawk is on **OTA v6**, the v4-derived sync/CRC won't
 match *any* channel regardless of capture quality.
-
-**Possible code change (not yet made, on your say-so):** make the sweep **default to 5 MS/s**
-(one-line web.py default change) so the lower rate is the norm, and/or **buffer captures in memory
-and write the `.complex8` files AFTER the sweep** (instead of during) to remove the disk-IO-during-
-stream contention. Both are small; I'll apply when you confirm the port/rate test.
 
 ---
 
