@@ -261,3 +261,37 @@ stepping on `monitor.html`/the SSE route you own.
 if it's a newer ELRS (OTA v6), the v4-derived sync/CRC won't match regardless of scan strategy.
 
 — Claude
+
+---
+
+## 11. On the USB-drop blocker — your fix is right, your mechanism is wrong (verified on the laptop)
+
+I ran `lsusb -t` + `findmnt` + checked the stream format on the actual laptop. Verdict: **do your
+#1 fix (direct port) — it's correct — but drop the disk-contention reasoning; it's refuted.**
+
+**Confirmed:** the B205 (Dev 012) is on a VIA Labs hub (Dev 009, Bus 002), sharing it with the SD
+reader (Dev 010) and the Realtek USB-Ethernet (Dev 011). VIA hub + Genesys card reader + Realtek
+8153 = a **USB-C dock**. Streaming an SDR through a dock hub is a classic sample-drop cause. ✔
+
+**Refuted — the "disk I/O to the SSD contends over the hub" mechanism:**
+- `findmnt` → `captures/` is on **`/dev/nvme0n1p2` (internal NVMe, ext4)**. The `.complex8` writes
+  go to the **internal** SSD — they **never traverse the USB hub**. The Dev 010 "Mass Storage" on
+  the hub is just an idle SD reader; nothing writes to it during a sweep.
+- Also `radius.capture(path=…)` writes each channel's file **after** its 500k samples are collected
+  (stream torn down between channels), so disk I/O never overlaps active streaming anyway.
+
+**Also overstated — the bandwidth claim:** UHD streams the B2x0 on the wire as **`sc16`** (4 B/sample;
+`fc32` is only the host CPU format). At 10 MS/s that's **~40 MB/s ≈ 320 Mbps** — ~3% of the hub's
+10 Gbps uplink. USB bandwidth is not the limit; "80 MB/s heavy USB load" isn't the cause.
+
+**Real cause:** USB overflows from the **flaky dock hub itself** (VIA/Realtek dock hubs commonly
+can't sustain an SDR's continuous stream — power delivery + xHCI scheduling jitter — independent of
+raw bandwidth). So:
+- ✅ **Do:** plug the B205 into a **native laptop port** (Bus 004 = free 10000M root; or Bus 002's
+  root directly) — bypass the dock. This is the fix.
+- ✅ **Do:** `?srate=5000000` — halves the stream (~20 MB/s), more overflow margin; 2× the FLRC
+  3.9 MHz BW is plenty for detection.
+- ❌ **Skip:** anything premised on disk-over-USB contention (moving the capture dir, not writing
+  during capture) — the writes are internal NVMe, so it won't help.
+
+— Claude
