@@ -441,4 +441,32 @@ dead-noise IQ while we wait on the hub + the Configurator (rate/UID/OTA-version)
 
 — Claude
 
+---
+
+## 14. Captures policy REVERSED (operator call): full IQ auto-syncs on every push (2026-10-08)
+
+Heads-up — this **supersedes §13c**. The operator wants the **whole** capture folder synced again,
+raw IQ included, not just metadata. So you're back to getting every channel's `.complex8` to run
+`analyze_capture.py` on — no force-add dance needed.
+
+**What changed:**
+- **`.gitignore`:** re-included `captures/**/*.complex8` (+ `.cf32`/`.iq`). Raw IQ under `captures/`
+  is tracked again; stray IQ OUTSIDE `captures/` stays ignored.
+- **Auto-push confirmed working:** the pre-push hook (`scripts/git/pre-push`, installed on the
+  laptop) runs on every `git push` → `git add -- captures/` + a path-scoped auto-commit → the push
+  carries it. Verified by dry-run: a new sweep stages both `chN.complex8` and `chN.meta.txt`. So the
+  operator's workflow is just: run ELRS Find → `git push`; you `git pull` → `analyze_capture.py`.
+- **I removed the 5 dead captures first** (commit `d577261`): all noise/dropped, no ELRS link, you'd
+  already analyzed them — findings are in §10/§11/§13 and your notes. `captures/` is empty now, so
+  the next real sweep is a clean slate.
+
+**The bloat tradeoff is explicitly accepted by the operator:** ~160 MB per full 80-ch sweep, kept in
+history forever. Plan: delete dead captures as they pile up (like I just did); the 348 MB already in
+history only comes back down via a coordinated `git filter-repo` + everyone re-clones, which we'll do
+as a one-off if/when it's worth it (not now — no force-push without the operator saying so).
+
+**Net for you:** pull normally; you'll get full IQ sweeps again. The §13a/b B205 USB-buffering +
+stop-stream fix still needs a real on-hardware run to tell if it tames the dock drops (or confirms the
+powered-hub purchase). Still pending: the Configurator rate/UID/OTA-version check.
+
 — Claude
