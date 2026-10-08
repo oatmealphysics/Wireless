@@ -73,6 +73,49 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 
 ---
 
+## 2026-10-08 (andeds) — VERIFIED Claude's 3 identify.py burst-physics fixes (commit 2598ba3) on real wideband IQ
+
+Claude ran my `identify.py` on the real 28 MS/s BLUE wideband capture (the operator's
+`2026-10-08_13-06-21_2450mhz_pred.cdif`, now in the repo) and found **3 bugs in the
+measure-the-physics layer**. **I verified all 3 are fixed in the actual code** (per our
+"verify Claude's claimed fixes in the code, not just the notes" rule) + `elrs_sdr.selftest` →
+**ALL CHECKS PASSED**:
+
+1. **Positive-half-only spectrum** → `_centered_spectrum()` (fftshift, full `-srate/2..+srate/2`
+   band). My bug: I used `fft(x)[:nfft//2]` for a *complex baseband* burst, discarding the
+   negative half → bandwidth read ~half its true value + the offset could never be negative.
+   Verified: `_centered_spectrum` at identify.py:203, `fftshift` at 217-218. ✓
+2. **`freq_offset_hz` used argmax (peak bin)** → power-weighted **centroid** of the -10 dB
+   occupied band. My bug: for a 2-tone FSK burst the peak sits *on a tone*, so the "offset" was
+   wrong by ~the deviation (~365 kHz) — mis-centering the burst, which is exactly what this
+   function exists to fix. Verified: centroid at identify.py:272. ✓
+3. **`burst_core` returned a fixed 1 ms window** → **adaptive** (grow outward from the envelope
+   peak while within -6 dB, capped at burst_ms). My bug: ELRS bursts are often <1 ms, so the
+   fixed window padded the burst with noise floor → amp-CV → ~2.0 → tripped the `amp_cv<0.35`
+   gate → **rejected the strongest, cleanest bursts** (a 53.7 dB burst rejected with ampCV=1.99).
+   Verified: adaptive growth at identify.py:188-194. ✓
+
+**Measured effect (Claude, on the same 8 real bursts):** 53.7 dB burst ampCV 1.993 → 0.092 (now
+`is_signal=True`); offsets now correctly signed (-0.150..+0.122, centered ~0); bandwidth no
+longer halved (~1.05-1.18 MHz). 
+
+**Honest status (Claude's note, agreed):** the **measurement layer is now correct** on real
+wideband IQ, but **identification is still blocked** — every burst is `fsk_unidentified`,
+`crc_valid=False`, zero `gfsk_hits` (sync is UID-seeded; no UID obtainable — the air-recovery
+dead-end from §15a) + zero `lora_hits` at all 6 rates. **The remaining work is the sync-word
+air-recovery** — actually reading the sync word out of a demodulated burst to get the per-link
+identifier without the UID up front. That's the next build step (the "Layer 1" of the two-layer
+design in AGENTS.md §1). 
+
+**Note for the air-recovery build:** the measurement fixes mean the burst is now correctly
+centered (offset) + tightly-isolated (adaptive core) + full-bandwidth (centered spectrum) — so
+the demod + sync-extraction step will be working on a properly-prepared burst. The LoRa path
+(clause §15c: the cleanest burst looks like a LoRa chirp) is likely the relevant one, so the
+air-recovery should run BOTH the LoRa-dechirp + the GFSK/FLRC demod and let the recovered sync's
+CRC decide (the "measure, don't assume" discriminator).
+
+---
+
 ## 2026-10-08 (andeds) — Read the reference counter-UAS SDR manual + firmware (the "BC.pdf" / ".swu"); notes in docs/REFERENCE_COUNTER_UAS_SDR.md
 
 The operator provided a **reference counter-UAS (C-UAS) passive SDR** (a PDF user manual + a
