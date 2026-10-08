@@ -163,20 +163,60 @@ def extract_burst(iq: np.ndarray, srate: float,
 
 
 def burst_core(iq: np.ndarray, srate: float, burst_ms: float = 1.0) -> np.ndarray:
-    """The TIGHT ~burst_ms core of the strongest burst (for physics: bw, amp-CV,
-    offset). This is the slice that gives CV ~0.028 (constant-envelope), not the
-    padded window (which includes the floor)."""
+    """The TIGHT core of the strongest burst (for physics: bw, amp-CV, offset).
+
+    ADAPTIVE duration (fix, 2026-10-08): this used to return a FIXED burst_ms
+    window centred on the most energetic slice. ELRS bursts are often much
+    SHORTER than 1 ms, so a fixed 1 ms core padded the burst with idle noise
+    floor — and since amp-CV is std/mean of the amplitude, mixing burst+floor
+    sent CV to ~2.0 and tripped identify()'s `amp_cv < 0.35` gate, REJECTING the
+    strongest, cleanest bursts (observed: a 53.7 dB narrowband burst rejected
+    with ampCV=1.99). We now grow a contiguous run outward from the envelope
+    peak while it stays within 6 dB of that peak, so the core tracks the burst's
+    real duration, and cap it at burst_ms so a continuous (non-bursty) signal
+    can't return the whole window."""
     iq = np.asarray(iq, dtype=np.complex128)
-    p = np.abs(iq) ** 2
-    sl = int(srate * burst_ms / 1000.0)  # burst_ms MILLISECONDS -> samples
-    if sl < 64 or len(iq) < sl:
+    env = np.abs(iq)
+    if len(env) < 64:
         return iq
-    energies = [(i, float(p[i:i + sl].sum())) for i in range(0, len(iq) - sl, 10)]
-    if not energies:
+    # light smoothing so noise notches don't fragment the run
+    w = max(1, int(srate * 20e-6))          # ~20 us
+    sm = np.convolve(env, np.ones(w) / w, mode="same") if w > 1 else env
+    pk = float(sm.max())
+    if pk <= 0:
         return iq
-    energies.sort(key=lambda x: -x[1])
-    start = energies[0][0]
-    return iq[start:start + sl]
+    thr = pk * 0.5                           # -6 dB in amplitude
+    i = int(np.argmax(sm))
+    a = i
+    while a > 0 and sm[a - 1] > thr:
+        a -= 1
+    b = i
+    while b < len(sm) - 1 and sm[b + 1] > thr:
+        b += 1
+    cap = int(srate * burst_ms / 1000.0)     # burst_ms MILLISECONDS -> samples
+    if cap >= 64 and (b - a) > cap:
+        b = a + cap
+    core = iq[a:b + 1]
+    return core if len(core) >= 64 else iq
+
+
+def _centered_spectrum(x: np.ndarray, srate: float) -> tuple[np.ndarray, np.ndarray]:
+    """Power spectrum + frequency axis over the FULL complex band (-srate/2..+srate/2).
+
+    Fix (2026-10-08): the bandwidth/offset measurements used
+    `np.fft.fft(x)[:nfft//2]` with `fftfreq(...)[:nfft//2]`, i.e. the POSITIVE
+    half only. These are COMPLEX baseband bursts whose energy legitimately spans
+    negative frequencies, so half the signal was discarded: bandwidth read ~half
+    its true value and the measured offset could never be negative (every real
+    burst came back with a positive offset, which is impossible in general)."""
+    n = len(x)
+    nfft = _next_pow2(n)
+    win = np.hanning(n).astype(np.float64)
+    xx = np.asarray(x, dtype=np.complex128) * win
+    xx = np.concatenate([xx, np.zeros(nfft - n, dtype=np.complex128)])
+    spec = np.abs(np.fft.fftshift(np.fft.fft(xx))) ** 2
+    freqs = np.fft.fftshift(np.fft.fftfreq(nfft, 1.0 / srate))
+    return spec, freqs
 
 
 def measure_burst(burst: np.ndarray, srate: float) -> tuple[float, float, float]:
@@ -187,13 +227,10 @@ def measure_burst(burst: np.ndarray, srate: float) -> tuple[float, float, float]
     n = len(burst)
     if n < 64:
         return 0.0, 0.0, 0.0
-    nfft = _next_pow2(n)
-    win = np.hanning(n).astype(np.float64)
-    x = burst.astype(np.complex128) * win
-    x = np.concatenate([x, np.zeros(nfft - n, dtype=np.complex128)])
-    spec = np.abs(np.fft.fft(x)[: nfft // 2])
-    freqs = np.fft.fftfreq(nfft, 1.0 / srate)[: nfft // 2]
-    thr = np.max(spec) * 0.1
+    # FULL complex band (see _centered_spectrum): the old positive-half-only
+    # version under-reported bandwidth by ~2x on a centred burst.
+    spec, freqs = _centered_spectrum(burst, srate)
+    thr = np.max(spec) * 0.1                 # -10 dB occupied band
     band = freqs[spec > thr]
     bw = (band.max() - band.min()) / 1e6 if band.size else 0.0
     amp = np.abs(burst)
@@ -223,14 +260,20 @@ def freq_offset_hz(burst: np.ndarray, srate: float) -> float:
     n = len(burst)
     if n < 64:
         return 0.0
-    nfft = _next_pow2(n)
-    win = np.hanning(n).astype(np.float64)
-    x = burst.astype(np.complex128) * win
-    x = np.concatenate([x, np.zeros(nfft - n, dtype=np.complex128)])
-    spec = np.abs(np.fft.fft(x)[: nfft // 2])
-    freqs = np.fft.fftfreq(nfft, 1.0 / srate)[: nfft // 2]
-    peak = int(np.argmax(spec))
-    return float(freqs[peak])
+    # Fix (2026-10-08), two bugs here:
+    #  1) positive-half-only spectrum -> the offset could never be negative.
+    #  2) argmax picked the PEAK bin. An FSK/FLRC burst has TWO tones at
+    #     +-deviation, so the peak sits ON one tone and the "offset" came out
+    #     wrong by ~the deviation (~=365 kHz measured on these captures). That
+    #     mis-centres the burst before correlation -- the very bug this function
+    #     exists to fix. Use the power-weighted CENTROID of the occupied band,
+    #     which for a 2-tone FSK lands between the tones (the true carrier).
+    spec, freqs = _centered_spectrum(burst, srate)
+    thr = float(np.max(spec)) * 0.1          # -10 dB occupied band
+    m = spec > thr
+    if not np.any(m):
+        return 0.0
+    return float(np.sum(freqs[m] * spec[m]) / np.sum(spec[m]))
 
 
 def freq_shift_to_baseband(burst: np.ndarray, srate: float, offset: float) -> np.ndarray:
