@@ -24,25 +24,81 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 > - **Enclave can't run the WaveRaider pytest** (closed network, no PyPI) — so I verify test-logic
 >   changes by simulating the regex/logic, and the *real* pytest run is yours (laptop).
 
-> **CURRENT STATE (as of this pull):** `main` @ `7b3ce10` (enclave + laptop in sync).
-> `elrs_sdr.selftest` ALL PASS. Scan-speed fix + pre-push hook + Claude §11 ack + RF-CLI exemption
-> (opt-in `WAVERAIDER_LOCAL_CLI=1`) all in.
-> **DEFINITIVE ANSWER (2026-10-08, tested on the laptop): the Anker CANNOT sustain the B205, even
-> at 5 MS/s.** Ran `WAVERAIDER_LOCAL_CLI=1 wr serve` + a 5 MS/s / 30 ms dwell sweep: the B205 came
-> up fine (UHD 4.11, "Operating over USB 3", register loopback passed) but the capture printed
-> **`D` / `DDOD` on nearly every channel** — those are UHD's **USB overflow/drop indicators**. The
-> sweep only reached **ch7 in 100 s** (you Ctrl-C'd) vs ~15–30 s expected. So lowering the rate to
-> 5 MS/s did **NOT** fix it — the Anker dock's internal hub (VIA Labs, per Claude §11) genuinely
-> can't keep up with the B205's continuous stream at *any* practical rate. **The dock is a
-> hardware blocker, not a tunable one.**
-> **THE FIX (the only real one): a powered USB-C hub** (or a different dock). The B205 needs a
-> hub that can sustain ~40 MB/s sustained with low jitter — a **powered** USB-C hub (dedicated
-> 5V/1A+ to the B205, no SD reader/Ethernet sharing the upstream) is the standard SDR recommendation.
-> Cheap docks (Anker, VIA-based) routinely fail this. **Until then, no clean capture is possible on
-> this setup** — every sweep will have `D`/`O` drops + corrupt channels, so the ELRS link can't be
-> detected (a 1% duty burst is buried in a 10-second trickle of Wi-Fi on a dropped channel).
-> **Still pending (independent of the USB issue): the Configurator check (rate + UID + ELRS version)**
-> — if it's OTA v6, the v4 sync won't match even a clean capture.
+> **CURRENT STATE (as of this pull):** `main` @ `4dff93e` (enclave + laptop in sync).
+> `elrs_sdr.selftest` ALL PASS. **Two things landed since I last looked:**
+> **(1) The captures policy was REVERSED (Claude §14, operator call):** full raw IQ syncs on every
+> push again (`.gitignore` re-includes `captures/**/*.complex8`). The 5 dead/noise captures were
+> removed (`d577261`), so `captures/` is empty — the next real sweep is a clean slate. The
+> pre-push hook is confirmed installed on the laptop + working (it auto-committed
+> `ca2a29b` = capture 20261008_153552). **So the operator's workflow is now: run ELRS Find →
+> `git push`; I `git pull` → `analyze_capture.py`.** The ~160 MB/sweep bloat is explicitly
+> accepted; dead captures get deleted as they pile up (a coordinated `git filter-repo` to shrink
+> history is a future one-off, not now).
+> **(2) A B205 USB-drop mitigation (code, `99e77e6`):** two changes in `elrs_sdr/radio.py` —
+> (a) **deeper USB recv ring** (`num_recv_frames=512` default, env-tunable via
+> `UHD_NUM_RECV_FRAMES`) so the host rides out the dock hub's scheduling gaps without the FPGA
+> overflowing; (b) **`_stop_stream()` at the end of each channel's `capture()`** (via try/finally,
+> so it runs on every exit path) — this stops the B2xx's continuous free-run between channels,
+> which is what fixes the "ch0 clean, then `D`/`DDOD` on every later channel" symptom (without a
+> STOP, the FPGA keeps streaming into a torn-down transport, the buffers overflow while idle, and
+> the next channel opens onto a stale backlog → immediate drops). **I verified: syntax OK,
+> selftest ALL PASS, the mock-UHD test passes (incl. the new #7 USB-buffering + #8 stream-STOP
+> checks), and `_with_usb_buffering` produces the right args (default 512, env override, no
+> double-append).** **But it still needs a REAL on-hardware run** to tell if it tames the dock
+> drops or confirms the powered-hub purchase — the enclave has no B205.
+> **NEXT ACTION (laptop):** `git pull` → restart `wr serve` → run a 5 MS/s / 30 ms dwell sweep
+> (B205 on the lone blue port, SD reader/Ethernet unplugged, radio TXing, Tinyhawk armed) →
+> **watch for the `D`/`DDOD` indicators**: if they're gone (or much reduced) + the sweep finishes
+> in ~15–30 s → the mitigation works, we're unblocked. If they persist → the dock genuinely can't
+> do it, and the powered USB-C hub is the fix. Then `git push` (the hook auto-commits the capture)
+> → I analyze. **Still pending: the Configurator check (rate + UID + ELRS version)** — if OTA v6,
+> the v4 sync won't match even a clean capture.
+
+---
+
+## 2026-10-08 (andeds) — ack Claude §14 (captures policy reversed) + the B205 USB mitigation
+
+**Pulled + reviewed `99e77e6` + `4943ac5` + `4dff93e` (Claude + the operator's commits since
+`db24f92`):**
+
+### The captures policy reversal (Claude §14, operator call)
+- **`.gitignore`** re-includes `captures/**/*.complex8` (+ `.cf32`/`.iq`) — raw IQ under `captures/`
+  is tracked again. Stray IQ *outside* `captures/` stays ignored.
+- **The pre-push hook is now installed + working on the laptop** — it auto-committed `ca2a29b`
+  (capture `20261008_153552`). So the operator's "just `git push`" workflow **works**: run ELRS
+  Find → `git push` (hook auto-commits `captures/`) → I `git pull` → `analyze_capture.py`.
+- **The 5 dead captures were removed** (`d577261`) — all noise/dropped, already analyzed. `captures/`
+  is empty; the next real sweep is a clean slate.
+- **Bloat tradeoff explicitly accepted** by the operator (~160 MB/sweep, kept in history). Plan:
+  delete dead captures as they pile up; a coordinated `git filter-repo` to shrink the 348 MB already
+  in history is a future one-off (not now, no force-push without the operator saying so).
+
+### The B205 USB-drop mitigation (code, `99e77e6` — I reviewed + verified it)
+Two changes in `elrs_sdr/radio.py`, both well-reasoned + defensive:
+1. **Deeper USB recv ring** (`_with_usb_buffering`): appends `num_recv_frames=512` (default) to the
+   device args (env-tunable via `UHD_NUM_RECV_FRAMES`). A deeper host-side ring lets the host ride
+   out the dock hub's scheduling gaps without the FPGA overflowing — UHD's standard fix for `D`/`O`
+   drops. Harmless on a good link (a few MB more RAM). Verified: default → `num_recv_frames=512`,
+   env override works, no double-append if already set.
+2. **`_stop_stream()` at the end of each channel's `capture()`** (via a refactored `_capture_loop`
+   + try/finally, so it runs on every exit path): issues a `STOP_CONTINUOUS` stream command so the
+   B2xx stops free-running its continuous RX *between* channels. This is the fix for the "ch0
+   clean, then `D`/`DDOD` on every later channel" symptom — without a STOP, the FPGA keeps
+   streaming into a torn-down transport, the USB buffers overflow while idle, and the next channel
+   opens onto a stale/overflowed backlog → immediate drops. The `_stop_stream` impl probes the
+   UHD 4.11 `StreamMode`/`StreamCMD` API (multiple binding forms) + is fully try/guarded (a no-op
+   where the API differs, so it can't regress the working path).
+
+**My verification (enclave, no B205):** syntax OK, `elrs_sdr.selftest` ALL PASS (no regression),
+the mock-UHD test passes including the two new checks (#7 device args carry `num_recv_frames`,
+#8 `capture()` issues STOP_CONTINUOUS on exit). `_with_usb_buffering` unit-checked (default 512,
+env override, no double-append).
+
+**The open question (needs a real on-hardware run):** does this mitigation actually tame the dock
+drops, or does it confirm the powered-hub purchase? The `D`/`DDOD` indicators in the `wr serve`
+log are the tell — if a 5 MS/s / 30 ms dwell sweep on the laptop now runs clean (no `D`/`DDOD`,
+finishes in ~15–30 s), the mitigation works. If `D`/`DDOD` persist, the dock genuinely can't
+sustain the B205 and the powered USB-C hub is the fix. **That's the next test on the laptop.**
 
 ---
 
