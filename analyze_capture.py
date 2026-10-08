@@ -180,6 +180,22 @@ def main():
           "~20-35 = noise false-accept)")
     print("-" * 100)
 
+    # Determine the REQUESTED sample rate (from the manifest) so the corrupt
+    # check is relative to what was actually asked for, not a hardcoded 10 MS/s.
+    # (A 5 MS/s sweep is perfectly clean at ~4.88 MS/s; flagging it as CORRUPT
+    # because it's below 8 MS/s would be a false negative.)
+    requested_srate = 10e6  # default
+    mf_path = os.path.join(cap, 'manifest.json')
+    if os.path.exists(mf_path):
+        try:
+            with open(mf_path) as f:
+                _m = json.load(f)
+            requested_srate = float(_m.get('params', {}).get('srate', 10e6))
+        except Exception:
+            pass
+    # corrupt threshold: 80% of the REQUESTED rate (not a fixed 10 MS/s)
+    corrupt_threshold = CORRUPT_FRAC * requested_srate
+
     c8_files = sorted(glob.glob(os.path.join(cap, 'ch*.complex8')),
                       key=lambda p: int(re.search(r'ch(\d+)', p).group(1)))
     gfsk_channels = []
@@ -188,10 +204,10 @@ def main():
         ch = int(re.search(r'ch(\d+)', c8).group(1))
         meta_path = c8.replace('.complex8', '.meta.txt')
         meta = read_meta(meta_path) if os.path.exists(meta_path) else {}
-        srate = float(meta.get('sample_rate_hz', 10e6))
+        srate = float(meta.get('sample_rate_hz', requested_srate))
         freq_mhz = float(meta.get('center_freq_hz', 0)) / 1e6
-        # USB-bandwidth-corrupt channel (captured at wrong rate)
-        if srate < CORRUPT_FRAC * 10e6:
+        # USB-bandwidth-corrupt channel (captured well below the requested rate)
+        if srate < corrupt_threshold:
             print(f"{ch:>3} {freq_mhz:>9.1f} {srate/1e6:>7.2f}M {'CORRUPT':>9} "
                   f"{'-':>7} {'-':>5} {'-':>6} {'-':>7} {'-':>9}")
             continue

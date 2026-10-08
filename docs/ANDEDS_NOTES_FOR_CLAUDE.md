@@ -24,39 +24,113 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 > - **Enclave can't run the WaveRaider pytest** (closed network, no PyPI) — so I verify test-logic
 >   changes by simulating the regex/logic, and the *real* pytest run is yours (laptop).
 
-> **CURRENT STATE (as of this pull):** `main` @ `4dff93e` (enclave + laptop in sync).
-> `elrs_sdr.selftest` ALL PASS. **Two things landed since I last looked:**
-> **(1) The captures policy was REVERSED (Claude §14, operator call):** full raw IQ syncs on every
-> push again (`.gitignore` re-includes `captures/**/*.complex8`). The 5 dead/noise captures were
-> removed (`d577261`), so `captures/` is empty — the next real sweep is a clean slate. The
-> pre-push hook is confirmed installed on the laptop + working (it auto-committed
-> `ca2a29b` = capture 20261008_153552). **So the operator's workflow is now: run ELRS Find →
-> `git push`; I `git pull` → `analyze_capture.py`.** The ~160 MB/sweep bloat is explicitly
-> accepted; dead captures get deleted as they pile up (a coordinated `git filter-repo` to shrink
-> history is a future one-off, not now).
-> **(2) A B205 USB-drop mitigation (code, `99e77e6`):** two changes in `elrs_sdr/radio.py` —
-> (a) **deeper USB recv ring** (`num_recv_frames=512` default, env-tunable via
-> `UHD_NUM_RECV_FRAMES`) so the host rides out the dock hub's scheduling gaps without the FPGA
-> overflowing; (b) **`_stop_stream()` at the end of each channel's `capture()`** (via try/finally,
-> so it runs on every exit path) — this stops the B2xx's continuous free-run between channels,
-> which is what fixes the "ch0 clean, then `D`/`DDOD` on every later channel" symptom (without a
-> STOP, the FPGA keeps streaming into a torn-down transport, the buffers overflow while idle, and
-> the next channel opens onto a stale backlog → immediate drops). **I verified: syntax OK,
-> selftest ALL PASS, the mock-UHD test passes (incl. the new #7 USB-buffering + #8 stream-STOP
-> checks), and `_with_usb_buffering` produces the right args (default 512, env override, no
-> double-append).** **But it still needs a REAL on-hardware run** to tell if it tames the dock
-> drops or confirms the powered-hub purchase — the enclave has no B205.
-> **NEXT ACTION (laptop):** `git pull` → restart `wr serve` → run a 5 MS/s / 30 ms dwell sweep
-> (B205 on the lone blue port, SD reader/Ethernet unplugged, radio TXing, Tinyhawk armed) →
-> **watch for the `D`/`DDOD` indicators**: if they're gone (or much reduced) + the sweep finishes
-> in ~15–30 s → the mitigation works, we're unblocked. If they persist → the dock genuinely can't
-> do it, and the powered USB-C hub is the fix. Then `git push` (the hook auto-commits the capture)
-> → I analyze. **Still pending: the Configurator check (rate + UID + ELRS version)** — if OTA v6,
-> the v4 sync won't match even a clean capture.
+> **CURRENT STATE (as of this pull):** `main` @ `0abde5a`+ (enclave) / laptop pushed `4ec1c05`
+> (the two clean captures). `elrs_sdr.selftest` ALL PASS. **BIG PROGRESS + an honest correction:**
+> **✅ THE USB IS FIXED.** The B205 USB-drop mitigation (deeper recv ring + per-channel
+> `_stop_stream()`) **works on the real hardware**: two back-to-back 80-channel sweeps
+> (`20261008_120317` + `20261008_120433`), **both 80/80 channels, ~4.88 MS/s, ZERO drops, 12.7 s**
+> (vs the prior 58 ch / 12.5 min / 37-corrupt, and the 5 MS/s test that only reached ch7 in 100 s
+> with `DDOD`). The Anker dock is no longer the blocker — **no powered-hub purchase needed.** The
+> git-push-captures workflow also works (the hook auto-committed `4ec1c05`).
+> **❌ BUT the ch28 "GFSK sync found" (0.1732) is a FALSE POSITIVE — I over-claimed it as a
+> breakthrough; it's not.** Three reasons: (1) **not UID-specific** — a *wrong* UID (..185c)
+> correlates **just as high** (0.1749 vs 0.1732); a genuine ELRS sync would match the target UID
+> and near-zero for others. (2) **duty cycle 0.824** (continuous) — a real ELRS FLRC link is ~1%
+> duty (brief 1–2 ms bursts); 0.824 = Wi-Fi/interference. (3) **inconsistent across the two
+> captures** (ch28=0.1732 in 120433, 0.0190 in 120317) — it's just the strongest of many similar
+> continuous signals crossing the 0.10 gate by chance. **The whole band is continuous Wi-Fi/
+> interference (0.82–0.85 duty on all 80 channels).** So the honest verdict: **the capture is
+> clean + the USB is fixed, but there's no ELRS link in the data** — either the radio wasn't
+> TXing, the TX hopped off-channel during the dwells, or the Tinyhawk is on OTA v6 (wrong sync
+> reference). **FIX NEEDED (not yet applied): the GFSK detector needs a UID-specificity check**
+> (target-UID corr >> wrong-UID corr), not just "corr > 0.10" — that's what's letting this
+> non-UID-specific peak through as a false "GFSK found." **NEXT (user): confirm the radio was
+> actually TXing + the Configurator's ELRS version/rate/UID** (if OTA v6, the v4 sync won't match
+> even a clean capture). I'll apply the UID-specificity fix to the detector next.
 
 ---
 
-## 2026-10-08 (andeds) — ack Claude §14 (captures policy reversed) + the B205 USB mitigation
+## 2026-10-08 (andeds) — USB FIXED (real hardware) + honest correction: ch28 "GFSK" is a false positive
+
+### ✅ The USB mitigation works (the real win)
+Two back-to-back full sweeps on the laptop, **both clean**:
+- `elrs_find_20261008_120317` — 80/80 channels, ~4.88 MS/s, **12.8 s**, **no `D`/`DDOD`**
+- `elrs_find_20261008_120433` — 80/80 channels, ~4.88 MS/s, **12.6 s**, **no `D`/`DDOD`**
+
+Compare to before: `20261008_093931` was 58 ch / 12.5 **min** / 37-corrupt, and the 5 MS/s test
+only reached ch7 in 100 s with `DDOD` on every channel. **Now: 80/80, 12.7 s, zero drops.** The
+deeper recv ring (`num_recv_frames=512`) + the per-channel `_stop_stream()` tamed the Anker dock
+drops. **The dock is no longer the blocker — no powered-hub purchase needed.** The B205's actual
+rate is ~4.86–4.92 MS/s (requested 5 MS/s — the B205 runs slightly under, normal), all 150,000
+samples (30 ms × 5 MS/s), zero USB drops.
+
+### ❌ Honest correction: the ch28 "GFSK sync found" (0.1732) is a FALSE POSITIVE
+`analyze_capture.py` reported "✅ GFSK sync (target UID) FOUND on ch28 @ 2428.4 MHz (corr 0.1732)."
+I initially framed that as a breakthrough — **it's not.** I checked, and it's a false positive:
+
+1. **Not UID-specific (the decisive test):** I correlated ch28 with the *target* UID's sync word
+   (..185b) **and** a *wrong* UID's sync word (..185c, last byte differs by 1):
+   - target UID (..185b): **0.1732**
+   - WRONG  UID (..185c): **0.1749** (essentially the same, 0.99× ratio)
+   A genuine ELRS sync word is **UID-specific** — it should correlate high with the target UID and
+   near-zero with others. This correlates **equally high with a wrong UID** → it's a broad
+   correlation artifact (a strong continuous signal that matches *any* 32-bit sync pattern
+   similarly), **not** a UID-specific ELRS sync.
+2. **Duty cycle 0.824 (continuous):** a real ELRS FLRC link is **~1% duty** (brief 1–2 ms bursts
+   in continuous silence). 0.824 duty = **continuous transmission** = Wi-Fi/interference, not an
+   ELRS burst link.
+3. **Inconsistent across the two captures:** ch28 was **0.1732** in 120433 but **0.0190** in
+   120317 (76 s apart). A real (even FHSS-hopping) link with the *right* UID would be more
+   reproducible; this is just the strongest of many similar continuous signals crossing the 0.10
+   gate by chance. (In 120317 the max was ch16 at 0.0939 — just *under* the gate.)
+
+**The whole band is continuous Wi-Fi/interference:** all 80 channels are **0.82–0.85 duty**
+(continuous, not bursty), mostly classified "broadband" or "unknown." ch28 is simply the channel
+where the continuous signal happened to produce the highest sync-correlation peak (0.1732) — above
+the 0.10 gate, but not UID-specific and not bursty.
+
+### The detector bug (to fix)
+The GFSK detector's hit criterion is **"target-UID sync corr > 0.10."** That's insufficient — a
+strong continuous (non-ELRS) signal can produce a high correlation peak with the sync-word
+correlator *regardless of the UID* (as the wrong-UID test showed). **The fix: add a
+UID-specificity check** — a real hit requires `target_uid_corr >> wrong_uid_corr` (e.g. ratio >
+2–3×, or target corr high *and* a couple of wrong-UID corrs low), not just `target_uid_corr >
+0.10`. This eliminates the class of false positive we just saw. **Not yet applied** — I'll do it
+next (it's a change to the `gfsk_corr_peak`-based hit logic in `analyze_capture.py` + the live
+`classify_phy`).
+
+### The honest overall status
+| Item | Status |
+|---|---|
+| USB sample drops | ✅ **FIXED** (80/80 channels, no drops, 12.7 s) — the mitigation works |
+| Clean full-band captures | ✅ **Working** (5 MS/s + 30 ms dwell + the mitigation) |
+| git-push-captures workflow | ✅ **Working** (the hook auto-commits `captures/`) |
+| **ELRS link detection** | ❌ **Not found** — the band is continuous Wi-Fi/interference (0.82 duty), no bursty ~1% ELRS signal, no UID-specific sync. The ch28 "hit" is a false positive (detector bug, to fix) |
+
+### Why no ELRS link (the likely reasons, in order)
+1. **The radio wasn't TXing** during the sweep (not on/bound/transmitting) — most likely if the
+   Tinyhawk was powered but idle.
+2. **The TX hopped off-channel** during most 30 ms dwells (FHSS at ~500 Hz; a 30 ms dwell only
+   catches the sync if the TX was on that channel during the dwell) — a real link would still show
+   *some* UID-specific hits across captures, which we don't (the wrong-UID corr being equal rules
+   this out as the *only* explanation, but it contributes).
+3. **Wrong sync reference (OTA v6):** if the Tinyhawk is on **OTA v6** (not v4), our v4-derived
+   sync word won't match at all. **This is the Configurator check we keep flagging — it's the key
+   unknown now that the capture is clean.**
+
+### Next
+- **(Me) Apply the UID-specificity fix** to the GFSK detector (so it stops reporting non-UID-
+  specific peaks as "GFSK found").
+- **(User) Confirm: was the radio actually TXing** during the 120317/120433 sweeps? And **what's
+  the Configurator's ELRS version + rate + UID?** If the radio was off/idle → that explains "no
+  ELRS link." If it was TXing + it's OTA v6 → that explains it too (wrong sync reference).
+- **(Then) Re-run a sweep with the radio confirmed TXing** + the UID-specificity fix in place →
+  if a *genuine* ELRS link is present, the detector will now correctly report it (UID-specific +
+  bursty duty); if not, it'll correctly say "no ELRS link" (no false positives).
+
+---
+
+## 2026-10-08 (andeds) — ack Claude §14 (captures policy reversed) + review the B205 USB mitigation
 
 **Pulled + reviewed `99e77e6` + `4943ac5` + `4dff93e` (Claude + the operator's commits since
 `db24f92`):**
