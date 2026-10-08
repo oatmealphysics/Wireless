@@ -15,6 +15,17 @@ software-defined radio (Ettus B205mini / B210). The goal is a **general passive 
 detector** — it tells you *what is in the air* (link type, version, rate, identity, channel, hop
 behavior) for **whatever ELRS link is present**, not just one specific aircraft.
 
+### The delivery surface (Claude, 2026-10-08 — the original operator goal)
+The detector is **not** an end in itself: the product the operator asked for is a **WaveRaider
+web-UI that shows nearby drones, their protocols, and their identifiers**, driven by the operator's
+**B205mini** (WaveRaider ships configured for a bladeRF; the B205/UHD path in `waveraider/` is ours).
+The air-state classifier (`elrs_sdr/core/identify.py`) is the engine; `waveraider/` (Monitor →
+ELRS Find, the spectrum/overlay) is the surface that presents it. A detector improvement that
+can't be surfaced in that UI isn't finished. **ELRS is the current focus, not the ceiling:** the
+broader goal is "nearby *drones*," so shared scanner/overlay code must not bake in ELRS-only
+assumptions — leave room for the other 2.4 GHz drone links WaveRaider also targets (DJI OcuSync
+*presence*, Open Drone ID) rather than making them require a rewrite.
+
 ### ⚠️ The #1 design goal — GENERAL, not single-target (andeds, 2026-10-08 — REMEMBER THIS)
 The identifier must work against **ALL drones, ALL ELRS versions, ALL UIDs, ALL rates/modes** —
 **not just the one Tinyhawk we're testing against.** It is a *general* passive ELRS air-state
@@ -43,6 +54,16 @@ The end-state identity is a **hardware-unique ID per drone** (MAC/IMEI-style), f
 air protocol carries no hardware ID. (See `elrs_sdr/posid.py` + `docs/DRONE_RF_ARCHITECTURE.md`
 for the ID-architecture analysis.)
 
+**The identifier we can actually recover passively is the sync word / FHSS sequence** (both
+UID-seeded). For a link bound with a **binding phrase**, the UID — and therefore the sync word — is
+`MD5(phrase)[:6]`, computable offline. For a link bound the **traditional (3-click) way with NO
+binding phrase** (confirmed to be the operator's Tinyhawk, 2026-10-08), the UID is a random
+per-module value exchanged at bind time: **not computable, and not readable from Betaflight.** So
+the general method must be **recover-from-the-air** — demodulate a burst, read the sync word out of
+the packet, and use *that* as the per-link discriminator — never "ask the operator for the UID."
+A detector that *requires* the UID up front cannot work against an arbitrary drone and violates the
+#1 (general, not single-target) goal.
+
 ---
 
 ## 2. The hard boundary (safety — no exceptions)
@@ -53,6 +74,16 @@ for the ID-architecture analysis.)
   enabled to hit a live link).
 - **Bench/owned aircraft only.** All real-RF testing is on andeds's **own** drone, on the bench,
   with the radio present. Never point the TX at a live, in-the-air, third-party link.
+- **The TX gate is load-bearing — treat it as a wall.** The detection, analysis, and web-UI code
+  paths must **never import, call, or wire in** the TX side of `radio.py` (`tx_tune`/`tx_stream`)
+  or `elrc_bench_tx.py`. Removing the gate, making the TX path reachable from a sweep / the UI / a
+  CLI flow, or "just testing" a transmit against a live link requires **explicit human sign-off in
+  that specific change** — never an agent's own initiative, and never justified by a downstream
+  goal. The radio is direction-symmetric by design (so the TX code exists), which is exactly why
+  the gate, not the absence of code, is what keeps us passive.
+- **Defensive / situational-awareness intent.** This is a *receive-only* detector: observe and
+  label what's in the air. Recovered link parameters (sync word, FHSS sequence, rate) are for
+  identification/display, **not** for jamming, spoofing, replay, or any interference with a link.
 - **Same line, both sides.** Both agents (andeds + Claude) hold this boundary. It is not
   negotiable per-task.
 
@@ -124,6 +155,12 @@ the candidate set + the evidence class, not a confident "found it."
   (rate, version, offset, UID) from it, rather than taking them as a required input. Where an input
   is genuinely needed (the UID, to break the sync chicken-and-egg), make it **optional** and let
   the detector try to recover it.
+- **Always analyze at the MEASURED sample rate, never the requested one.** The B205 over USB
+  delivers slightly (or, on a bad link, much) under the configured rate — e.g. ~4.88 MS/s for a
+  requested 5 MS/s. Each capture's `.meta.txt` records the **measured** `sample_rate_hz`; every
+  analyzer/detector must read and use that (as `analyze_capture.py` / `identify.py` do), because
+  the wrong rate stretches the time/frequency axes and breaks every downstream measurement
+  (bandwidth, deviation, symbol rate, offset).
 - **The burst frequency offset is real.** ELRS bursts are off-center from the channel center
   (measured +0.32 MHz on ch31, +1.65 MHz on ch40 in the 120433 capture, due to channel overlap at
   ~4.88 MS/s / 1 MHz spacing). Detectors must **measure + frequency-shift to the burst's actual
@@ -143,10 +180,17 @@ the candidate set + the evidence class, not a confident "found it."
   measures the ELRS-shaped FSK burst in the clean capture but reports `fsk_unidentified` — it can't
   *lock* the GFSK UID/version without the right UID (the sync is UID-seeded; the version is
   iterable, the UID isn't).
-- **The one input still needed** to fully identify the test-target link: the **Betaflight ELRS UID
-  + version + rate** (Configurator → Radio Setup → ELRS section). Once provided, `identify.py` runs
-  with the right reference and either locks (reporting the full air state) or tells us the burst is
-  a different link.
+- **Correction (Claude, 2026-10-08): the UID can NOT just be read from Betaflight.** The operator's
+  Tinyhawk has **no binding phrase** (traditional 3-click bind), so the UID is a random per-module
+  value — not in the Configurator, not computable. The ELRS **version + packet rate** live on the
+  ELRS side too (the radio's ExpressLRS Lua, or the receiver's WiFi page at `http://10.0.0.1`), not
+  in Betaflight (which only speaks CRSF). So "get the UID from Betaflight to lock the sync" is not a
+  viable path for this link. The real path is **air-recovery**: `identify.py` already measures the
+  burst (bandwidth, CV, duty, offset) and iterates versions/rates; the remaining work is to
+  **demodulate a clean burst (ch31/ch40 in the 120433 capture) and read the sync word out of the
+  packet** — giving both the modulation confirmation (FLRC vs Bluetooth) and the per-link identifier
+  without needing the UID up front. The ELRS version is still *useful* (it fixes the packet format)
+  but is no longer a blocker — try the iterable versions against the demodulated bits.
 - **`elrs_sdr.selftest` ALL PASS.**
 
 ---
