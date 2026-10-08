@@ -31,9 +31,17 @@ fi
 # commit ONLY the captures/ pathspec — a path-limited commit, so any pre-staged
 # change outside captures/ is left in the index (NOT committed by this hook).
 ts="$(date -u +%Y%m%d_%H%M%S)"
+# NOTE: the second -m message MUST be single-quoted. Backticks inside a
+# double-quoted string are a bash command substitution, not literal text —
+# an earlier double-quoted version of this message had `git push` and
+# `git add captures/...` in backticks, which made bash ACTUALLY RUN `git push`
+# while building the commit message, BEFORE the commit itself ran. That nested
+# `git push` re-invoked this same pre-push hook, which did it again, recursively
+# — an infinite loop with no output, which is exactly what looked like "git
+# push is hanging" (2026-10-08). Single-quoting keeps the backticks literal.
 git commit -q -m "captures: auto-commit ${ts} (pre-push)" \
-     -m "Auto-staged the captures/ folder by the pre-push hook so `git push`
-uploads the entire captures tree without manual `git add captures/...`." \
+     -m 'Auto-staged the captures/ folder by the pre-push hook so `git push`
+uploads the entire captures tree without manual `git add captures/...`.' \
      -- captures/
 echo "[pre-push] auto-committed captures/ (auto-commit ${ts})" >&2
 
