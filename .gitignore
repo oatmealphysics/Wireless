@@ -18,11 +18,15 @@ dist/
 #   this grows .git over time. To reclaim it later: delete dead captures (they
 #   leave history) then do a coordinated `git filter-repo` + re-clone.
 #
-#   WIDEBAND single-file grabs (.cdif BLUE files, .sigmf-data, .cfile) are a
-#   DIFFERENT case: one file is 500 MB–1 GB+ (e.g. the 28 MS/s 2450 MHz grab is
-#   740 MB). Those are ignored EVERYWHERE (no captures/ re-include below) so the
-#   pre-push hook can't auto-commit a ~GB blob into history. To share one
-#   deliberately: `git add -f captures/<file>.cdif` (one-off), or move it off-git.
+#   WIDEBAND single-file grabs (.cdif BLUE files) are GB-scale (the 28 MS/s
+#   2450 MHz grabs are 740 MB and 3.25 GB). Per operator decision (2026-10-08):
+#   .cdif under captures/ IS synced via git like the rest of the raw IQ — same
+#   "push everything" policy already chosen for .complex8/.cf32. Accepted
+#   tradeoff: GB-scale pushes, kept in git history forever (reclaiming it later
+#   needs a coordinated `git filter-repo` + force-push + everyone re-clones —
+#   not done casually). .sigmf-data/.cfile are a DIFFERENT, not-yet-decided
+#   case and stay ignored everywhere until asked about. A stray *.cdif OUTSIDE
+#   captures/ also stays ignored (only the capture tree re-includes it).
 *.iq
 *.complex8
 *.cf32
@@ -35,6 +39,7 @@ dist/
 !captures/**/*.complex8
 !captures/**/*.cf32
 !captures/**/*.iq
+!captures/**/*.cdif
 !captures/**/*.meta.txt
 !captures/**/*.json
 !captures/**/manifest.json
