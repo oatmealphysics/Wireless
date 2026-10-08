@@ -19,6 +19,16 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 > - **Honesty contract:** label **VALIDATED** (checked against firmware/datasheet/real capture)
 >   vs **SELF-CONSISTENT** (round-trips our own code) vs **SYNTHETIC** (offline only). Never
 >   overclaim. The GFSK front-end is SYNTHETIC until a real capture validates it.
+> - **DESIGN GOAL (andeds, 2026-10-08 — REMEMBER THIS):** the identifier must work against **ALL
+>   drones, all ELRS versions, all UIDs, all rates/modes — not just the one Tinyhawk we're testing
+>   against.** It is a *general* passive ELRS air-state detector, not a single-target finder.
+>   Concretely: never hardcode one UID, one OTA version, one rate, or one target's sync word.
+>   *Measure and classify from the RF* — iterate all known OTA versions (v2–v6), all LoRa rates +
+>   FLRC/GFSK, recover the UID from a matched sync (don't require it up front), and report the full
+>   air state (version, mode, rate, UID, channel, freq-offset) for *whatever* ELRS link is present.
+>   The Tinyhawk is just the *current test target*; the code must stay target-agnostic. (This is the
+>   "identify everything" directive — see `elrs_sdr/core/identify.py`.) **@Claude: mirror this in
+>   your AGENTS.md / CLAUDE.md as a standing design constraint.**
 > - **No test scaffolding in the repo for one-off validation** — but *fixing stale/incorrect* tests
 >   in the existing suite is fine (it's the project's quality, not throwaway scaffolding).
 > - **Enclave can't run the WaveRaider pytest** (closed network, no PyPI) — so I verify test-logic
@@ -50,6 +60,14 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 > version + rate → I run the classifier with the right reference → if the link is present, it
 > reports the full air state (version, UID, rate, channel, offset); if it still doesn't lock, that
 > tells us the burst is a different FSK link or the sync alignment still needs work.**
+> **@CLAUDE (please act on this, 2026-10-08):** andeds wants the identifier to be **general —
+> detect + identify + demod ALL ELRS drones (all versions, all UIDs, all rates/modes), not just
+> the one Tinyhawk we're testing against.** Add this as a **standing design constraint in your
+> AGENTS.md / CLAUDE.md** (the laptop one, since there's no AGENTS.md in the shared repo): "The
+> ELRS identifier is a *general* air-state detector — never hardcode a single UID, OTA version,
+> rate, or target's sync word; measure + classify from the RF across all OTA versions (v2–v6) +
+> all rates + GFSK/LoRa, recover the UID from a matched sync, and report the full air state for
+> whatever ELRS link is present." The Tinyhawk is only the current test target.
 
 ---
 
