@@ -6,24 +6,32 @@ __pycache__/
 build/
 dist/
 
-# SDR captures: ELRS Find sweeps (captures/elrs_find_*/) are SYNCED as part of the
-# project (the user pushes/pulls them like any other file — no separate upload).
-# So UN-IGNORE the captures/ dir's IQ + meta + manifest. Everything else that looks
-# like a stray capture (a .complex8/.iq/.jsonl outside captures/) stays ignored.
-#   (the `!` lines re-include the captures/ subtree after the blanket ignores above)
+# SDR captures: ELRS Find sweeps save to captures/elrs_find_*/. We SYNC the
+# lightweight per-channel METADATA (.meta.txt + manifest/.json) via git so the
+# other session sees what a sweep found and with what parameters — but NOT the
+# raw IQ. A single .complex8 is ~2 MB and a full 80-channel sweep is ~160 MB; at
+# that rate git history bloats fast (it was ~350 MB of mostly noise/dropped
+# captures). Raw IQ stays LOCAL by default.
+#   When a capture actually has an ELRS hit worth remote deep-analysis, force-add
+#   just that channel's file:  git add -f captures/elrs_find_<ts>/ch<N>_*.complex8
+# Everything that looks like a stray capture outside captures/ stays ignored too.
 *.iq
 *.complex8
+*.cf32
 *.jsonl
 !captures/
 !captures/**/
-!captures/**/*.complex8
 !captures/**/*.meta.txt
 !captures/**/*.json
+!captures/**/manifest.json
 
 # C++ build artifacts (cpp/build.sh produces these)
 cpp/elrs_intercept
 cpp/tests/test_elrs_decode
 cpp/tests/test_lora_demod
+cpp/test_elrs_decode
+cpp/test_lora_demod
+cpp/*.bin
 cpp/*.o
 
 # Tarballs / archives — never commit

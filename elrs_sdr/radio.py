@@ -101,6 +101,37 @@ if _HAVE_UHD:
         pass
 
 
+def _with_usb_buffering(args: str) -> str:
+    """Append deep USB-buffering device args unless the caller already set them.
+
+    THE MITIGATION for the B205-on-a-dock sample drops (`D`/`O` in the UHD log).
+    The B2xx free-runs its RX over USB at the sample rate; on a marginal link (a
+    shared dock hub, bus power, xHCI scheduling jitter) the default host-side recv
+    ring is too shallow to absorb the hub's scheduling gaps, so UHD overflows
+    (`O`) / drops packets (`D`) and the effective rate collapses. A deeper recv
+    ring (`num_recv_frames`) is UHD's standard fix — it lets the host ride out the
+    hub's gaps without the FPGA overflowing. Harmless on a good link (just a few MB
+    more RAM for the ring). Tunable via env:
+      UHD_NUM_RECV_FRAMES  (frames, default 512)   — the main knob; raise it (e.g.
+                            1024/2048) if drops persist on a worse hub.
+      UHD_RECV_FRAME_SIZE  (bytes) — only applied if explicitly set (the driver's
+                            default is usually right; wrong values can hurt).
+    """
+    import os
+    extra = []
+    if "num_recv_frames" not in args:
+        nrf = (os.environ.get("UHD_NUM_RECV_FRAMES") or "512").strip()
+        if nrf and nrf != "0":
+            extra.append(f"num_recv_frames={nrf}")
+    rfs = (os.environ.get("UHD_RECV_FRAME_SIZE") or "").strip()
+    if rfs and "recv_frame_size" not in args:
+        extra.append(f"recv_frame_size={rfs}")
+    if not extra:
+        return args
+    sep = "" if (not args or args.endswith(",")) else ","
+    return args + sep + ",".join(extra)
+
+
 def _open_usrp(args: str):
     """Open the device, tolerating the constructor name across bindings.
 
@@ -108,6 +139,7 @@ def _open_usrp(args: str):
     On total failure, prints the candidate symbols that actually exist so the
     real name is self-diagnosing (never a blind AttributeError).
     """
+    args = _with_usb_buffering(args)
     # Suppress UHD's verbose INFO banner ("UHD ... reference clock rate 16.0 MHz",
     # device-tree dumps, etc.) that clutters the terminal when wr serve / the sweep
     # opens the radio. UHD honors the env var across versions; also call the Python
@@ -606,6 +638,76 @@ class RadioDevice:
                 log.warning("issue_stream_cmd(START) raised: %r "
                             "(stream may already be running)", e)
 
+    def _stop_stream(self, stream):
+        """Issue a STOP stream command — the companion to `_start_stream`.
+
+        Called at the END of each per-channel `capture()` so the device stops
+        free-running its continuous RX between channels. THIS is what fixes the
+        "ch0 clean, then `D`/`DDOD` on every later channel" dock symptom: without
+        a STOP, after a channel's capture the FPGA keeps streaming into a
+        torn-down transport, the USB buffers overflow while idle, and the NEXT
+        channel opens onto a stale/overflowed backlog → immediate drops. Stopping
+        the stream drains the free-run so each channel starts clean.
+
+        Mirrors `_start_stream`'s binding probing (StreamMode.stop_cont is a
+        ready-made stream_mode instance on 4.11; a zero-arg callable / enum on
+        others). Fully try/guarded: a no-op where the API differs, so it can
+        never regress the working path (worst case it does nothing, as today)."""
+        if stream is None or not hasattr(stream, "issue_stream_cmd"):
+            return
+        types = getattr(uhd, "types", None)
+        cmd_cls = getattr(types, "StreamCMD", None) or getattr(uhd, "StreamCMD", None)
+        mode_cls = getattr(types, "StreamMode", None) or getattr(uhd, "StreamMode", None)
+        if cmd_cls is None or mode_cls is None:
+            return
+        mode = None
+        # 1) class attribute already holding a stop stream_mode (the 4.11 case).
+        for attr in ("stop_cont", "STREAM_MODE_STOP_CONTINUOUS", "stop"):
+            a = getattr(mode_cls, attr, None)
+            if a is not None and not callable(a):
+                mode = a
+                break
+        # 2) zero-arg callable (other bindings).
+        if mode is None:
+            for attr in ("stop_cont", "STREAM_MODE_STOP_CONTINUOUS", "stop"):
+                a = getattr(mode_cls, attr, None)
+                if callable(a):
+                    try:
+                        m = a()
+                        if m is not None:
+                            mode = m
+                            break
+                    except Exception:
+                        continue
+        # 3) instance-method fallback (4.2: StreamMode().stop()).
+        if mode is None:
+            try:
+                inst = mode_cls()
+                for attr in ("stop_cont", "stop"):
+                    m = getattr(inst, attr, None)
+                    if m is not None:
+                        mode = m() if callable(m) else m
+                        break
+            except Exception:
+                pass
+        if mode is None:
+            return
+        try:
+            cmd = cmd_cls(mode)
+        except Exception:
+            try:
+                cmd = cmd_cls()
+                if hasattr(cmd, "set_stream_mode"):
+                    cmd.set_stream_mode(mode)
+                else:
+                    return
+            except Exception:
+                return
+        try:
+            stream.issue_stream_cmd(cmd)
+        except Exception:
+            pass
+
     # Back-compat name used by cli.py / older callers.
     def get_rx_stream(self):
         return self._open_rx_stream()
@@ -675,6 +777,19 @@ class RadioDevice:
         requested rate), because that stretches the frequency/time scaling.
         """
         stream = self._open_rx_stream()
+        try:
+            return self._capture_loop(stream, n_samples, path, log_every, save_partial)
+        finally:
+            # Stop the device free-running before the next channel retunes/reopens.
+            # Without this, the FPGA keeps streaming into a torn-down transport
+            # between channels, the USB buffers overflow while idle, and the next
+            # channel opens onto a stale/overflowed backlog -> the `D`/`DDOD` drops
+            # that appear on every channel after ch0 on a marginal dock hub.
+            self._stop_stream(stream)
+
+    def _capture_loop(self, stream, n_samples, path, log_every, save_partial):
+        """The capture read loop (see capture()). Separated so capture() can
+        guarantee _stop_stream() runs on every exit path via try/finally."""
         out = np.empty(n_samples, dtype=np.complex64)
         got = 0
         buf = np.zeros(min(4096, n_samples), dtype=np.complex64)

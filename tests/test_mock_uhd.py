@@ -27,10 +27,16 @@ class _MetaRange411:
         raise TypeError("object of type 'meta_range_t' has no len()")
 
 class _RXStream:
-    def __init__(self, n=4096): self._n = n; self._calls = 0; self._started = False
+    def __init__(self, n=4096): self._n = n; self._calls = 0; self._started = False; self._stopped = False
     def issue_stream_cmd(self, cmd):
-        # 4.11: the streamer must be started before recv delivers
-        self._started = True
+        # 4.11: the streamer must be started before recv delivers. A STOP command
+        # (stream_mode value 2 == STOP_CONTINUOUS) records that capture() ended the
+        # free-run instead of leaving the FPGA streaming between channels.
+        mode = getattr(cmd, "mode", None)
+        if getattr(mode, "value", None) == 2:
+            self._stopped = True
+        else:
+            self._started = True
     def recv(self, *a):
         # EXACT 4.11 signature: recv(np_array, metadata, timeout: float=0.1) -> int
         buf = a[0] if isinstance(a[0], np.ndarray) else None
@@ -198,5 +204,21 @@ assert "n/a" not in desc and "unrecognized" not in desc, \
 # The confirmed 4.11 range is start=31250 Hz (0.03125 Msps) .. stop=16e6 Hz (16 Msps)
 assert "0.031" in desc and "16.000" in desc, f"didn't parse start/stop: {desc}"
 print("   meta_range_t (start/stop/step) parsed correctly")
+
+print("== 7. USB buffering: device args carry num_recv_frames (dock-drop mitigation) ==")
+os.environ.pop("UHD_NUM_RECV_FRAMES", None)   # exercise the default
+r7 = RadioDevice("type=b200")
+assert "num_recv_frames=512" in r7.device.args, \
+    f"num_recv_frames not applied to device args: {r7.device.args!r}"
+print("   device args:", r7.device.args)
+
+print("== 8. capture() STOPS the stream on exit (ends the inter-channel free-run) ==")
+r8 = RadioDevice("type=b200")
+r8.tune(2.44e9, 4e6, 40, None)
+s8 = r8.device._stream
+arr = r8.capture(8192, path=None)
+assert len(arr) == 8192, f"capture returned {len(arr)} samples (expected 8192)"
+assert s8._stopped, "capture() never issued STOP — the free-run fix did not fire (BUG)"
+print("   captured", len(arr), "samples and issued STOP_CONTINUOUS on exit")
 
 print("\nALL MOCK-UHD 4.11 CHECKS PASSED")

@@ -368,3 +368,77 @@ point + the honesty contract). **Yours, or a dedicated session** — run the har
 the remote_id reference fixtures above.
 
 — Claude
+
+---
+
+## 13. The B205 dock drops — I tried the two UHD levers you couldn't + stopped the captures git bloat (2026-10-08)
+
+Your DEFINITIVE note said the Anker can't sustain the B205 at any rate → buy a powered hub. Agreed
+that a bad hub is a real wall — but your test only pulled ONE lever (lower the rate), and the
+`D`/`O` pattern points at two others that are **pure UHD config, not hardware**. I implemented both
+so the user can try them BEFORE spending money. (Enclave can't hardware-test; I verified them through
+`tests/test_mock_uhd.py`, so: **SELF-CONSISTENT, not yet hardware-VALIDATED against the dock.**)
+
+### 13a. Why "ch0 clean, then D/DDOD on every channel" is a code smell, not just a bad hub
+
+I read `elrs_sdr/radio.py`. Two things the capture path was doing wrong for a marginal link:
+1. **The device opened with NO USB buffering args** — no `num_recv_frames`. The B2xx free-runs RX
+   over USB; the default host recv ring is too shallow to absorb a dock hub's xHCI/power-delivery
+   jitter → overflow (`O`) / dropped packets (`D`). **The** standard UHD fix, and it was simply absent.
+2. **The continuous stream was never STOPPED between channels.** Each channel did
+   START_CONTINUOUS, read N, then moved on leaving the FPGA free-running into a torn-down transport.
+   Between channels those buffers overflow while idle, so the NEXT channel opens onto a
+   stale/overflowed backlog → `D`/`DDOD`. **That is exactly your ch0-clean / ch1+-dirty signature** —
+   a pure-hardware bandwidth wall would hit ch0 too. ch0 was clean because it's the only one that
+   starts with empty buffers.
+
+### 13b. What I changed (both in `elrs_sdr/radio.py`)
+
+- **`_with_usb_buffering(args)`** — appends `num_recv_frames=512` (env `UHD_NUM_RECV_FRAMES`, raise
+  to 1024/2048 on a worse hub; `UHD_RECV_FRAME_SIZE` optional) to the device args in `_open_usrp`,
+  unless the caller already set it. Deep host ring to ride out the hub's gaps.
+- **`_stop_stream(stream)`** + `capture()` now runs it in a `finally` (via a small `_capture_loop`
+  split) on **every** exit path (normal / stall / Ctrl-C). Ends the free-run so each channel starts
+  clean — directly targets the inter-channel backlog. Mirrors the proven `_start_stream` binding
+  probing (StreamMode.stop_cont on 4.11), fully try-guarded → worst case a no-op, **cannot regress
+  the working path.**
+- Tests: extended `tests/test_mock_uhd.py` (§7 buffering arg applied, §8 `capture()` issues
+  STOP_CONTINUOUS). `elrs_sdr.selftest` still ALL PASS.
+
+**Operator test (do this before buying a hub):**
+```sh
+WAVERAIDER_LOCAL_CLI=1 wr serve          # (separate terminal)
+# optional, if 512 isn't enough:  export UHD_NUM_RECV_FRAMES=1024
+curl -s -N -H "X-WaveRaider-Request: 1" "http://localhost:8899/api/elrs?srate=5000000&dwell_ms=30"
+```
+Watch the UHD log: **far fewer / no `D`/`O`, and channels completing in ~fractions of a second** =
+the fix helped. If it STILL floods `D`/`O` at every channel even with `UHD_NUM_RECV_FRAMES=2048` →
+your powered-hub conclusion is confirmed hardware, and the purchase is the answer. Either way we've
+now exhausted the software side honestly.
+
+### 13c. The captures git bloat — stopped it (your pre-authorized "git rm --cached the old ones")
+
+`.git` had grown to **348 MB**; `captures/` carried **92 `.complex8` = 176 MB** of tracked raw IQ,
+all confirmed noise/dropped sweeps you'd already analyzed. Your own note OK'd trimming when bloated.
+Done:
+- **`.gitignore`:** raw IQ (`*.complex8`, `*.cf32`, `*.iq`) is ignored again; we now sync only the
+  **lightweight metadata** (`*.meta.txt`, `*.json`, `manifest.json`) so you still see what a sweep
+  found + its params. Escape hatch for a REAL hit:
+  `git add -f captures/elrs_find_<ts>/ch<N>_*.complex8` (share just that channel).
+- **`git rm --cached`** the 92 tracked `.complex8` (files stay on the laptop disk; just untracked).
+- **Installed the pre-push hook** (`scripts/git/install-hooks.sh`) — now safe: `git add -- captures/`
+  respects `.gitignore`, so it auto-commits only the small metadata, never the big IQ. Also **fixed a
+  bug in that script** — its final `echo` had backticks around `git push` that actually *ran*
+  `git push` on install (that's the "pre-push hook situation" you hit). Now single-quoted.
+- **Not done (needs your call):** the 348 MB is still in history; reclaiming it needs a
+  `git filter-repo` + force-push + everyone re-clones. Your rules say no force-push, so I left it.
+  Going forward the bloat stops growing; pushes/pulls of new commits are small again. Say the word
+  and we can do the history rewrite as a coordinated one-off.
+
+**Reality check:** with the dock unfixed we still can't get a clean capture, so none of this unblocks
+detection by itself — but 13a/b is the honest last software try, and 13c stops us uploading more
+dead-noise IQ while we wait on the hub + the Configurator (rate/UID/OTA-version) check.
+
+— Claude
+
+— Claude
