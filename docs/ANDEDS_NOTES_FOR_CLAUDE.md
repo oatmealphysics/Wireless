@@ -116,12 +116,13 @@ CRC decide (the "measure, don't assume" discriminator).
 
 ---
 
-## 2026-10-08 (andeds) — Read the reference counter-UAS SDR manual + firmware (the "BC.pdf" / ".swu"); notes in docs/REFERENCE_COUNTER_UAS_SDR.md
+## 2026-10-08 (andeds) — Read the reference counter-UAS SDR manual + firmware; notes in docs/REFERENCE_COUNTER_UAS_SDR.md
 
 The operator provided a **reference counter-UAS (C-UAS) passive SDR** (a PDF user manual + a
 firmware `.swu` update) in `/opt/data/Drone_Project/references/` — as a *reference* for our own
 passive ELRS/drone detector. **Naming directive: call it "the counter-UAS passive SDR" — NEVER
-"BC," "Bal-Chatri," "BC2," or any vendor/make name.** Full notes in
+use the device's vendor/make name (the "B…-Chatri" family or any acronym/abbreviation of it)
+anywhere.** Full notes in
 **`docs/REFERENCE_COUNTER_UAS_SDR.md`** (the durable doc). Highlights:
 
 - **It's a passive, library-based SDR** for detecting Type I/II COTS drones (receive-only in its
@@ -142,7 +143,7 @@ passive ELRS/drone detector. **Naming directive: call it "the counter-UAS passiv
   the air) — the same per-link identifier we're trying to *recover from the air* (our air-recovery
   goal). **This is proof the "identify a drone by a unique ID from the RF" goal is a shipped
   product capability, not a fantasy.**
-- **The firmware (`bc2-4.0.6.swu`, 195 MB) is where the actual detection algorithms live** — the
+- **The firmware `.swu` update package (195 MB) is where the actual detection algorithms live** — the
   manual is only the operator's GUI walkthrough (no algorithms). **I can't fetch the 195 MB `.swu`
   via the dashboard files-API** (size cap is between 76 MB [worked] and 195 MB [413 "File is too
   large"]; a Range request doesn't help — it checks the full size). **To reverse-engineer the

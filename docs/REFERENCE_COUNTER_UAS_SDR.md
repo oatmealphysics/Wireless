@@ -1,20 +1,22 @@
 # Reference: Generic Counter-UAS (C-UAS) Passive SDR — Device + Firmware Notes
 
-> **Naming note (operator directive):** do **not** call this device "BC," "Bal-Chatri,"
-> "BC2," or any vendor/make name. Refer to it generically as the **"counter-UAS passive SDR"**
-> (or "the C-UAS detector"). This file documents a **reference counter-UAS SDR** the operator
+> **Naming note (operator directive):** do **not** use the device's vendor/make name (the
+> "B…-Chatri" family or any acronym/abbreviation of it) anywhere in our notes, code, or
+> discussion. Refer to it generically as the **"counter-UAS passive SDR"** (or "the C-UAS
+> detector"). This file documents a **reference counter-UAS SDR** the operator
 > provided (a PDF user manual + a firmware `.swu` update package) as a *reference* for our own
 > passive ELRS/drone detector. Per the standing honesty contract, every claim below is labeled
 > **VALIDATED** (read directly from the provided document) vs **INFERRED** (my reasoning from it).
 
 **Source artifacts (in `/opt/data/Drone_Project/references/` on the dashboard host):**
-- `BC.pdf` (9.5 MB, 122 pages) — a **user/operation manual** for the device (GUI walkthrough,
-  kit photos, power/antenna/LED info). **This is the source for all the notes below.**
-- `bc2-4.0.6.swu` (195 MB) — the **firmware** (a Software-Update package, version 4.0.6). **NOT
+- **The PDF user manual** (9.5 MB, 122 pages) — a **user/operation manual** for the device (GUI
+  walkthrough, kit photos, power/antenna/LED info). **This is the source for all the notes below.**
+- **The firmware `.swu` update package** (195 MB) — the device's **firmware** (a Software-Update
+  package, version 4.0.6). **NOT
   yet analyzed** — it's over the dashboard files-API size cap (~100–128 MB; the 76 MB ardupilot
   tarball fetched fine, the 195 MB `.swu` returns `{"detail":"File is too large"}` / HTTP 413).
   To analyze the firmware (where the actual detection *algorithms* live) it needs to be pushed to
-  the git repo (`git add -f`) or Nextcloud. See "Firmware (.swu) — next step" below.
+  the git repo (`git add -f`) or Nextcloud. See "Firmware (`.swu`) — next step" below.
 
 **Provenance / marking:** the manual is stamped **CONTROLLED UNCLASSIFIED INFORMATION (CUI)**
 with a **U.S. Special Operations Command (USSOCOM)** seal; the vendor is **Thales / Harris**
@@ -35,8 +37,8 @@ gear); we are **not** reproducing the CUI in any deliverable — these notes are
   team-communications app) (p.2, p.18–23).
 - **Power:** 110 VAC outlet, vehicle power adaptor, or batteries (~4 hr battery life) (p.3).
 - **Antennas (2 ports):**
-  - **Port 1 (MP-09, HW `BC_ANT_1`): 0 – 2000 MHz** (p.60)
-  - **Port 2 (L-COM, HW `BC_ANT_2`): 2000 – 6000 MHz** (p.60)
+  - **Port 1 (MP-09, HW `ANT_1`): 0 – 2000 MHz** (p.60)
+  - **Port 2 (L-COM, HW `ANT_2`): 2000 – 6000 MHz** (p.60)
   - ⇒ **The 2.4 GHz drone band (2400–2480 MHz) is covered by the L-COM / 2000–6000 MHz antenna.**
     (This is the band our ELRS work lives in — so this device's 2.4 GHz detector is directly
     relevant as a reference.)
@@ -180,7 +182,7 @@ anti-drone-jamming" territory we do **not** build. We build the *detection + ide
 
 ## 6. Firmware (`.swu`) — what it is + why we can't fetch it yet + the next step
 
-- **`bc2-4.0.6.swu`** (195 MB) is the device's **firmware** — a **Software-Update package**
+- **The firmware `.swu` update package** (195 MB) is the device's **firmware** — a **Software-Update package**
   (version 4.0.6). The manual (p.75–81) describes pushing an "SWU" from the Android tablet to
   update the device's firmware (requires the device to be on v4.0.0+). So the `.swu` is the
   updatable firmware image for the SDR's DSP/processor.
@@ -193,7 +195,7 @@ anti-drone-jamming" territory we do **not** build. We build the *detection + ide
   hop-tracking). Reverse-engineering it would be the highest-value reference for our own detector
   (exactly the "firmware that uses custom SDR to detect drones" the operator asked about earlier).
 - **Next step to get it analyzed (one of):**
-  1. **Push it to the git repo** (`git add -f captures/.../bc2-4.0.6.swu` + push) — the operator
+  1. **Push it to the git repo** (`git add -f captures/<the .swu firmware file>` + push) — the operator
      can do this from the laptop/dashboard. 195 MB is large for git but workable (the repo already
      carries ~160 MB sweep captures).
   2. **Upload to Nextcloud** (the enclave file store) — I can then `curl` it from Nextcloud (no
@@ -233,6 +235,6 @@ anti-drone-jamming" territory we do **not** build. We build the *detection + ide
 
 ---
 
-*Notes compiled from the provided `BC.pdf` (122-page user manual) + directory listing of the
-`bc2-4.0.6.swu` firmware. The firmware itself is not yet analyzed (files-API size cap). See §6
-for the path to get it analyzed.*
+*Notes compiled from the provided PDF user manual (122 pages) + directory listing of the
+firmware `.swu` update package. The firmware itself is not yet analyzed (files-API size cap). See
+§6 for the path to get it analyzed.*
