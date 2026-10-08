@@ -118,23 +118,67 @@ the correct (version, UID)** — UID-*and*-version-specific in a way a raw corre
 This directly fixes the false-positive class we hit (a high correlation with the wrong UID that
 isn't CRC-valid).
 
-### What I'm implementing (the deliberate multi-version classifier)
-1. Add an `OTA_VERSIONS` list (v2–v6) in `gfsk.py`/`ota.py`.
-2. **Iterate versions × UID** in the sync detection → report which version/UID locks (not just v4).
-3. **Fix the per-burst frequency offset** — frequency-shift to each burst's *measured* offset
-   before correlating (the bursts are off-center: +0.27 MHz on ch31, up to ~1.9 MHz on ch40 due to
-   channel overlap at 4.88 MS/s / 1 MHz spacing).
-4. **Gate on CRC-validity** (not just a correlation peak) — the decisive real-hit discriminator.
-5. **Report the full air state** (version, mode, rate, UID, channels, hop pattern) instead of a
-   single "found/not found."
+### What I implemented (the deliberate multi-version classifier) — `elrs_sdr/core/identify.py`
+Built `identify.py` — the "identify everything, all versions" air-state classifier. Given one
+channel's IQ + a UID (optional), it:
+1. **Measures the burst physics** on the tight core (isolated spike): bandwidth, amplitude CV
+   (constant-envelope test), duty (bursty test), + the **frequency offset** from channel center
+   (the bug fix — ch31 +0.32 MHz, ch40 +1.65 MHz, matching Claude's ~1.9 MHz finding).
+2. **Frequency-shifts the burst to baseband** (using the measured offset) before correlating.
+3. **Iterates ALL OTA versions (v2–v6) × the UID** for the GFSK/FLRC path (sync-detect + Viterbi
+   demod + CRC-24 validate), reporting which (version, UID) is CRC-valid.
+4. **Runs the LoRa path** (all 6 ELRS 2.4 GHz rates) for the same burst.
+5. **Returns an `AirState`** (version, mode, rate, UID, channel, freq-offset, crc_valid,
+   confidence) — the "discover the air state" output, with the full candidate set.
 
-### The Betaflight info (still useful, but no longer the *only* path)
-The operator wants the detector to work against all versions without being told which one — so the
-Betaflight firmware version is no longer the *critical path* (the detector should find it). It's
-still **useful as a cross-check**: open Betaflight Configurator → Radio Setup → ELRS section and
-note the firmware version (ELRS 3.0–3.2 = OTA v4; 3.3+ = OTA v5/v6) + the rate (FLRC vs LoRa).
-If the detector's "identified version" matches the Betaflight version, that's strong confirmation.
-But the detector must work even without that input.
+**Verified on the real clean capture (120433):**
+- ch31: `is_signal=True, mode=fsk_unidentified, bw=0.45 MHz, ampCV=0.03, duty=8.8%, offset=+0.32 MHz`
+- ch40: `is_signal=True, mode=fsk_unidentified, bw=0.92 MHz, ampCV=0.07, duty=22.6%, offset=+1.65 MHz`
+- ch50 (pure Wi-Fi control): `is_signal=False` (correctly rejected)
+
+**What it got RIGHT:**
+- ✅ Detects the ELRS-shaped FSK burst (narrowband, constant-envelope, bursty, hopping).
+- ✅ Rejects pure-Wi-Fi channels (ch50).
+- ✅ Rejects the **dense-Wi-Fi LoRa preamble false-positive** (the autocorrelation preamble
+  detector fires on ~48k hits across the whole channel on Wi-Fi — median gap 0.00 ms; I gated it:
+  a real LoRa link shows sparse discrete chirps, not dense hits).
+- ✅ Rejects the **LoRa CRC false-accept** (the first-order LoRa demod mis-decodes the FSK burst
+  as LoRa at *all 6 rates* with ~23-32 CRC-"valid" frames each — the exact false-accept signature
+  `analyze_capture.py` warns about; a real LoRa link is on ONE rate with hundreds+ of frames. I
+  gated it: require a high, single-rate frame count, else fall through to `fsk_unidentified`).
+
+**What it could NOT do (the honest limit):**
+- ❌ **Could not lock the GFSK UID/version.** The GFSK sync-detect found no hit with the target
+  UID (`..185b`) at any version. **This is the chicken-and-egg:** the GFSK sync word is UID-seeded,
+  so without the right UID, the sync won't lock — and we can't recover the UID from a sync we
+  haven't detected. The Betaflight UID/version is what breaks this (give it the right UID + the
+  classifier locks; or the UID-recovery path works once *any* CRC-valid sync is found).
+- ❌ **The mode is `fsk_unidentified`** (not a confirmed GFSK or LoRa link) — the burst is
+  physically FSK (CV 0.03 = constant-envelope), but neither the GFSK sync (needs the right UID)
+  nor the LoRa path (false-accepted, rejected) produced a CRC-valid lock. So it's a *detected +
+  measured* FSK burst, not yet *identified* to a specific (version, UID, rate).
+
+**So the "identify everything" classifier is working as designed — it measures the air state,
+rejects the false positives (Wi-Fi, dense-preamble, LoRa false-accept), and honestly reports
+"fsk_unidentified" when it can't lock the UID. The next step to get a full identification is the
+UID: the Betaflight ELRS UID/version (Radio Setup → ELRS section) gives the classifier the
+reference to lock the GFSK sync → then it reports the version + UID + rate + channel + offset
+(the full air state).**
+
+### The Betaflight info (now the concrete unblock for the UID lock)
+The operator wants the detector to work against all versions without being told the *version* —
+and it does (it iterates v2–v6). But it still needs the **UID** to lock the GFSK sync (the sync
+is UID-seeded; the version is iterable, the UID isn't). So the Betaflight **UID** (or binding
+phrase) is the concrete unblock:
+- **Betaflight Configurator → Radio Setup → ELRS section:** the firmware version (ELRS 3.0–3.2 =
+  OTA v4; 3.3+ = OTA v5/v6) + the rate (FLRC vs LoRa) + (usually) the binding phrase.
+- If there's a **binding phrase**, the UID is derivable from it (ELRS hashes the phrase → UID).
+- If there's **no phrase** (bound by UID only), the UID is in the radio's EEPROM — shown in the
+  **ELRS Configurator** (the separate ExpressLRS web UI), not the Betaflight one.
+- **Give me the UID + version + rate** → I run the classifier with the right UID → if the link is
+  present, it locks the GFSK sync + reports the full air state (version, UID, rate, channel,
+  offset). If it still doesn't lock, that tells us the capture's burst is a *different* FSK link
+  (not this Tinyhawk's ELRS) or the sync alignment still needs work.
 
 ---
 > **watch for the `D`/`DDOD` indicators**: if they're gone (or much reduced) + the sweep finishes
