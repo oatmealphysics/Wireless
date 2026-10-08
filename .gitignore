@@ -6,21 +6,26 @@ __pycache__/
 build/
 dist/
 
-# SDR captures: ELRS Find sweeps save to captures/elrs_find_*/. We SYNC the
-# lightweight per-channel METADATA (.meta.txt + manifest/.json) via git so the
-# other session sees what a sweep found and with what parameters — but NOT the
-# raw IQ. A single .complex8 is ~2 MB and a full 80-channel sweep is ~160 MB; at
-# that rate git history bloats fast (it was ~350 MB of mostly noise/dropped
-# captures). Raw IQ stays LOCAL by default.
-#   When a capture actually has an ELRS hit worth remote deep-analysis, force-add
-#   just that channel's file:  git add -f captures/elrs_find_<ts>/ch<N>_*.complex8
-# Everything that looks like a stray capture outside captures/ stays ignored too.
+# SDR captures: ELRS Find sweeps save to captures/elrs_find_*/. The WHOLE capture
+# folder is SYNCED via git — raw IQ (.complex8/.cf32/.iq) AND the per-channel
+# metadata (.meta.txt/.json/manifest.json) — so the other session gets every
+# channel's samples to deep-analyze. The pre-push hook (scripts/git/pre-push)
+# auto-commits captures/ on every `git push`, so new sweeps upload with no manual
+# `git add`. Everything that looks like a stray capture OUTSIDE captures/ stays
+# ignored (the blanket *.complex8 etc. below), and the `!captures/**` lines
+# re-include the capture subtree.
+#   NOTE: a full 80-ch sweep is ~160 MB, and git keeps every version forever, so
+#   this grows .git over time. To reclaim it later: delete dead captures (they
+#   leave history) then do a coordinated `git filter-repo` + re-clone.
 *.iq
 *.complex8
 *.cf32
 *.jsonl
 !captures/
 !captures/**/
+!captures/**/*.complex8
+!captures/**/*.cf32
+!captures/**/*.iq
 !captures/**/*.meta.txt
 !captures/**/*.json
 !captures/**/manifest.json
