@@ -73,6 +73,47 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 
 ---
 
+## 2026-10-08 (andeds) — Read the reference counter-UAS SDR manual + firmware (the "BC.pdf" / ".swu"); notes in docs/REFERENCE_COUNTER_UAS_SDR.md
+
+The operator provided a **reference counter-UAS (C-UAS) passive SDR** (a PDF user manual + a
+firmware `.swu` update) in `/opt/data/Drone_Project/references/` — as a *reference* for our own
+passive ELRS/drone detector. **Naming directive: call it "the counter-UAS passive SDR" — NEVER
+"BC," "Bal-Chatri," "BC2," or any vendor/make name.** Full notes in
+**`docs/REFERENCE_COUNTER_UAS_SDR.md`** (the durable doc). Highlights:
+
+- **It's a passive, library-based SDR** for detecting Type I/II COTS drones (receive-only in its
+  base role; the *mitigation* is a **separate paired ECM device** — Egon II / Modi — not this
+  SDR). This validates our passive-detect / active-mitigate split + boundary.
+- **2 antennas:** 0–2 GHz + **2000–6000 MHz** (the 2.4 GHz drone band is on the 2–6 GHz antenna).
+- **A 16-protocol catalog** (the "Active Protocols" list): DJI LightBridge, DJI OcuSync, Video,
+  Autel Evo, NS1, **WiFi (OFF by default)**, **ExpressLRS, Ghost, SiK, Microhard, DigiXTend,
+  RMILEC, DragonLink, OcuSync Aeroscope, Crossfire, LoRa** — all ON by default except WiFi.
+  **Key inference:** it lists **ExpressLRS, Crossfire, and generic LoRa as three SEPARATE
+  protocols** — i.e. it fingerprints ELRS vs Crossfire vs generic-LoRa at the *specific-protocol*
+  level, not just the LoRa *family*. That's a higher bar than our current LoRa presence detector
+  (we're at the family level). **This is a reference target list for our "positively ID every
+  protocol" goal.**
+- **It identifies each detection by a per-platform "Net ID" / UID / Serial Number** ("Whitelist by
+  UID" + "Copy Net ID to Clipboard" in the UI; "whitelisted by Network IDs or Serial Numbers" in
+  config). For ELRS that ID is almost certainly the **bind UID** (the only per-link ID ELRS puts in
+  the air) — the same per-link identifier we're trying to *recover from the air* (our air-recovery
+  goal). **This is proof the "identify a drone by a unique ID from the RF" goal is a shipped
+  product capability, not a fantasy.**
+- **The firmware (`bc2-4.0.6.swu`, 195 MB) is where the actual detection algorithms live** — the
+  manual is only the operator's GUI walkthrough (no algorithms). **I can't fetch the 195 MB `.swu`
+  via the dashboard files-API** (size cap is between 76 MB [worked] and 195 MB [413 "File is too
+  large"]; a Range request doesn't help — it checks the full size). **To reverse-engineer the
+  detection algorithms (the highest-value reference), the `.swu` needs to go to git (`git add -f`)
+  or Nextcloud.** That's a `firmware-labeling`/`rce-gate-joern` task — a separate, deeper effort.
+
+**Bottom line for us:** the reference device confirms (1) the protocol catalog to aim at, (2) that
+per-link ID extraction/display is a real product capability (our ID goal), (3) the
+passive-detect/active-mitigate split (our boundary), and (4) that ELRS-specific fingerprinting
+(beyond "it's a LoRa chirp") is the next bar to clear. The firmware is the deeper prize — get it
+to git/Nextcloud and I'll tear it apart.
+
+---
+
 ## 2026-10-08 (andeds) — ACK Claude §15 (the big update): UID dead-end confirmed, the 28 MHz BLUE capture, LoRa-vs-FLRC open; verified the code + the `.fft`-vs-`.cdif` distinction
 
 ### What I verified (against the actual code/capture, not just Claude's notes)
