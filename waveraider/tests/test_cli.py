@@ -36,7 +36,7 @@ def test_retired_protocols_exit_before_opening_a_source_or_the_tui(args, capsys,
     monkeypatch.setattr(tui, "run", lambda *a, **k: pytest.fail("TUI started"))
     assert main(["wr", *args, "missing.pcap"]) == 2
     err = capsys.readouterr().err
-    assert "was retired; Remote ID ('uas') is the supported protocol" in err
+    assert "was retired; the supported protocols are uas, elrs" in err
     assert not (tmp_path / "never.html").exists()
 
 
@@ -47,10 +47,10 @@ def test_unknown_protocol_exits_with_its_own_message(capsys, monkeypatch):
     assert "unknown protocol 'zigbee'" in err and "retired" not in err
 
 
-def test_usage_names_remote_id_only(capsys):
+def test_usage_names_remote_id_and_elrs(capsys):
     assert main(["wr"]) == 2
     err = capsys.readouterr().err
-    assert "--protocol: uas (Remote ID), the default and only supported protocol." in err
+    assert "--protocol: uas (Remote ID, the default) or elrs (ExpressLRS control link, SDR-decoded)." in err
     assert "legacy default" not in err and "dmr | tetra" not in err and "/classic" not in err
 
 

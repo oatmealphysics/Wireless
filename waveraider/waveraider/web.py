@@ -48,7 +48,13 @@ def _foreign_rf_request(headers, host) -> bool:
     """True unless the request carries this app's own marker header and no sign of another site. A page
     on another site can make a browser GET any URL (an image, a link, a plain fetch) but cannot add a
     custom header without a preflight, which this server never grants. Not authentication: a script
-    that sets the header is accepted like any other client of this unauthenticated server."""
+    that sets the header is accepted like any other client of this unauthenticated server.
+
+    Note the gate keys on OWN_REQUEST_HEADER (`X-WaveRaider-Request: 1`), NOT on the Referer/Origin:
+    a `curl` that just sets that one header passes, while spoofing only Referer/Origin does not.
+    A bare local CLI with no headers at all can also be let through by `_local_cli_request` (the
+    loopback exemption), but only when the operator opts in with WAVERAIDER_LOCAL_CLI=1; by default
+    the gate stays fail-closed and a terminal `curl` must send the marker header."""
     get = headers.get if headers is not None else (lambda _k, _d=None: None)
     if get(OWN_REQUEST_HEADER) != "1":
         return True
@@ -56,6 +62,47 @@ def _foreign_rf_request(headers, host) -> bool:
         return True
     origin = get("Origin")
     return origin is not None and origin not in (f"http://{host}", f"https://{host}")
+
+
+# Loopback interface addresses: a client here is a process on this same machine.
+_LOOPBACK_PEERS = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
+
+
+def _local_cli_enabled() -> bool:
+    """The localhost-CLI exemption is OPT-IN, default OFF. Set WAVERAIDER_LOCAL_CLI=1 to enable it.
+
+    Off by default on purpose: the RF gate is fail-closed (no positive proof of same-origin ->
+    refuse), and that default is what `test_rf_work_cannot_be_started_...` pins. An operator who
+    wants a terminal `curl`/script to drive the radio without the marker header opts in explicitly
+    and accepts the narrow tradeoff documented on `_local_cli_request`."""
+    import os
+    return (os.environ.get("WAVERAIDER_LOCAL_CLI") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _local_cli_request(headers, client_ip) -> bool:
+    """True for a non-browser client on the loopback interface — the operator's own terminal
+    (`curl`, a script) hitting 127.0.0.1, with none of the fetch-metadata a browser attaches —
+    AND only when the operator has opted in with WAVERAIDER_LOCAL_CLI=1 (see `_local_cli_enabled`).
+
+    This is the localhost exemption to the RF referrer gate. The gate exists only to stop a web
+    page the user happens to have open from driving the radio through their browser (CSRF); a
+    local CLI is not that threat. The distinction is reliable for modern browsers (Chrome 76+,
+    Firefox 90+): they attach `Sec-Fetch-*` headers to EVERY request — same-origin, cross-origin
+    and to localhost alike — and a page cannot suppress them, while `curl`/scripts send none. So a
+    loopback peer that sends no `Sec-Fetch-*` and no `Origin` is a local operator at a terminal. The
+    residual, operator-accepted risk (why this is opt-in, not the default): an OLD browser that omits
+    `Sec-Fetch-*` could have a cross-site page drive the radio via a no-cors GET to localhost. A
+    browser that does send `Sec-Fetch-*` (or any `Origin`) is refused regardless of the flag, and a
+    non-loopback client is never exempted — remote access still needs the marker header."""
+    if not _local_cli_enabled():
+        return False
+    if client_ip not in _LOOPBACK_PEERS:
+        return False
+    get = headers.get if headers is not None else (lambda _k, _d=None: None)
+    if get("Origin") is not None:
+        return False
+    # Any Sec-Fetch-* header means a browser made this request — do not exempt it.
+    return not any(get(h) is not None for h in ("Sec-Fetch-Site", "Sec-Fetch-Mode", "Sec-Fetch-Dest"))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -128,7 +175,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, Path(__file__).with_name("inspect_rf.css").read_text(), "text/css; charset=utf-8")
         if u.path in RF_GET_ROUTES:
             headers = getattr(self, "headers", None)
-            if _foreign_rf_request(headers, headers.get("Host") if headers is not None else None):
+            host = headers.get("Host") if headers is not None else None
+            client = getattr(self, "client_address", None)
+            client_ip = client[0] if client else None
+            if _foreign_rf_request(headers, host) and not _local_cli_request(headers, client_ip):
                 return self._send(403, json.dumps({"error": "Radio requests can only be made from WaveRaider's own pages.",
                                                    "available": False}))
         if u.path == "/api/spectrum":

@@ -114,7 +114,7 @@ def test_settings_about_no_longer_points_to_a_legacy_dashboard():
 
 def test_cli_help_and_docs_describe_the_entry_point():
     source = Path(cli.__file__).read_text()
-    assert "web UI on Monitor + Settings (sample data)" in source
+    assert "web UI (Monitor + Settings)" in source
     assert "legacy dashboard" not in source and "/classic" not in source
     readme, usage = (ROOT / "README.md").read_text(), (ROOT / "docs" / "usage.md").read_text()
     assert "Start sample session" in readme and "Start sample session" in usage

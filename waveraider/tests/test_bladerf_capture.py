@@ -30,7 +30,7 @@ def test_rejected_hardware_configuration_does_not_return_iq(monkeypatch, failure
     assert closed == [True]
 
 
-@pytest.mark.parametrize('backend,rate', [('bladerf', 960000), ('rtl_power', 240000)])
+@pytest.mark.parametrize('backend,rate', [('bladerf', 2000000), ('rtl_power', 240000)])
 def test_audio_capture_rate_and_duration(monkeypatch, backend, rate):
     monkeypatch.setattr(spectrum, 'source_status', lambda device: {
         'mode': 'live', 'backend': backend, 'device': device})
@@ -55,8 +55,10 @@ def test_bladerf_analysis_uses_supported_rate(monkeypatch):
         return np.ones(count, dtype=complex), rate
     monkeypatch.setattr(bladerf_sweep, 'capture_iq', capture)
     result = spectrum.analyze_signal(94.9e6, 'blade')
-    assert calls == [(960000, 48000)]
-    assert result['sample_rate'] == 960000
+    # 2 MS/s is the wideband control-link demod rate for bladeRF/UHD (UHD/SoapySDR-compatible,
+    # replacing the old bladeRF-only 960 kS/s); n = rate * 0.05 s window.
+    assert calls == [(2000000, 100000)]
+    assert result['sample_rate'] == 2000000
 
 
 def test_capture_restores_sweep_rate_and_bandwidth(monkeypatch):

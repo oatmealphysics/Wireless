@@ -1,4 +1,4 @@
-"""The protocol registry: Remote ID only, with v0.5.1's retired names rejected clearly."""
+"""The protocol registry: Remote ID (default) + ELRS, with v0.5.1's retired names rejected clearly."""
 import importlib
 from pathlib import Path
 
@@ -9,11 +9,13 @@ from waveraider.protocols import DEFAULT_PROTOCOL, RETIRED, RetiredProtocol, ava
 V051_RETIRED = {"wifi", "ble", "bt", "bt_traffic", "dmr", "tetra", "analog", "gsm", "umts", "cdma", "lte", "nr"}
 
 
-def test_remote_id_is_the_only_and_default_protocol():
-    assert available() == ["uas"] and DEFAULT_PROTOCOL == "uas"
+def test_remote_id_is_the_default_and_elrs_is_the_other_supported_protocol():
+    # ELRS (SDR-decoded control link) was added alongside Remote ID; Remote ID stays the default.
+    assert available() == ["uas", "elrs"] and DEFAULT_PROTOCOL == "uas"
     assert get_plugin().name == "uas"
     for name in (None, "", "uas", "UAS"):
         assert get_plugin(name).name == "uas"
+    assert get_plugin("elrs").name == "elrs" and get_plugin("ELRS").name == "elrs"
 
 
 def test_plugin_contract():
@@ -29,8 +31,8 @@ def test_every_v051_protocol_name_is_recognized_as_retired():
 
 
 @pytest.mark.parametrize("name", sorted(V051_RETIRED) + ["WIFI"])
-def test_retired_names_point_to_remote_id(name):
-    with pytest.raises(RetiredProtocol, match=r"was retired; Remote ID \('uas'\) is the supported protocol") as e:
+def test_retired_names_are_rejected_naming_the_supported_protocols(name):
+    with pytest.raises(RetiredProtocol, match=r"was retired; the supported protocols are uas, elrs") as e:
         get_plugin(name)
     assert isinstance(e.value, ValueError) and "v0.5.1" in str(e.value)
 
