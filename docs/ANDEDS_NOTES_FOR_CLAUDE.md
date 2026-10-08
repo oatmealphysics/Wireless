@@ -126,7 +126,7 @@ anywhere.** Full notes in
 **`docs/REFERENCE_COUNTER_UAS_SDR.md`** (the durable doc). Highlights:
 
 - **It's a passive, library-based SDR** for detecting Type I/II COTS drones (receive-only in its
-  base role; the *mitigation* is a **separate paired ECM device** — Egon II / Modi — not this
+  base role; the *mitigation* is a **separate paired ECM device** — the paired active-mitigation (ECM) system(s) — not this
   SDR). This validates our passive-detect / active-mitigate split + boundary.
 - **2 antennas:** 0–2 GHz + **2000–6000 MHz** (the 2.4 GHz drone band is on the 2–6 GHz antenna).
 - **A 16-protocol catalog** (the "Active Protocols" list): DJI LightBridge, DJI OcuSync, Video,

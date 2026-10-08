@@ -19,8 +19,8 @@
   the git repo (`git add -f`) or Nextcloud. See "Firmware (`.swu`) — next step" below.
 
 **Provenance / marking:** the manual is stamped **CONTROLLED UNCLASSIFIED INFORMATION (CUI)**
-with a **U.S. Special Operations Command (USSOCOM)** seal; the vendor is **Thales / Harris**
-(manual page 3: "Thales/Harris 148, 152 & 163"). It's a U.S. DoD C-UAS product. We're using it as
+with a **U.S. military command** seal; the vendor is **a U.S. defense contractor**
+(manual page 3 cites vendor part numbers 148, 152 & 163). It's a U.S. military C-UAS product. We're using it as
 a *technical reference* for our own passive detector (authorized research on the operator's own
 gear); we are **not** reproducing the CUI in any deliverable — these notes are paraphrased/abstract.
 
@@ -33,13 +33,13 @@ gear); we are **not** reproducing the CUI in any deliverable — these notes are
   - "Completely passive" = **receive-only detection** in its base role. (This matches our own
     passive-only boundary — the *mitigation/TX* is a **separate, paired device**, not this one.)
 - **Physical form:** configurable for **dismounted, mounted, or fixed-site** use; the **GUI runs
-  on any Android device** (a tablet) via a plugin in the **ATAK** app (the U.S. military's
+  on any Android device** (a tablet) via a plugin in the **tactical Android team-communications app** (the U.S. military's
   team-communications app) (p.2, p.18–23).
 - **Power:** 110 VAC outlet, vehicle power adaptor, or batteries (~4 hr battery life) (p.3).
 - **Antennas (2 ports):**
-  - **Port 1 (MP-09, HW `ANT_1`): 0 – 2000 MHz** (p.60)
-  - **Port 2 (L-COM, HW `ANT_2`): 2000 – 6000 MHz** (p.60)
-  - ⇒ **The 2.4 GHz drone band (2400–2480 MHz) is covered by the L-COM / 2000–6000 MHz antenna.**
+  - **Port 1 (a mounted patch antenna, type A — HW `ANT_1`): 0 – 2000 MHz** (p.60)
+  - **Port 2 (a mounted omnidirectional antenna, type B — HW `ANT_2`): 2000 – 6000 MHz** (p.60)
+  - ⇒ **The 2.4 GHz drone band (2400–2480 MHz) is covered by the 2000–6000 MHz (type B) antenna.**
     (This is the band our ELRS work lives in — so this device's 2.4 GHz detector is directly
     relevant as a reference.)
 - **Status LEDs** indicate system state (Idle / Scanning / Transmit / low-power detect /
@@ -48,7 +48,7 @@ gear); we are **not** reproducing the CUI in any deliverable — these notes are
   check" for RF-emitting equipment; won't function below 300 MHz) (p.85–87).
 
 **The architecture (VALIDATED):** the passive SDR (this device) **detects**; it can be **paired
-with a separate "Modi" or "Egon II" system for RF mitigation** (the TX/ECM side) (p.2, p.30, p.33,
+with a separate active-mitigation (ECM) system** (the TX/ECM side — a different physical device) (p.2, p.30, p.33,
 p.59). So: **detection (passive, this SDR) is decoupled from mitigation (active, the paired ECM
 device).** This is exactly the passive/active split we maintain — the detector never transmits;
 a separate, explicitly-paired system does the mitigation.
@@ -132,7 +132,7 @@ shipped product capability, not a fantasy.
   (protocol, frequency, Net ID) (p.26–28, p.44–45).
 - **Whitelisting:** by UID/Net ID/Serial (p.27–28, p.63–65).
 - **Engagement / mitigation:** "Engagement Management" + profile selection + "Save and TX" —
-  **only available when connected to an Egon II** (a paired ECM device) (p.30–31, p.33). The
+  **only available when connected to the paired active-mitigation (ECM) system** (a separate device) (p.30–31, p.33). The
   profiles (CUAS, CUAS_FB, CUAS_LF, CUAS_FPV, etc.) control the *mitigation* behavior:
   - **CUAS_FPV / CUAS_FPV_FB / CUAS_FPV_LF**: **"Prioritizing LoRa-based threats"** (p.37–38) —
     confirms the vendor has a **LoRa/ELRS-specific mitigation mode** (FPV drones are the LoRa/ELRS
@@ -144,7 +144,7 @@ shipped product capability, not a fantasy.
   input (p.41–42) — again, only with the paired ECM.
 
 **Relevance (the boundary, reaffirmed):** the *detection* half (this SDR) is passive — it matches
-our passive-only boundary exactly. The *mitigation* half (the paired Egon II/Modi) is the active
+our passive-only boundary exactly. The *mitigation* half (the paired active-mitigation (ECM) system) is the active
 ECM, which is a **separate device** and squarely in the "out of scope — remote-kill /
 anti-drone-jamming" territory we do **not** build. We build the *detection + identification* half
 (passive), using this device as a reference for the protocol catalog + the ID extraction. We do
@@ -168,7 +168,7 @@ anti-drone-jamming" territory we do **not** build. We build the *detection + ide
    serial for DJI).
 3. **The passive-detect / active-mitigate split (§4) validates our architecture + boundary.** We
    build the passive detector (like this SDR's detection role); we do **not** build the active
-   ECM (the paired Egon II/Modi role).
+   ECM (the paired active-mitigation (ECM) system role).
 4. **The 2.4 GHz coverage is via the 2000–6000 MHz antenna (§1)** — the same band our ELRS work
    is in. The device's 2.4 GHz detector (for ELRS/Crossfire/LoRa/SiK/DragonLink/etc.) is the
    directly-relevant reference for our ELRS detector.
@@ -202,7 +202,7 @@ anti-drone-jamming" territory we do **not** build. We build the *detection + ide
      size cap like the files API).
   3. **Split it** (e.g. `split -b 90m` into 3 chunks under the cap) and fetch the chunks via the
      files API, then reassemble — a workaround if git/Nextcloud aren't preferred.
-- **Once we have it:** the plan is to identify the firmware container type (Thales/Harris SWU is
+- **Once we have it:** the plan is to identify the firmware container type (the vendor's SWU is
   typically a **signed + compressed** bundle — likely a `tar`/`zip` of an embedded image, possibly
   an ARM/Linux rootfs + the DSP firmware), extract the embedded binaries, and look for the
   detection/protocol logic (strings like the protocol names in §2, the LoRa/ELRS constants, the
@@ -214,10 +214,10 @@ anti-drone-jamming" territory we do **not** build. We build the *detection + ide
 ## 7. Honesty contract + open questions
 
 - **VALIDATED** (read directly from the provided PDF manual): everything in §1 (device type,
-  passive, 2-antenna coverage, 0–2 GHz + 2–6 GHz, Android/ATAK GUI, LED states, spectrum
+  passive, 2-antenna coverage, 0–2 GHz + 2–6 GHz, Android/a tactical Android team-communications app GUI, LED states, spectrum
   analyzer), §2 (the 16-protocol catalog + their names + on/off defaults), §3 (the "Whitelist by
   UID" / "Copy Net ID" / "Network IDs or Serial Numbers" text), §4 (the detect→ECG-mitigate flow,
-  the CUAS_FPV "prioritizing LoRa-based threats" profiles, the Egon II/Modi pairing, auto-TX).
+  the CUAS_FPV "prioritizing LoRa-based threats" profiles, the paired active-mitigation (ECM) system pairing, auto-TX).
 - **INFERRED** (my reasoning, labeled as such): the per-protocol specificity (ELRS vs Crossfire vs
   generic LoRa as distinct entries = a higher fingerprinting bar than our family-level detector),
   that the ELRS "UID" is the bind UID, the actionable takeaways for our detector (§5), the
