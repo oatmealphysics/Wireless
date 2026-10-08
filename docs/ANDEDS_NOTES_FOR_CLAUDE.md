@@ -24,27 +24,32 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 > - **Enclave can't run the WaveRaider pytest** (closed network, no PyPI) — so I verify test-logic
 >   changes by simulating the regex/logic, and the *real* pytest run is yours (laptop).
 
-> **CURRENT STATE (as of this pull):** `main` @ `7480621` (enclave). `elrs_sdr.selftest` ALL PASS.
-> **THREE things:** **(1) The USB is FIXED** (real hardware: two 80/80-channel sweeps, ~4.88 MS/s,
-> zero drops, 12.7 s — the deeper recv ring + per-channel `_stop_stream()` worked; no powered-hub
-> purchase). **(2) I was WRONG about "no signal" — Claude's reassessment is correct + I confirmed
-> it independently.** The capture DOES contain a narrowband, constant-envelope, frequency-hopping
-> FSK link (ELRS-shaped). My "continuous Wi-Fi, no ELRS" read was a false negative: the duty-cycle
-> metric (0.82) was swamped by the Wi-Fi floor, masking the ~8.8%-duty ELRS bursts underneath. I
-> measured the strongest burst (ch31): **bandwidth 0.45 MHz** (narrow, not Wi-Fi's ~20 MHz),
-> **amplitude CV 0.028** (constant-envelope = FSK), **8.8% hot fraction** (bursty, not continuous),
-> **+0.27 MHz off channel center** (confirms Claude's freq-offset finding). **(3) The operator's
-> directive: work against ALL ELRS versions + deliberately identify everything — not hardcode one
-> version.** The sync-word derivation is already version-parameterized
-> (`flrc_sync_word(uid, ota_version)` XORs the version into the last byte) but every call site
-> hardcodes `ota_version=4` + a single UID. The fix: iterate all OTA versions (v2–v6) × the UID,
-> classify per-channel (LoRa 6 rates + FLRC/GFSK), frequency-shift to each burst's measured offset
-> before correlating, and gate on **CRC-validity** (a real hit = CRC passes with the right
-> version+UID, not just a correlation peak — that's what kills the ch28-class false positive). The
-> decisive identification = which (version, mode, rate, UID, channel) produces a CRC-valid lock.
-> **NEXT: (me) implement the multi-version/CRC-validated classifier + the per-burst freq-offset fix;
-> (user) the Betaflight ELRS firmware version + rate (Radio Setup → ELRS section) confirms which
-> version to expect — but the detector should now find it without being told.**
+> **CURRENT STATE (as of this pull):** `main` @ `8c54477` (enclave + laptop in sync).
+> `elrs_sdr.selftest` ALL PASS. **Where things stand:**
+> **(1) The USB is FIXED** (real hardware: two 80/80-channel sweeps, ~4.88 MS/s, zero drops,
+> 12.7 s — the deeper recv ring + per-channel `_stop_stream()` worked; no powered-hub purchase).
+> **(2) The capture DOES contain an ELRS-shaped FSK link** (I was wrong about "no signal"; Claude's
+> reassessment was correct + I confirmed it independently — ch31: bandwidth 0.45 MHz, amplitude CV
+> 0.03 = constant-envelope FSK, 8.8% duty = bursty, +0.32 MHz off-center = the freq-offset bug).
+> **(3) The "identify everything, all versions" classifier is BUILT + verified:
+> `elrs_sdr/core/identify.py`.** It measures the burst physics (bandwidth, amp-CV, duty, freq-
+> offset), frequency-shifts to baseband, iterates ALL OTA versions (v2–v6) × the UID for GFSK
+> (sync-detect + Viterbi + CRC-24) + all 6 LoRa rates, gates on CRC-validity, and returns a full
+> `AirState`. **Verified on the clean capture (120433):** ch31/ch40 → `is_signal=True,
+> mode=fsk_unidentified` (the FSK burst is detected + measured); ch50 (pure Wi-Fi) →
+> `is_signal=False` (correctly rejected). It correctly rejects the three false-positive classes
+> (dense-Wi-Fi LoRa preamble, the LoRa CRC false-accept on an FSK burst, the ch28-class GFSK
+> non-UID-specific peak). **HONEST LIMIT: it could NOT lock the GFSK UID/version** — the sync word
+> is UID-seeded, so without the right UID it won't lock (chicken-and-egg; the version IS iterable,
+> the UID isn't). So it reports `fsk_unidentified` (a detected + measured FSK burst, not yet
+> identified to a specific version/UID/rate).
+> **THE ONE THING NEEDED (user): the Betaflight ELRS UID + version + rate** (Configurator →
+> Radio Setup → ELRS section). The classifier works against all versions already (iterates v2–v6);
+> it needs the **UID** to lock the GFSK sync. If there's a binding phrase, the UID is derivable;
+> if not (bound by UID only), it's in the ELRS Configurator (separate web UI). **Give me the UID +
+> version + rate → I run the classifier with the right reference → if the link is present, it
+> reports the full air state (version, UID, rate, channel, offset); if it still doesn't lock, that
+> tells us the burst is a different FSK link or the sync alignment still needs work.**
 
 ---
 
