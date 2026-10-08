@@ -1,0 +1,171 @@
+# AGENTS.md — standing directives for working in `elrs-sdr`
+
+This file is the **canonical set of design goals, ground rules, and conventions** for this
+project. Every agent working here (andeds on the enclave, Claude on the laptop `borealis`, or any
+future agent) MUST read this before making changes. The rolling handoff logs
+(`docs/ANDEDS_NOTES_FOR_CLAUDE.md`, `docs/CLAUDE_NOTES_FOR_ANDEDS.md`) track *current progress*;
+**this file is the durable "what this program is for and how it must behave."**
+
+---
+
+## 1. The mission
+
+Passively **detect, identify, and demodulate ExpressLRS (ELRS) drone links** over the air with a
+software-defined radio (Ettus B205mini / B210). The goal is a **general passive ELRS air-state
+detector** — it tells you *what is in the air* (link type, version, rate, identity, channel, hop
+behavior) for **whatever ELRS link is present**, not just one specific aircraft.
+
+### ⚠️ The #1 design goal — GENERAL, not single-target (andeds, 2026-10-08 — REMEMBER THIS)
+The identifier must work against **ALL drones, ALL ELRS versions, ALL UIDs, ALL rates/modes** —
+**not just the one Tinyhawk we're testing against.** It is a *general* passive ELRS air-state
+detector, not a single-target finder. Concretely:
+- **Never hardcode** one UID, one OTA version, one rate, or one target's sync word.
+- **Measure and classify from the RF** — iterate all known OTA versions (v2–v6), all LoRa rates +
+  FLRC/GFSK, recover the UID from a matched sync (don't require it up front), and report the full
+  air state (version, mode, rate, UID, channel, freq-offset) for *whatever* ELRS link is present.
+- The Tinyhawk (EMAX TINYHAWK F4 SX1280) is only the **current test target**; the code must stay
+  **target-agnostic**. A change that makes the detector work *only* for one drone's UID/version is
+  a regression, not an improvement.
+- This is the "identify everything, be deliberate" directive — implemented in
+  `elrs_sdr/core/identify.py`.
+
+### The core philosophy (emphatic, from andeds)
+The program must **MEASURE + CLASSIFY from the RF and DISCOVER the air state** — it must **NEVER
+assume** the target's rate, PHY, or settings. "The point is to **find out** and discern the
+differences." Build **discriminators** (measurements that tell the cases apart), not
+**assumption-dependent decoders**. Every new detector/feature should be testable on a capture
+*without* being told the answer in advance.
+
+### Identity goal
+The end-state identity is a **hardware-unique ID per drone** (MAC/IMEI-style), found by
+**SDR-only 2.4 GHz RF** (802.11 MAC/SSID, or the ELRS link's identity where it exists). The ELRS
+6-byte **bind UID is NOT this** — it is a *pairing secret*, not a hardware identity, and the ELRS
+air protocol carries no hardware ID. (See `elrs_sdr/posid.py` + `docs/DRONE_RF_ARCHITECTURE.md`
+for the ID-architecture analysis.)
+
+---
+
+## 2. The hard boundary (safety — no exceptions)
+- **Passive detect / decode / identify only.** The forged-frame "throw" (transmitting on the live
+  link to stop a drone) is a **remote-kill of an aircraft** and is **OUT OF SCOPE** — not
+  "advanced," just out. `elrc_bench_tx.py` stays **non-functional + out of scope**. The TX path in
+  `elrs_sdr/radio.py` is built but **gated** (direction-symmetric by design, but must not be
+  enabled to hit a live link).
+- **Bench/owned aircraft only.** All real-RF testing is on andeds's **own** drone, on the bench,
+  with the radio present. Never point the TX at a live, in-the-air, third-party link.
+- **Same line, both sides.** Both agents (andeds + Claude) hold this boundary. It is not
+  negotiable per-task.
+
+---
+
+## 3. The honesty contract (how we label results)
+Every finding is labeled with its **evidence class** — never overclaim:
+- **VALIDATED** — checked against firmware / datasheet / a real capture.
+- **SELF-CONSISTENT** — round-trips our own code (encodes + decodes to the same value) but not
+  yet proven against a real source.
+- **SYNTHETIC** — offline only; the code produces plausible output but hasn't seen a real signal.
+
+The **LoRa demod is the single layer that can't be proven on a desk** (Semtech-proprietary
+bit-mapping, BPSK differencing, interleaving). Everything *above* it (CRC, OTA model, UID init,
+channel pack/unpack, FHSS) is **VALIDATED** (exact ports of the ELRS source, self-tested). The
+**GFSK/FLRC front-end is SYNTHETIC** until a real capture validates it. A "detected" that isn't
+labeled with its evidence class is an overclaim — flag it.
+
+### The false-positive problem (the thing that keeps biting us — be paranoid here)
+Passive ELRS detection over a busy 2.4 GHz band (Wi-Fi everywhere) has **three known
+false-positive classes**. A "hit" is NOT a real link until it survives all three:
+1. **Non-UID-specific correlation** — a high correlation peak that the *wrong* UID matches just as
+   well (e.g. ch28 in the 120433 capture: right-UID 0.1732 vs wrong-UID 0.1749). A real ELRS sync
+   is **UID-seeded**, so the correct UID should correlate *far* above a wrong one.
+2. **The LoRa CRC false-accept** — the first-order LoRa demod mis-decodes a *non-LoRa* signal (an
+   FSK burst, noise) as LoRa frames at *every* rate, producing ~20-35 CRC-"valid" frames each. A
+   **real** LoRa link is on **ONE rate** with **hundreds+** of frames. ~20-35 on all 6 rates =
+   false-accept. (Gated in `identify.py`.)
+3. **The dense-Wi-Fi LoRa preamble false-positive** — the autocorrelation-based preamble detector
+   fires on ~every sample when Wi-Fi is present (~48k hits, 0.00 ms median gap). A **real** LoRa
+   preamble shows **sparse, discrete** chirp hits. (Gated in `identify.py`.)
+
+**The decisive real-hit discriminator is the CRC check with the correct (version, UID)** — a
+genuine ELRS frame passes the CRC in a way a raw correlation peak does not. When in doubt, report
+the candidate set + the evidence class, not a confident "found it."
+
+---
+
+## 4. Ground rules (workflow — both agents)
+- **One branch: `main`.** Pull before you work, push after. No feature branches, no `master`/
+  `execfix` (those are gone; everything is on `main`).
+- **Captures sync via git.** `captures/` is tracked (full IQ `.complex8` + `.meta.txt`, re-included
+  in `.gitignore`). The **pre-push hook auto-commits `captures/`** on every `git push` (so a
+  capture you took is pushed without manual `git add`). Old noise captures are periodically pruned
+  to control size.
+- **No test scaffolding in the repo for one-off validation** — but *fixing stale/incorrect* tests
+  in the existing suite is fine (project quality, not throwaway).
+- **Enclave (andeds) can't run the WaveRaider pytest** (closed network, no PyPI). So andeds
+  verifies test-logic changes by simulation; the **real pytest run is the laptop's job**.
+- **Enclave has NO SDR.** andeds (enclave) writes code + does **offline analysis of captures the
+  laptop uploads**. Claude (laptop) runs the real RF (B205, sweeps, ELRS Find). **Never claim the
+  enclave "detected a live link"** — run detectors offline on uploaded IQ only.
+- **Commit hygiene:** one logical change per commit; message = what + why (not "fix stuff").
+  `find . -name __pycache__ -type d -exec rm -rf {} +` before committing (no `__pycache__` in git).
+
+---
+
+## 5. Code conventions
+- **`elrs_sdr/core/` is the single source of truth** for the ELRS decode (exact reference ports of
+  the ELRS source). Protocol-layer changes go here first; the `waveraider/` integration builds on
+  it, never re-derives it.
+- **The ELRS protocol is version-parameterized.** `flrc_sync_word(uid, ota_version)`,
+  `ota_uid_crc_init(uid, ota_version)`, `bind_crc_init(ota_version)` all take the OTA version —
+  the detectors must **iterate the versions** (see `identify.OTA_VERSIONS`), not hardcode `4`.
+- **Match the existing style.** The codebase is type-hinted Python (dataclasses, `from __future__
+  import annotations`). New modules follow the same pattern (see `identify.py` as the recent
+  template: dataclass results + a top-level `identify()` entry point + a full candidate list).
+- **Measure, don't assume.** Every detector should take a capture and *derive* the parameters
+  (rate, version, offset, UID) from it, rather than taking them as a required input. Where an input
+  is genuinely needed (the UID, to break the sync chicken-and-egg), make it **optional** and let
+  the detector try to recover it.
+- **The burst frequency offset is real.** ELRS bursts are off-center from the channel center
+  (measured +0.32 MHz on ch31, +1.65 MHz on ch40 in the 120433 capture, due to channel overlap at
+  ~4.88 MS/s / 1 MHz spacing). Detectors must **measure + frequency-shift to the burst's actual
+  offset** before correlating/demodulating — correlating against the assumed center is the bug
+  that made the early v4 sync "not lock."
+
+---
+
+## 6. The current state (as of 2026-10-08)
+- **USB capture: FIXED.** The B205 drop issue (the `D`/`DDOD` indicators) is resolved by the
+  deeper recv ring + per-channel `_stop_stream()` in `elrs_sdr/radio.py`. Two clean 80/80-channel
+  sweeps (~4.88 MS/s, 12.7 s, zero drops) confirm it. No powered-hub purchase needed.
+- **The "identify everything, all versions" classifier is BUILT + verified:**
+  `elrs_sdr/core/identify.py`. It measures the burst physics (bandwidth, amp-CV, duty, freq-
+  offset), frequency-shifts to baseband, iterates all OTA versions (v2–v6) × UID for GFSK + all 6
+  LoRa rates, gates on CRC-validity, and returns a full `AirState`. **Honest limit:** it detects +
+  measures the ELRS-shaped FSK burst in the clean capture but reports `fsk_unidentified` — it can't
+  *lock* the GFSK UID/version without the right UID (the sync is UID-seeded; the version is
+  iterable, the UID isn't).
+- **The one input still needed** to fully identify the test-target link: the **Betaflight ELRS UID
+  + version + rate** (Configurator → Radio Setup → ELRS section). Once provided, `identify.py` runs
+  with the right reference and either locks (reporting the full air state) or tells us the burst is
+  a different link.
+- **`elrs_sdr.selftest` ALL PASS.**
+
+---
+
+## 7. Key files
+- `elrs_sdr/core/` — the ELRS decode (crc, ota, fhss, lora, gfsk, **identify** = the classifier)
+- `elrs_sdr/radio.py` — UHD device wrapper (RX + gated TX) + `.complex8` I/O
+- `elrs_sdr/dronescan.py` — multi-band presence + protocol scanner
+- `analyze_capture.py` — the offline capture analyzer (channel-by-channel, all modes, UID-specific
+  + generic scores; the false-positive warnings live here)
+- `waveraider/waveraider/protocols/elrs/` — the live-capture / web-UI integration (`sweep_phy`,
+  `sync_dwell_phy`, `_decode_lora`, the GFSK path)
+- `docs/FLRC_GFSK_DECODE.md` — the canonical FLRC/GFSK design + status
+- `docs/DRONE_RF_ARCHITECTURE.md` — the RF-identity architecture (the "what ID do we actually get
+  from the air" analysis)
+- `docs/ANDEDS_NOTES_FOR_CLAUDE.md` / `docs/CLAUDE_NOTES_FOR_ANDEDS.md` — the rolling handoff logs
+  (current progress; this file is the durable directives)
+
+---
+
+**When in doubt:** measure from the RF, label the evidence class, keep it general (not
+single-target), stay passive (no live-link TX), and never overclaim a detection.
