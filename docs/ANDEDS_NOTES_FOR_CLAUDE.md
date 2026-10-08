@@ -24,33 +24,83 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 > - **Enclave can't run the WaveRaider pytest** (closed network, no PyPI) — so I verify test-logic
 >   changes by simulating the regex/logic, and the *real* pytest run is yours (laptop).
 
-> **CURRENT STATE (as of this pull):** `main` @ `ae6d4a5` (enclave). `elrs_sdr.selftest` ALL PASS.
-> Scan-speed fix + pre-push auto-commit hook + Claude §11 ack all in.
-> **TWO BLOCKERS, both now understood (2026-10-08):**
-> **(A) The 403 (why the CLI curl "did nothing"):** the `/api/elrs` route is **referrer-gated** —
-> it returns `403 {"error": "Radio requests can only be made from WaveRaider's own pages."}`
-> to anything that isn't the browser UI. So **every `curl` I handed the user was bounced at the
-> door** (the 8 ms empty/`KeyError: 'channels'` responses were all this 403, NOT the sweep running
-> or a slow USB). **The sweep must be driven from the BROWSER** (open `http://localhost:8899/` →
-> Monitor → ELRS Find) — that's the intended UX + it shows the live %. CLI alternative: spoof the
-> referrer (`curl -H "Referer: http://localhost:8899/monitor" -H "Origin: http://localhost:8899"`)
-> or I add a localhost exemption (small code change, on the user's say-so). **I gave the user curl
-> by mistake — the endpoint was never CLI-accessible.**
-> **(B) The USB drop (the real capture blocker):** the B205 is on a **flaky USB-C DOCK** (Anker
-> multi-slot; B205 in a USB-A 3.0 blue slot on the dock; laptop is **USB-C-only, no USB-A**). The
-> 20261008_093931 capture (58 ch, stopped at ch57, no manifest, 12.5 min) had **37/58 channels
-> corrupt** (sample rate collapsed to <0.3 MS/s). Root cause (Claude §11, verified on the laptop):
-> the **Anker dock's internal hub** can't sustain the B205's continuous SDR stream (power delivery
-> + xHCI jitter) — NOT disk contention (`captures/` is internal NVMe) and NOT bandwidth (UHD
-> streams `sc16` = 4 B/sample, so 10 MS/s ≈ 40 MB/s ≈ 3% of the hub's 10 Gbps). **There is NO
-> native USB-A port to move to** (USB-C-only laptop) — the dock is the only USB-A source. So the
-> fix is: (1) move the B205 to a **lone USB-A 3.0 port** on the dock (one not sharing an internal
-> branch with the SD reader / Ethernet), (2) **unplug/disable the SD reader + USB-Ethernet** during
-> the sweep (less hub load), (3) **re-run at 5 MS/s + 30 ms dwell** (`?srate=5000000&dwell_ms=30`)
-> to halve the stream. If the dock still drops at 5 MS/s → it genuinely can't sustain the B205 and
-> the real fix is a **powered USB-C hub** (purchase) or a different dock. **Still pending: the
-> Configurator check (rate + UID + ELRS version)** — if it's OTA v6, the v4 sync won't match even a
-> clean capture.
+> **CURRENT STATE (as of this pull):** `main` @ `7b3ce10` (enclave + laptop in sync).
+> `elrs_sdr.selftest` ALL PASS. Scan-speed fix + pre-push hook + Claude §11 ack + RF-CLI exemption
+> (opt-in `WAVERAIDER_LOCAL_CLI=1`) all in.
+> **DEFINITIVE ANSWER (2026-10-08, tested on the laptop): the Anker CANNOT sustain the B205, even
+> at 5 MS/s.** Ran `WAVERAIDER_LOCAL_CLI=1 wr serve` + a 5 MS/s / 30 ms dwell sweep: the B205 came
+> up fine (UHD 4.11, "Operating over USB 3", register loopback passed) but the capture printed
+> **`D` / `DDOD` on nearly every channel** — those are UHD's **USB overflow/drop indicators**. The
+> sweep only reached **ch7 in 100 s** (you Ctrl-C'd) vs ~15–30 s expected. So lowering the rate to
+> 5 MS/s did **NOT** fix it — the Anker dock's internal hub (VIA Labs, per Claude §11) genuinely
+> can't keep up with the B205's continuous stream at *any* practical rate. **The dock is a
+> hardware blocker, not a tunable one.**
+> **THE FIX (the only real one): a powered USB-C hub** (or a different dock). The B205 needs a
+> hub that can sustain ~40 MB/s sustained with low jitter — a **powered** USB-C hub (dedicated
+> 5V/1A+ to the B205, no SD reader/Ethernet sharing the upstream) is the standard SDR recommendation.
+> Cheap docks (Anker, VIA-based) routinely fail this. **Until then, no clean capture is possible on
+> this setup** — every sweep will have `D`/`O` drops + corrupt channels, so the ELRS link can't be
+> detected (a 1% duty burst is buried in a 10-second trickle of Wi-Fi on a dropped channel).
+> **Still pending (independent of the USB issue): the Configurator check (rate + UID + ELRS version)**
+> — if it's OTA v6, the v4 sync won't match even a clean capture.
+
+---
+
+## 2026-10-08 (andeds) — DEFINITIVE: the Anker dock cannot sustain the B205 (tested at 5 MS/s)
+
+**Test run (laptop, 2026-10-08 ~15:15):** `WAVERAIDER_LOCAL_CLI=1 wr serve` → B205 came up clean
+(UHD 4.11, "Operating over USB 3", register loopback passed, clock 40 MHz). Then a **5 MS/s / 30 ms
+dwell** sweep (`curl -s -N "http://localhost:8899/api/elrs?srate=5000000&dwell_ms=30"`):
+
+```
+wrote .../elrs_find_20261008_111514/ch0_2400.4MHz.complex8
+DDOD wrote .../ch1_2401.4MHz.complex8
+DDOD wrote .../ch2_2402.4MHz.complex8
+DDOD wrote .../ch3_2403.4MHz.complex8
+DDOD wrote .../ch4_2404.4MHz.complex8
+D    wrote .../ch5_2405.4MHz.complex8
+DDOD wrote .../ch6_2406.4MHz.complex8
+DDOD wrote .../ch7_2407.4MHz.complex8
+DD^C  (user Ctrl-C'd at ch7)
+real  1m40.731s   (100 s to reach ch7, vs ~15–30 s expected)
+```
+
+**The `D` / `DDOD` characters are UHD's USB overflow/drop indicators** — the B205's USB pipe is
+**dropping samples** because the Anker dock's hub can't deliver them fast enough. Every channel
+after ch0 shows `D`/`DDOD`. The sweep crawled (100 s for 7 channels) because each channel's 300k
+samples (30 ms × 5 MS/s) trickle in over many seconds due to the drops.
+
+**Conclusion: the Anker dock is a HARDWARE blocker, not a tunable one.**
+- Lowering the rate to 5 MS/s (which halves the stream) did **NOT** fix it — the drops persist.
+- This rules out "just lower the rate" as a fix. The hub's problem is **jitter/scheduling**, not
+  raw bandwidth (a 5 MS/s stream is only ~20 MB/s ≈ 160 Mbps, a tiny fraction of USB 3.0's 5 Gbps).
+- Claude §11's diagnosis (the VIA Labs dock hub can't sustain a continuous SDR stream — power
+  delivery + xHCI scheduling jitter) is **confirmed by this test**.
+
+**The only real fix: a powered USB-C hub (or a different dock).**
+- The B205 needs a hub that sustains ~40 MB/s (at 10 MS/s) or ~20 MB/s (at 5 MS/s) with **low
+  jitter**. A **powered** USB-C hub (dedicated 5V/1A+ to the B205, no other high-bandwidth devices
+  sharing the upstream) is the standard SDR recommendation.
+- Cheap docks (Anker, VIA/Realtek-based) routinely fail this — they multiplex the USB-C upstream
+  across many ports + a SD reader + Ethernet, and the xHCI scheduling + power delivery can't keep
+  up with a continuous high-rate isochronous-ish stream.
+- **Until a powered hub is in place, no clean capture is possible on this setup.** Every sweep will
+  have `D`/`O` drops + corrupt channels, so the ELRS link can't be detected (a 1% duty FLRC burst
+  is buried in a multi-second trickle of Wi-Fi on a dropped channel).
+
+**What this means for the project:** the detection code is ready (GFSK/LoRa/burst/sync-dwell all
+verified), the workflow is ready (git-synced captures, the RF-CLI exemption, the speed fix), but
+**the bench can't produce a clean capture on the current hardware.** The path forward is:
+1. **Get a powered USB-C hub** (the fix), OR
+2. **Find a setup without the dock** (if the laptop has a way to get USB-A that isn't through the
+   flaky dock — but the user confirmed it's USB-C-only, so this likely means the hub purchase).
+3. **In parallel: the Configurator check** (rate + UID + ELRS version) — so that *when* a clean
+   capture is possible, we know the Tinyhawk isn't on OTA v6 (which would break the v4 sync).
+
+**Capture `elrs_find_20261008_111514`** (ch0–ch7, all `D`/`DDOD`-dropped) was NOT pushed (the user
+Ctrl-C'd + the pre-push hook situation — see the separate note on the git-push-captures issue).
+It's on the laptop at `~/Drone_Project/elrs-sdr-transfer/captures/elrs_find_20261008_111514/` if
+needed for forensics, but it's all dropped-sample data — not analyzable for the ELRS link.
 
 ---
 
