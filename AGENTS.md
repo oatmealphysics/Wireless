@@ -13,7 +13,9 @@ future agent) MUST read this before making changes. The rolling handoff logs
 Passively **detect, identify, and demodulate ExpressLRS (ELRS) drone links** over the air with a
 software-defined radio (Ettus B205mini / B210). The goal is a **general passive ELRS air-state
 detector** — it tells you *what is in the air* (link type, version, rate, identity, channel, hop
-behavior) for **whatever ELRS link is present**, not just one specific aircraft.
+behavior) for **whatever ELRS link is present**, not just one specific aircraft. **The detector is
+surfaced in the WaveRaider web-UI** (see the delivery-surface section below) — the UI is how the
+operator actually sees the result, so a detection that can't be shown there isn't finished.
 
 ### The delivery surface (Claude, 2026-10-08 — the original operator goal)
 The detector is **not** an end in itself: the product the operator asked for is a **WaveRaider
@@ -32,13 +34,15 @@ The identifier must work against **ALL drones, ALL ELRS versions, ALL UIDs, ALL 
 detector, not a single-target finder. Concretely:
 - **Never hardcode** one UID, one OTA version, one rate, or one target's sync word.
 - **Measure and classify from the RF** — iterate all known OTA versions (v2–v6), all LoRa rates +
-  FLRC/GFSK, recover the UID from a matched sync (don't require it up front), and report the full
-  air state (version, mode, rate, UID, channel, freq-offset) for *whatever* ELRS link is present.
+  FLRC/GFSK, **recover the sync word / UID from the air** (demod a burst, read the sync out of the
+  packet — *never* require the operator to supply the UID; see the Identity goal), and report the
+  full air state (version, mode, rate, UID, channel, freq-offset) for *whatever* ELRS link is
+  present.
 - The Tinyhawk (EMAX TINYHAWK F4 SX1280) is only the **current test target**; the code must stay
   **target-agnostic**. A change that makes the detector work *only* for one drone's UID/version is
   a regression, not an improvement.
 - This is the "identify everything, be deliberate" directive — implemented in
-  `elrs_sdr/core/identify.py`.
+  `elrs_sdr/core/identify.py` (the air-recovery path is the next build step there — see §6).
 
 ### The core philosophy (emphatic, from andeds)
 The program must **MEASURE + CLASSIFY from the RF and DISCOVER the air state** — it must **NEVER
@@ -107,7 +111,11 @@ Passive ELRS detection over a busy 2.4 GHz band (Wi-Fi everywhere) has **three k
 false-positive classes**. A "hit" is NOT a real link until it survives all three:
 1. **Non-UID-specific correlation** — a high correlation peak that the *wrong* UID matches just as
    well (e.g. ch28 in the 120433 capture: right-UID 0.1732 vs wrong-UID 0.1749). A real ELRS sync
-   is **UID-seeded**, so the correct UID should correlate *far* above a wrong one.
+   is **UID-seeded**, so the correct UID should correlate *far* above a wrong one. **In air-recovery
+   mode (no UID supplied — the general case) this prior-knowledge test isn't available**, so the
+   discriminator shifts to: does the *recovered* sync, used as the reference, produce a **CRC-valid
+   frame** at a consistent rate/channel? A peak that doesn't yield a CRC-valid decode on the
+   recovered reference is the false-positive, regardless of how tall the correlation was.
 2. **The LoRa CRC false-accept** — the first-order LoRa demod mis-decodes a *non-LoRa* signal (an
    FSK burst, noise) as LoRa frames at *every* rate, producing ~20-35 CRC-"valid" frames each. A
    **real** LoRa link is on **ONE rate** with **hundreds+** of frames. ~20-35 on all 6 rates =
@@ -116,9 +124,11 @@ false-positive classes**. A "hit" is NOT a real link until it survives all three
    fires on ~every sample when Wi-Fi is present (~48k hits, 0.00 ms median gap). A **real** LoRa
    preamble shows **sparse, discrete** chirp hits. (Gated in `identify.py`.)
 
-**The decisive real-hit discriminator is the CRC check with the correct (version, UID)** — a
-genuine ELRS frame passes the CRC in a way a raw correlation peak does not. When in doubt, report
-the candidate set + the evidence class, not a confident "found it."
+**The decisive real-hit discriminator is a CRC-valid decode on the recovered (or supplied) sync
+reference** — a genuine ELRS frame passes the CRC in a way a raw correlation peak does not. With a
+supplied UID that's "CRC with the correct (version, UID)"; in air-recovery mode it's "CRC with the
+sync we recovered from the air, at a consistent rate/channel." When in doubt, report the candidate
+set + the evidence class, not a confident "found it."
 
 ---
 
@@ -152,9 +162,10 @@ the candidate set + the evidence class, not a confident "found it."
   import annotations`). New modules follow the same pattern (see `identify.py` as the recent
   template: dataclass results + a top-level `identify()` entry point + a full candidate list).
 - **Measure, don't assume.** Every detector should take a capture and *derive* the parameters
-  (rate, version, offset, UID) from it, rather than taking them as a required input. Where an input
-  is genuinely needed (the UID, to break the sync chicken-and-egg), make it **optional** and let
-  the detector try to recover it.
+  (rate, version, offset, UID) from it, rather than taking them as a required input. The **UID /
+  sync word is recovered from the air as the primary path** (demod a burst, read the sync out of the
+  packet) — a supplied UID is a *convenience cross-check*, never a required input. A detector that
+  *requires* the UID up front can't work against an arbitrary drone and violates the #1 goal.
 - **Always analyze at the MEASURED sample rate, never the requested one.** The B205 over USB
   delivers slightly (or, on a bad link, much) under the configured rate — e.g. ~4.88 MS/s for a
   requested 5 MS/s. Each capture's `.meta.txt` records the **measured** `sample_rate_hz`; every
@@ -176,10 +187,13 @@ the candidate set + the evidence class, not a confident "found it."
 - **The "identify everything, all versions" classifier is BUILT + verified:**
   `elrs_sdr/core/identify.py`. It measures the burst physics (bandwidth, amp-CV, duty, freq-
   offset), frequency-shifts to baseband, iterates all OTA versions (v2–v6) × UID for GFSK + all 6
-  LoRa rates, gates on CRC-validity, and returns a full `AirState`. **Honest limit:** it detects +
-  measures the ELRS-shaped FSK burst in the clean capture but reports `fsk_unidentified` — it can't
-  *lock* the GFSK UID/version without the right UID (the sync is UID-seeded; the version is
-  iterable, the UID isn't).
+  LoRa rates, gates on CRC-validity, and returns a full `AirState`. **Current status:** it detects
+  + measures the ELRS-shaped FSK burst in the clean capture and reports `fsk_unidentified` — it
+  *detects and characterizes* the burst but doesn't yet **read the sync word out of it**. The next
+  build step (per the air-recovery method in §1/Identity goal) is to **demodulate a clean burst
+  (ch31/ch40 in the 120433 capture) and extract the sync word from the packet** — that gives both
+  the modulation confirmation (FLRC vs Bluetooth) and the per-link identifier, without needing the
+  UID up front.
 - **Correction (Claude, 2026-10-08): the UID can NOT just be read from Betaflight.** The operator's
   Tinyhawk has **no binding phrase** (traditional 3-click bind), so the UID is a random per-module
   value — not in the Configurator, not computable. The ELRS **version + packet rate** live on the
@@ -203,6 +217,9 @@ the candidate set + the evidence class, not a confident "found it."
   + generic scores; the false-positive warnings live here)
 - `waveraider/waveraider/protocols/elrs/` — the live-capture / web-UI integration (`sweep_phy`,
   `sync_dwell_phy`, `_decode_lora`, the GFSK path)
+- `waveraider/` (Monitor → ELRS Find, the spectrum/overlay) — **the delivery surface** (the web-UI
+  the operator sees; the air-state classifier's output is presented here). A detector improvement
+  isn't finished until it's surfaced in this UI.
 - `docs/FLRC_GFSK_DECODE.md` — the canonical FLRC/GFSK design + status
 - `docs/DRONE_RF_ARCHITECTURE.md` — the RF-identity architecture (the "what ID do we actually get
   from the air" analysis)
@@ -211,5 +228,7 @@ the candidate set + the evidence class, not a confident "found it."
 
 ---
 
-**When in doubt:** measure from the RF, label the evidence class, keep it general (not
-single-target), stay passive (no live-link TX), and never overclaim a detection.
+**When in doubt:** measure from the RF (at the measured rate), recover the sync/UID from the air
+(never ask the operator for it), label the evidence class, keep it general (not single-target),
+surface it in the WaveRaider UI, stay passive (the TX gate is a wall), and never overclaim a
+detection.
