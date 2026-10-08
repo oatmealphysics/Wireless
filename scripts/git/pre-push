@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Pre-push hook: automatically stage + commit the captures/ folder before every
+# push, so `git push` always uploads the entire captures/ tree (all subfolders,
+# every ELRS Find sweep) without manual `git add captures/...`.
+#
+# SAFETY: commits ONLY the captures/ pathspec (git commit captures/), so a
+# pre-staged change/deletion OUTSIDE captures/ (e.g. an accidental `git rm
+# dronewatch/`) can NEVER ride along into the auto-commit. No-op (silent) if
+# there's nothing new/changed under captures/.
+#
+# Install (once, per clone):  bash scripts/git/install-hooks.sh
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+# the captures/ dir must exist on disk (a brand-new all-untracked sweep exists
+# on disk even though `git rev-parse captures` would fail for it).
+if [ ! -d captures ]; then
+  exit 0
+fi
+
+# stage ONLY the captures/ subtree (no-op if already clean).
+git add -- captures/ 2>/dev/null || true
+
+# is there anything staged UNDER captures/ to commit?
+if git diff --cached --quiet -- captures/ 2>/dev/null; then
+  exit 0   # nothing new under captures/ -> silent no-op
+fi
+
+# commit ONLY the captures/ pathspec — a path-limited commit, so any pre-staged
+# change outside captures/ is left in the index (NOT committed by this hook).
+ts="$(date -u +%Y%m%d_%H%M%S)"
+git commit -q -m "captures: auto-commit ${ts} (pre-push)" \
+     -m "Auto-staged the captures/ folder by the pre-push hook so `git push`
+uploads the entire captures tree without manual `git add captures/...`." \
+     -- captures/
+echo "[pre-push] auto-committed captures/ (auto-commit ${ts})" >&2
+
+exit 0
