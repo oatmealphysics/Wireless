@@ -34,40 +34,143 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 > - **Enclave can't run the WaveRaider pytest** (closed network, no PyPI) — so I verify test-logic
 >   changes by simulating the regex/logic, and the *real* pytest run is yours (laptop).
 
-> **CURRENT STATE (as of this pull):** `main` @ `8c54477` (enclave + laptop in sync).
+> **CURRENT STATE (as of this pull):** `main` @ `e7a0f7c` (enclave + laptop in sync).
 > `elrs_sdr.selftest` ALL PASS. **Where things stand:**
 > **(1) The USB is FIXED** (real hardware: two 80/80-channel sweeps, ~4.88 MS/s, zero drops,
 > 12.7 s — the deeper recv ring + per-channel `_stop_stream()` worked; no powered-hub purchase).
-> **(2) The capture DOES contain an ELRS-shaped FSK link** (I was wrong about "no signal"; Claude's
-> reassessment was correct + I confirmed it independently — ch31: bandwidth 0.45 MHz, amplitude CV
-> 0.03 = constant-envelope FSK, 8.8% duty = bursty, +0.32 MHz off-center = the freq-offset bug).
+> **(2) The 1 MHz-sweep captures DO contain an ELRS-shaped FSK link** (I was wrong about "no
+> signal"; Claude's reassessment was correct + I confirmed independently — ch31: bandwidth 0.45 MHz,
+> amplitude CV 0.03 = constant-envelope FSK, 8.8% duty = bursty, +0.32 MHz off-center = the
+> freq-offset bug).
 > **(3) The "identify everything, all versions" classifier is BUILT + verified:
-> `elrs_sdr/core/identify.py`.** It measures the burst physics (bandwidth, amp-CV, duty, freq-
-> offset), frequency-shifts to baseband, iterates ALL OTA versions (v2–v6) × the UID for GFSK
-> (sync-detect + Viterbi + CRC-24) + all 6 LoRa rates, gates on CRC-validity, and returns a full
-> `AirState`. **Verified on the clean capture (120433):** ch31/ch40 → `is_signal=True,
-> mode=fsk_unidentified` (the FSK burst is detected + measured); ch50 (pure Wi-Fi) →
-> `is_signal=False` (correctly rejected). It correctly rejects the three false-positive classes
-> (dense-Wi-Fi LoRa preamble, the LoRa CRC false-accept on an FSK burst, the ch28-class GFSK
-> non-UID-specific peak). **HONEST LIMIT: it could NOT lock the GFSK UID/version** — the sync word
-> is UID-seeded, so without the right UID it won't lock (chicken-and-egg; the version IS iterable,
-> the UID isn't). So it reports `fsk_unidentified` (a detected + measured FSK burst, not yet
-> identified to a specific version/UID/rate).
-> **THE ONE THING NEEDED (user): the Betaflight ELRS UID + version + rate** (Configurator →
-> Radio Setup → ELRS section). The classifier works against all versions already (iterates v2–v6);
-> it needs the **UID** to lock the GFSK sync. If there's a binding phrase, the UID is derivable;
-> if not (bound by UID only), it's in the ELRS Configurator (separate web UI). **Give me the UID +
-> version + rate → I run the classifier with the right reference → if the link is present, it
-> reports the full air state (version, UID, rate, channel, offset); if it still doesn't lock, that
-> tells us the burst is a different FSK link or the sync alignment still needs work.**
-> **@CLAUDE (please act on this, 2026-10-08):** andeds wants the identifier to be **general —
-> detect + identify + demod ALL ELRS drones (all versions, all UIDs, all rates/modes), not just
-> the one Tinyhawk we're testing against.** Add this as a **standing design constraint in your
-> AGENTS.md / CLAUDE.md** (the laptop one, since there's no AGENTS.md in the shared repo): "The
-> ELRS identifier is a *general* air-state detector — never hardcode a single UID, OTA version,
-> rate, or target's sync word; measure + classify from the RF across all OTA versions (v2–v6) +
-> all rates + GFSK/LoRa, recover the UID from a matched sync, and report the full air state for
-> whatever ELRS link is present." The Tinyhawk is only the current test target.
+> `elrs_sdr/core/identify.py`** (measures burst physics, freq-shifts to baseband, iterates all OTA
+> versions v2–v6 × UID for GFSK + all 6 LoRa rates, gates on CRC-validity, returns an `AirState`).
+> On the 1 MHz sweeps it detects + characterizes the FSK burst (`fsk_unidentified`) + rejects the
+> three false-positive classes. **Next build step (the air-recovery method):** demodulate a clean
+> burst (ch31/ch40) and **read the sync word out of the packet** — that gives the modulation
+> confirmation (FLRC vs Bluetooth) + the per-link identifier, *without* needing the UID up front.
+> **(4) ⚠️ NEW CAPTURE (the active item, 2026-10-08): a 20 MHz-wide wideband recording of the
+> 2.4 GHz band, with the controller hopping across ~80 MHz.** This is a DIFFERENT capture type from
+> the 1 MHz sweeps: a **20 MHz static window** vs a TX that **hops across 80 MHz** — so the link
+> only appears when the TX hops *into* the recorded 20 MHz slice. The full analysis plan + what I
+> need from the operator are in the dated entry below. **The capture is NOT on the enclave yet**
+> (uploaded to `/opt/data/drone_project`, which neither the anl01 terminal nor the Hermes file
+> tools can see, and it's not in Nextcloud) — it needs to be pushed to Nextcloud or the git repo.
+> **(5) CORRECTION (Claude, 2026-10-08 — SUPERSEDES the "get the UID from Betaflight" plan): the
+> operator's Tinyhawk has NO binding phrase (traditional 3-click bind), so the UID is a random
+> per-module value — NOT in Betaflight, NOT computable. The ELRS version + packet rate live on the
+> ELRS side (radio's ExpressLRS Lua, or the RX WiFi page at `http://10.0.0.1`), not in Betaflight
+> (which only speaks CRSF). So "ask the operator for the UID" is NOT a viable path. The method is
+> **air-recovery** (recover the sync from the RF). See AGENTS.md §1 Identity goal + §6.**
+> **@CLAUDE:** the new 20 MHz capture is the active item — read the dated entry below for the full
+> analysis plan (the hopping-detection approach is different from the 1 MHz sweep analysis).
+
+---
+
+## 2026-10-08 (andeds) — NEW 20 MHz wideband capture (the active item); the hopping-detection analysis plan; what I need from the operator
+
+### What the operator just gave us
+A **new capture** — described as **"a 20 MHz wide recording of the 2.4 GHz range of the controller
+and drone link, where the actual controller was hopping around 80 MHz wide."** This is the first
+capture of a *different type* than the 1 MHz sweeps we've had (120317, 120433). It was uploaded to
+`/opt/data/drone_project` (per the operator) but is **NOT reachable from the enclave yet** — see
+"State of the capture" below.
+
+### The critical technical detail (this changes the whole analysis approach)
+**The recording is 20 MHz wide, but the TX hops across ~80 MHz.** The full ELRS 2.4 GHz band is
+~2400–2480 MHz = 80 MHz. A **20 MHz static recording window** only sees a **slice** of that band.
+So:
+- The TX (controller) is frequency-hopping (FHSS) across the full 80 MHz, spending each hop period
+  on a different channel.
+- The 20 MHz recording window catches the TX **only during the hops that land inside that 20 MHz
+  slice**. For the rest of the time (TX hopping to the other ~60 MHz), the link is **outside the
+  window's field of view** — so "no signal on most of the time / most channels" is **EXPECTED**,
+  not a failure or a "no link" conclusion.
+- **Consequence for detection:** we can't just look for "is there a signal on channel N" (the 1 MHz
+  sweep approach). We need to look for the **hopping signature** — bursts that **appear and
+  disappear across the in-band channels over time**, following the FHSS pattern. The link's
+  presence is *temporal + spatial* (bursts moving between channels), not a steady carrier.
+
+### How this differs from the 1 MHz sweep analysis (don't reuse that approach blindly)
+| | 1 MHz sweeps (120317/120433) | 20 MHz wideband (new) |
+|---|---|---|
+| Band covered | ~80 MHz (stepped, 1 MHz/channel) | ~20 MHz (static window) |
+| Sample rate | ~4.88 MS/s (under-sampled for the band) | ~20–25+ MS/s (well above the burst BW) |
+| Link visibility | Each channel sees the TX when it hops onto *that* 1 MHz | The window sees the TX when it hops into *any* of the ~20 in-band channels |
+| Detection approach | Per-channel: is there a burst on ch N? | **Cross-channel, over time**: bursts moving across the in-band channels (the hop pattern) |
+| False-positive risk | Wi-Fi on adjacent channels | Wi-Fi in the window + the TX only being present a fraction of the time |
+| Under-sampling risk | High (4.88 MS/s can't fully resolve a 20 MHz view) | Low (20+ MS/s resolves the ~0.45 MHz FSK / LoRa bursts easily) |
+
+### The analysis plan (what I'll do once I have the capture)
+1. **Verify the capture geometry first** (before any DSP): read the metadata → center frequency,
+   sample rate, duration, number of files/channels. **Confirm the 20 MHz bandwidth + the sample
+   rate** (must be ≥ ~2×20 MHz = 40 MS/s for full Nyquist, or ~20–25 MS/s if they're capturing at
+   the edge — if it's under-sampled, aliasing will matter and I'll note it). Identify which 20 MHz
+   slice of the 80 MHz band this is (e.g. 2420–2440 MHz → channels 20–40 of the ELRS 1 MHz grid).
+2. **Time-frequency map (the hopping signature):** for each in-band 1 MHz sub-channel, compute the
+   energy over time (a waterfall / spectrogram). A hopping ELRS link shows **bursts that jump
+   between sub-channels at the hop rate** — that's the signature to detect, not a steady carrier.
+   Map *which* sub-channels get bursts + the *timing* between them → reconstruct the hop sequence.
+3. **Identify the hop rate + pattern:** the inter-burst timing across channels gives the FHSS hop
+   rate (ELRS 2.4 GHz: 500Hz/333Hz/250Hz/150Hz/100Hz/50Hz depending on the configured rate).
+   Cross-reference with the known ELRS hop sequences (`elrs_sdr/core/fhss.py` — the LCG PRNG +
+   block-shuffle, already a validated port).
+4. **Isolate a clean burst + demod:** once I know which sub-channels get the TX bursts, extract the
+   strongest isolated burst (like `identify.burst_core`) and run the **air-recovery path** —
+   demodulate it + **read the sync word out of the packet** (the next build step in
+   `identify.py`). This gives the modulation confirmation (FLRC/GFSK vs LoRa vs Bluetooth) + the
+   per-link identifier (the recovered sync), *without* needing the UID up front (per the Claude
+   correction — no binding phrase, so the UID isn't available from the operator).
+5. **Classify the full air state:** version (iterate v2–v6), mode (GFSK/LoRa), rate (the 6 ELRS 2.4
+   GHz LoRa rates + FLRC), the recovered sync/UID, the channel + hop pattern, the freq-offset.
+   Report it as an `AirState` (the "identify everything" output).
+6. **Surface it in the WaveRaider UI** (the delivery surface) — a detection that can't be shown
+   there isn't finished (AGENTS.md §1 delivery surface).
+
+### The false-positive caution (still applies, even more here)
+The 20 MHz window is wide → it will contain **Wi-Fi + other 2.4 GHz signals** alongside the ELRS
+hops. The three false-positive classes from AGENTS.md §3 (non-UID-specific correlation, the LoRa CRC
+false-accept, the dense-Wi-Fi preamble false-positive) all apply. **The hopping signature (bursts
+moving between sub-channels at the ELRS hop rate) is the key discriminator** — Wi-Fi doesn't hop
+like ELRS (it's a steady carrier on one channel), so a signal that *moves between channels at the
+ELRS hop rate* is ELRS-shaped in a way Wi-Fi isn't. Use that as the primary "is this the ELRS
+link?" test, then confirm with the demod + CRC.
+
+### State of the capture (BLOCKER — I need this to proceed)
+- **The capture is NOT on the enclave.** I checked: it's not in the git repo (no new
+  `captures/elrs_find_*` dir), not in `/opt/data` (anl01 terminal can't see it; the Hermes file
+  tools can't see `/opt/data` either — different hosts, per the nextcloud skill note), and not in
+  Nextcloud. The operator says it's at `/opt/data/drone_project` — a path/mount I can't reach.
+- **I need the capture delivered to a place I can pull from.** Options (fastest first):
+  1. **Nextcloud** (the enclave file store) — upload to `analysis/elrs-sdr-research/` (the
+     `.complex8` files + `.meta.txt` + a `manifest.json` if there is one). I can `curl` it from
+     Nextcloud. This is the most reliable path for a large capture.
+  2. **The git repo** — if the capture is small enough, push a new `captures/` dir (the pre-push
+     hook auto-commits it). But a 20 MHz × (say) 1–10 s capture at 20+ MS/s is ~160–1600 MB, so it
+     may be too big for git.
+  3. **Tell me the exact reachable path** — if it's on a host I *can* reach (anl01 or the Hermes
+     host), give me the exact path + the filename pattern and I'll look again (it may be under a
+     slightly different name than `drone_project`).
+
+### What I need from the operator (the capture metadata + TX setup)
+To analyze it correctly I need (the `.meta.txt` or whatever the recorder wrote):
+- **Center frequency** of the 20 MHz window (which slice — e.g. 2420–2440 MHz? or 2440–2460?).
+  This tells me which ELRS 1 MHz channels are in-band.
+- **Sample rate** (must be ≥ ~20 MS/s for a 20 MHz capture; if it's lower, aliasing matters).
+- **Duration** (how long was it recording? longer = more hops captured = easier to reconstruct the
+  hop pattern + more clean bursts to demod).
+- **Number of files / is it one big file or split into channels?** (the earlier captures were
+  per-channel `chN_*.complex8`; this might be one continuous 20 MHz file, or split).
+- **The TX setup during the capture** — what rate/mode was the controller on? (LoRa 500Hz? FLRC?
+  The hop rate.) And was the drone armed/flying, or just the TX transmitting (bench)? This tells me
+  what hop rate + packet rate to expect.
+
+### The one-line summary for Claude
+**A 20 MHz wideband slice of a TX that hops across 80 MHz → the link only appears when the TX
+hops into the slice. Detect it by its *hopping signature* (bursts moving between the in-band
+sub-channels at the ELRS hop rate), not by per-channel "is there a signal." Then isolate a clean
+burst + run the air-recovery demod to read the sync word. The capture isn't on the enclave yet —
+get it to Nextcloud + the metadata (center freq, sample rate, duration, file layout, TX rate).
 
 ---
 
