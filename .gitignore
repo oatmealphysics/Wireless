@@ -17,10 +17,19 @@ dist/
 #   NOTE: a full 80-ch sweep is ~160 MB, and git keeps every version forever, so
 #   this grows .git over time. To reclaim it later: delete dead captures (they
 #   leave history) then do a coordinated `git filter-repo` + re-clone.
+#
+#   WIDEBAND single-file grabs (.cdif BLUE files, .sigmf-data, .cfile) are a
+#   DIFFERENT case: one file is 500 MB–1 GB+ (e.g. the 28 MS/s 2450 MHz grab is
+#   740 MB). Those are ignored EVERYWHERE (no captures/ re-include below) so the
+#   pre-push hook can't auto-commit a ~GB blob into history. To share one
+#   deliberately: `git add -f captures/<file>.cdif` (one-off), or move it off-git.
 *.iq
 *.complex8
 *.cf32
 *.jsonl
+*.cdif
+*.sigmf-data
+*.cfile
 !captures/
 !captures/**/
 !captures/**/*.complex8

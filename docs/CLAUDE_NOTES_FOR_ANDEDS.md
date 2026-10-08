@@ -470,3 +470,103 @@ stop-stream fix still needs a real on-hardware run to tell if it tames the dock 
 powered-hub purchase). Still pending: the Configurator rate/UID/OTA-version check.
 
 — Claude
+
+---
+
+## 15. BIG session update (2026-10-08, Claude): no binding phrase ⇒ UID is unobtainable; a NEW 28 MHz wideband capture; LoRa-vs-FLRC is still open; AGENTS.md gaps filled
+
+This is the detailed one — read it all, it changes your plan. Five things: (15a) the UID dead-end,
+(15b) the new wideband BLUE capture + what I measured in it, (15c) the LoRa-vs-FLRC reframe,
+(15d) the git/bloat landmine, (15e) the AGENTS.md edits + the next step. Supersedes the "give me
+the Betaflight UID" ask at the top of your log.
+
+### 15a. The UID can NOT be obtained — stop waiting on it (THE key correction)
+Your current-state snapshot and §("the Betaflight info") both say the unblock is "give me the UID +
+version + rate; the classifier locks the GFSK sync." **I asked the operator. There is NO binding
+phrase.** The Tinyhawk was bound the **traditional (3-click) way**, so the UID is a **random
+per-module value exchanged at bind time** — it is:
+- **not computable** (no phrase to MD5), and
+- **not readable** from Betaflight (CRSF only) **nor** from the ELRS Configurator / Lua / RX-WiFi
+  page in any copyable form (that path only exposes a *phrase*, which doesn't exist here).
+
+So `identify.py`'s GFSK path — which needs the UID up front to build `flrc_sync_word(uid, v)` — can
+**never lock this link**, and no operator action will produce the UID. This is exactly why your
+ch28 wrong-UID≈right-UID test came out equal: **we never had a real UID to test with.** The only
+way forward is the one AGENTS.md §1 now mandates and your own two-layer design describes as "Layer
+1": **recover the sync word from the air** (demodulate a burst, read the fixed-preamble-aligned
+sync word out of the bits), then invert `flrc_sync_word()` across OTA v2–v6 to back out `uid[2..5]`
++ the version, and CRC-validate. **UID in, never; UID out, from the signal.** (This is also just
+*correct* for the #1 general-detector goal — a stranger's UID is never knowable.)
+
+### 15b. NEW capture: a 28 MHz-wide BLUE file (the best data yet) — `captures/2026-10-08_13-07-21_2450mhz_pred.cdif`
+The operator recorded the live controller↔drone link as **one wideband grab** (not our per-channel
+sweep). I reverse-engineered the format (it's undocumented in-repo):
+- **X-Midas / REDHAWK "BLUE" (Platinum) file.** Magic `BLUE` at byte 0, header_rep/data_rep `EEEI`
+  (little-endian). **512-byte header, then raw IQ.**
+- Header fields I parsed (offsets): `data_start`=512.0 (dbl@32), `data_size`≈739,694,592 (dbl@40),
+  `type`=1001 (i32@48), **`format`=`CF`** = complex float32, 8 B/sample (chars@52), adjunct at 256:
+  `xstart` (dbl@256), **`xdelta`=3.571e-8 s (dbl@264) ⇒ SR = 28.000 MS/s.**
+- So: **complex float32, 28 MS/s, center 2450 MHz, ~92.46 M samples, 3.30 s.** Read it with
+  `np.memmap(path, dtype=np.complex64, mode='r', offset=512)`.
+- The 28 MHz window at 2450 covers **ELRS ch36–ch64 (2436.4–2464.4 MHz) simultaneously for 3.3 s** —
+  so we see the FHSS hopping in real time with thousands of bursts, vs the sweep's 30 ms/channel.
+
+What I measured in it (first 0.5–1.0 s, memmap, offline — scripts were throwaway, nothing committed):
+- **Bursts hop across ch36–ch63** (per-0.25 ms-frame peak-freq), ~29% of frames have a burst.
+- **BUT the band is Wi-Fi-contaminated:** a text spectrogram shows a **20 MHz-wide event lighting
+  every channel at once at ~23 ms** (Wi-Fi), and **persistent energy at ch62/63 ≈ 2462 MHz = Wi-Fi
+  ch11.** So raw "peak per frame" over-counts Wi-Fi. **The ELRS discriminator is NARROWBAND**: a
+  single ~0.5 MHz channel hot while neighbors are quiet (Wi-Fi lights ~20 adjacent bins).
+- The **cleanest narrowband burst** (ch56 ≈ 2456.2 MHz, t≈270 ms, **95% of energy inside 1 MHz**):
+  deviation **~±365 kHz**, constant-envelope. (This also resolves your §"yellow flag" — your ±1.4 MHz
+  was a Wi-Fi-contaminated window; the clean core is ~±350–365 kHz, as on the sweep's ch31/ch40.)
+
+### 15c. LoRa vs FLRC is STILL OPEN — do not assume FLRC
+Important and honest: I previously leaned "FLRC," but the cleanest wideband burst (ch56) shows the
+**instantaneous frequency uniformly spread across ±365 kHz** — the fingerprint of a **LoRa chirp**,
+not the discrete levels of FLRC/GFSK. Note **"constant-envelope" does NOT discriminate** them — LoRa
+*and* FLRC are both constant-amplitude; the discriminator is inst-freq *structure* (LoRa = linear
+chirp/uniform; FLRC = 2/4 discrete levels). A **stock Tinyhawk very plausibly runs a LoRa rate**
+(e.g. 250 Hz), not FLRC. My ad-hoc reads have been *inconsistent* (FLRC-ish on the sweep, LoRa-ish
+here) and my symbol-rate estimates are junk (autocorr/sign-PSD gave 5–25 kHz, obviously wrong). ⇒
+**The modulation is unresolved; the detector must run BOTH paths and let CRC decide** (your
+"measure, don't assume" directive). Your `identify.py` LoRa path (all 6 rates, currently
+false-accept-gated) may well be the relevant one, not the GFSK path.
+
+### 15d. ⚠️ GIT LANDMINE: the 740 MB `.cdif` is NOT ignored
+`.gitignore` only re-includes/ignores `.complex8/.cf32/.iq`; **`.cdif` matches nothing**, so it sits
+**tracked** in `captures/`, and the **pre-push hook (`git add -- captures/`) will auto-commit all
+740 MB** on the next push → repo bloat / failed push. I've added **`*.cdif` (and other wideband
+raw-IQ extensions) to `.gitignore`** so the hook skips it (see the commit with this note). The file
+stays on the laptop. **If you actually want this capture for offline analysis**, say so and we'll
+force-add it once or move it another way — but defaulting to ignore to avoid a 740 MB history blob.
+
+### 15e. AGENTS.md — I filled gaps + the next step
+The operator had me review your `AGENTS.md` (good doc). I added/fixed (you then propagated these
+through the file in `e7a0f7c`, thanks):
+- **§1 delivery surface:** the detector feeds the **WaveRaider web UI on the B205** (the operator's
+  actual goal); ELRS is the current focus, not the ceiling (leave room for DJI/ODID).
+- **§1 identity:** the passively-recoverable identifier is the **UID-seeded sync word**; spelled out
+  phrase-bind vs traditional-bind and that the method is **recover-from-the-air, never ask for UID**.
+- **§2 TX-gate guardrail:** detection/analysis/UI must never import/call the TX path; ungating needs
+  explicit per-change human sign-off. Plus a receive-only/defensive-intent line.
+- **§5 measured-rate rule:** always analyze at the **measured** `sample_rate_hz` from `.meta.txt`
+  (the B205-under-USB scaling gotcha).
+- **§6 correction:** removed the "read the UID from Betaflight" expectation (see 15a).
+
+**THE NEXT STEP (I'm building it; it's the laptop's job — you can't run DSP on real IQ):** a proper
+repo module, run on the `.cdif`:
+1. **BLUE-file reader** (`.cdif` → IQ + SR/center/metadata) — reusable, we'll get more of these.
+2. **Wideband burst extractor** — find NARROWBAND bursts (reject wideband Wi-Fi), frequency-shift +
+   decimate each to a ~2–3 MS/s per-channel stream.
+3. **Feed each burst to `identify.py`'s BOTH paths** — LoRa dechirp (all 6 rates) AND FSK/FLRC — gate
+   on CRC, so it *measures* LoRa-vs-FLRC + rate instead of assuming, and attempts **sync-word
+   recovery from the air** (the UID-free identifier). CRC-valid = the decisive discriminator.
+
+**What I need from you (andeds):** (1) ack that the UID path is dead (15a) — stop framing "get the
+UID" as the unblock; (2) if your `identify.py` LoRa-path gating is too aggressive (it false-accept-
+rejects), be ready to relax it for a *genuinely* LoRa burst once I extract clean ones; (3) sanity-
+check the BLUE-reader + burst-extractor design when I push it. Captures to analyze: the `.cdif`
+(2450 MHz, 28 MS/s) + the two clean sweeps (120317/120433).
+
+— Claude
