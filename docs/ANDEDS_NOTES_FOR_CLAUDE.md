@@ -24,13 +24,124 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 > - **Enclave can't run the WaveRaider pytest** (closed network, no PyPI) — so I verify test-logic
 >   changes by simulating the regex/logic, and the *real* pytest run is yours (laptop).
 
-> **CURRENT STATE (as of this pull):** `main` @ `0abde5a`+ (enclave) / laptop pushed `4ec1c05`
-> (the two clean captures). `elrs_sdr.selftest` ALL PASS. **BIG PROGRESS + an honest correction:**
-> **✅ THE USB IS FIXED.** The B205 USB-drop mitigation (deeper recv ring + per-channel
-> `_stop_stream()`) **works on the real hardware**: two back-to-back 80-channel sweeps
-> (`20261008_120317` + `20261008_120433`), **both 80/80 channels, ~4.88 MS/s, ZERO drops, 12.7 s**
-> (vs the prior 58 ch / 12.5 min / 37-corrupt, and the 5 MS/s test that only reached ch7 in 100 s
-> with `DDOD`). The Anker dock is no longer the blocker — **no powered-hub purchase needed.** The
+> **CURRENT STATE (as of this pull):** `main` @ `7480621` (enclave). `elrs_sdr.selftest` ALL PASS.
+> **THREE things:** **(1) The USB is FIXED** (real hardware: two 80/80-channel sweeps, ~4.88 MS/s,
+> zero drops, 12.7 s — the deeper recv ring + per-channel `_stop_stream()` worked; no powered-hub
+> purchase). **(2) I was WRONG about "no signal" — Claude's reassessment is correct + I confirmed
+> it independently.** The capture DOES contain a narrowband, constant-envelope, frequency-hopping
+> FSK link (ELRS-shaped). My "continuous Wi-Fi, no ELRS" read was a false negative: the duty-cycle
+> metric (0.82) was swamped by the Wi-Fi floor, masking the ~8.8%-duty ELRS bursts underneath. I
+> measured the strongest burst (ch31): **bandwidth 0.45 MHz** (narrow, not Wi-Fi's ~20 MHz),
+> **amplitude CV 0.028** (constant-envelope = FSK), **8.8% hot fraction** (bursty, not continuous),
+> **+0.27 MHz off channel center** (confirms Claude's freq-offset finding). **(3) The operator's
+> directive: work against ALL ELRS versions + deliberately identify everything — not hardcode one
+> version.** The sync-word derivation is already version-parameterized
+> (`flrc_sync_word(uid, ota_version)` XORs the version into the last byte) but every call site
+> hardcodes `ota_version=4` + a single UID. The fix: iterate all OTA versions (v2–v6) × the UID,
+> classify per-channel (LoRa 6 rates + FLRC/GFSK), frequency-shift to each burst's measured offset
+> before correlating, and gate on **CRC-validity** (a real hit = CRC passes with the right
+> version+UID, not just a correlation peak — that's what kills the ch28-class false positive). The
+> decisive identification = which (version, mode, rate, UID, channel) produces a CRC-valid lock.
+> **NEXT: (me) implement the multi-version/CRC-validated classifier + the per-burst freq-offset fix;
+> (user) the Betaflight ELRS firmware version + rate (Radio Setup → ELRS section) confirms which
+> version to expect — but the detector should now find it without being told.**
+
+---
+
+## 2026-10-08 (andeds) — I was WRONG about "no signal"; Claude's ELRS-shaped finding is confirmed; the directive is "all versions + identify everything"
+
+### Correction: the capture IS NOT empty (I over-corrected to "no signal")
+In my previous note I concluded "the whole band is continuous Wi-Fi/interference (0.82 duty), no
+ELRS link" and called the ch28 "GFSK hit" a false positive. **That was half right, half wrong:**
+- **Right:** the ch28 "GFSK sync found" (0.1732) *was* a false positive (not UID-specific, 0.824
+  duty, inconsistent across captures) — that specific report was spurious.
+- **Wrong:** "no signal." Claude dug into the raw IQ and found a **narrowband, constant-envelope,
+  frequency-hopping FSK link** present on ~33 of 80 channels. **I confirmed this independently** by
+  demodulating the strongest burst (ch31):
+
+| Metric | Measured (ch31) | Interpretation |
+|---|---|---|
+| Bandwidth (10% of peak) | **0.45 MHz** | **Narrowband** (Wi-Fi is ~20 MHz) → **not Wi-Fi** |
+| Amplitude CV | **0.028** | **Constant-envelope** → **FSK** (not OFDM/AM) |
+| Hot fraction of 30 ms dwell | **8.8%** | **Bursty** (Wi-Fi is ~80%+ continuous) → **burst link** |
+| Center offset | **+0.27 MHz** off channel center | **Confirms Claude's freq-offset finding** |
+
+That combination (narrow + constant-envelope + bursty + hopping) is **ELRS-shaped FSK**. My
+"continuous Wi-Fi" read failed because the **duty-cycle metric (0.82) was swamped by the Wi-Fi
+floor** — it averaged the 8.8% ELRS bursts together with the continuous Wi-Fi, so the channel
+looked "0.82 continuous" instead of revealing the 8.8% bursts underneath. The burst-structure
+metric (peak/median per 1 ms slice, ~73,000× on ch31) is the right discriminator, and it shows
+clearly isolated, hopping, narrowband FSK bursts.
+
+**One yellow flag:** my FSK-deviation estimate came out ±1.4 MHz (wider than ELRS FLRC's ~±0.25–
+0.39 MHz). Likely because the 1 ms "burst" I isolated included a burst + the Wi-Fi floor (inflating
+the `angle(diff)` estimate), or a wider-deviation rate. A detail to refine in the demod — not
+enough to doubt the narrowband/constant-envelope/bursty/hopping main finding.
+
+### The operator's directive (the real next step): work against ALL versions + identify everything
+The operator said: **"I would like this program to work against all versions, can we not focus on
+one and be more deliberate about identifying everything?"** This is the correct call and matches
+the standing philosophy (measure + classify from the RF, discover the air state, never assume a
+version/rate/UID). The detector currently bets on **one** reference: `flrc_sync_word(uid)` at
+`ota_version=4` for a single hardcoded UID. The deliberate version measures across the whole
+parameter space and reports what it finds.
+
+**The full space to identify (all already present in the codebase):**
+| Dimension | Values | How to identify |
+|---|---|---|
+| **OTA version** | v2, v3, v4, v5, v6 (sync-word XOR) | Iterate each → `flrc_sync_word(uid,v)` + `flrc_crc_seed(uid,v)` → which locks |
+| **PHY mode** | LoRa (6 rates) vs FLRC/GFSK (1000/500 Hz) | Both paths exist — classify per-channel, don't pre-pick |
+| **LoRa rate** | 500/333/250/150/100/50 Hz (`ELRS_2G4_RATES`) | Already iterated in the LoRa path |
+| **UID** | 6 bytes (seeds the sync + CRC) | Use the given UID, OR recover it from the matched sync (`uid[2..5]` are in the seeded portion) |
+| **FHSS channel** | 0–79 (2400.4–2479.4 MHz) | Track which channels have bursts |
+| **Per-burst freq offset** | measured (+0.27 MHz on ch31; Claude ~1.9 MHz on ch40) | Freq-shift to each burst's measured offset before correlating (the bug) |
+
+**Key infrastructure already in place (this makes it tractable, not a rewrite):**
+- `flrc_sync_word(uid, ota_version)` + `flrc_crc_seed(uid, ota_version)` are **already
+  version-parameterized** (they XOR `ota_version` in). Every call site just hardcodes the default
+  4. The change is to **iterate versions**, not to rewrite the derivation.
+- `ota_uid_crc_init(uid, ota_version)` + `validate_crc(...)` are also version-aware + the
+  **CRC check is the decisive discriminator** (a real ELRS frame passes the CRC with the right
+  version+UID — a raw correlation peak does not). This is what kills the ch28-class false positive.
+- The LoRa path already iterates all 6 rates; the GFSK path exists for FLRC.
+
+**The two-layer "identify everything" design:**
+1. **Layer 1 — version/UID-independent detection:** "is *a* sync word present at this time/freq?"
+   using the **fixed preamble structure** (same across all versions/UIDs). No UID/version needed —
+   this finds the burst + its timing/frequency. (This is the "discover the air state" layer.)
+2. **Layer 2 — version/UID-specific identification:** once a sync is found, iterate **all OTA
+   versions × the UID (given or recovered)** and gate on **CRC-validity**. Report the version +
+   UID + mode + rate + channel that produce a CRC-valid lock.
+
+**The decisive hit criterion (replaces "corr > 0.10"):** a genuine ELRS frame = **CRC-valid with
+the correct (version, UID)** — UID-*and*-version-specific in a way a raw correlation peak isn't.
+This directly fixes the false-positive class we hit (a high correlation with the wrong UID that
+isn't CRC-valid).
+
+### What I'm implementing (the deliberate multi-version classifier)
+1. Add an `OTA_VERSIONS` list (v2–v6) in `gfsk.py`/`ota.py`.
+2. **Iterate versions × UID** in the sync detection → report which version/UID locks (not just v4).
+3. **Fix the per-burst frequency offset** — frequency-shift to each burst's *measured* offset
+   before correlating (the bursts are off-center: +0.27 MHz on ch31, up to ~1.9 MHz on ch40 due to
+   channel overlap at 4.88 MS/s / 1 MHz spacing).
+4. **Gate on CRC-validity** (not just a correlation peak) — the decisive real-hit discriminator.
+5. **Report the full air state** (version, mode, rate, UID, channels, hop pattern) instead of a
+   single "found/not found."
+
+### The Betaflight info (still useful, but no longer the *only* path)
+The operator wants the detector to work against all versions without being told which one — so the
+Betaflight firmware version is no longer the *critical path* (the detector should find it). It's
+still **useful as a cross-check**: open Betaflight Configurator → Radio Setup → ELRS section and
+note the firmware version (ELRS 3.0–3.2 = OTA v4; 3.3+ = OTA v5/v6) + the rate (FLRC vs LoRa).
+If the detector's "identified version" matches the Betaflight version, that's strong confirmation.
+But the detector must work even without that input.
+
+---
+> **watch for the `D`/`DDOD` indicators**: if they're gone (or much reduced) + the sweep finishes
+> in ~15–30 s → the mitigation works, we're unblocked. If they persist → the dock genuinely can't
+> do it, and the powered USB-C hub is the fix. Then `git push` (the hook auto-commits the capture)
+> → I analyze. **Still pending: the Configurator check (rate + UID + ELRS version)** — if OTA v6,
+> the v4 sync won't match even a clean capture.
 > git-push-captures workflow also works (the hook auto-committed `4ec1c05`).
 > **❌ BUT the ch28 "GFSK sync found" (0.1732) is a FALSE POSITIVE — I over-claimed it as a
 > breakthrough; it's not.** Three reasons: (1) **not UID-specific** — a *wrong* UID (..185c)
