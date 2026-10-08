@@ -24,17 +24,74 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 > - **Enclave can't run the WaveRaider pytest** (closed network, no PyPI) — so I verify test-logic
 >   changes by simulating the regex/logic, and the *real* pytest run is yours (laptop).
 
-> **CURRENT STATE (as of this pull):** `main` @ `d0f299e`, clean, `elrs_sdr.selftest` ALL PASS.
-> **The scan-speed fix is in** — `run_scan_matrix` now **early-exits** on the first GFSK/LoRa hit
-> (the common "found on pass 1" case is ~one pass, not three), and the **sync-dwell** pass captures
-> at 5 MS/s + caps the burst slices (drops ~8.5 s → ~1-2 s). New web param:
-> `/api/elrs?strategy=matrix` (the 3-pass redundancy with early-exit); `?early_exit=0` runs all 3.
-> The old `?strategy=sweep` / `?detect=burst` / `?strategy=sync` still work unchanged. **Next action
-> (laptop):** `git pull` → restart `wr serve` → ELRS Find (or `?strategy=matrix`) with the radio
-> on+TXing, Tinyhawk armed → it should finish in seconds now → push the capture → I analyze.
-> **Load-bearing unknowns (unchanged):** (1) confirm the Tinyhawk's **rate + UID + ELRS version**
-> from the Configurator (if OTA v6, the v4 sync won't match *any* strategy), (2) confirm the radio
-> is actively transmitting (TX LED blinking).
+> **CURRENT STATE (as of this pull):** `main` @ `ccc738b` (enclave) / laptop pushed `a777c86`
+> (bench capture 20261008_093931). `elrs_sdr.selftest` ALL PASS. **The scan-speed fix + the
+> pre-push auto-commit hook are both in** (`scripts/git/pre-push` — `git push` now auto-commits
+> `captures/`, one-time install via `bash scripts/git/install-hooks.sh`).
+> **NEW BLOCKER FOUND (2026-10-08): the B205 is dropping USB samples.** The 20261008_093931
+> capture (58 ch, stopped at ch57, no manifest, 12.5 min) had **37/58 channels corrupt**
+> (sample rate collapsed to <0.3 MS/s vs the 10 MS/s requested; all show `n_samples=500000` =
+> the requested count, but the measured rate shows they trickled in over seconds). The 21 clean
+> channels show only Wi-Fi (duty ~0.82, GFSK ~0.005, no ELRS link). **Root cause is NOT USB 2.0**
+> (the B205 is on USB 3.0 @ 5000M) — it's **USB hub contention**: the B205 (Dev 012) shares a
+> 4-port hub (Dev 009) with a Mass Storage device (Dev 010, the external SSD) + an r8152 Ethernet
+> adapter (Dev 011), all 5 Gbps-class. Disk I/O (writing the `.complex8` captures) contends with
+> the B205's stream over the same hub → stalls.
+> **NEXT ACTION (laptop):** (1) **plug the B205 directly into a laptop USB 3.0 port** (bypass the
+> 4-port hub sharing with the SSD/Ethernet) — most likely real fix; (2) **re-run the sweep at
+> 5 MS/s** (`?srate=5000000`) to halve the USB load. If clean + fast → contention confirmed, then
+> re-analyze for the actual ELRS link. **Still pending: the Configurator check (rate + UID + ELRS
+> version)** — if it's OTA v6, the v4 sync won't match even a clean capture.
+
+---
+
+## 2026-10-08 (andeds) — analyzed the 20261008 capture: found the USB-drop blocker
+
+**Capture `elrs_find_20261008_093931`** (58 channels, ch0–ch57, **no manifest** — the sweep
+stopped early, 13:39:33→13:52:06 = 12.5 min):
+
+- **21 channels OK** (9.9 MS/s, 500k samples): ch 0,3,5,7–12,14–17,19,22,25,33,37,52,53,57
+- **37 channels CORRUPT** (measured sample rate collapsed to <0.3 MS/s, mostly <0.1 MS/s). Every
+  channel has `n_samples=500000` (the *requested* 50 ms × 10 MS/s), but the *measured* rate shows
+  the samples actually arrived over **seconds**, not 50 ms — the B205's USB pipe stalled and the
+  data trickled in.
+- The 21 clean channels: **no GFSK sync (GFSK ~0.005, gate 0.10), duty ~0.82 (continuous, not an
+  ELRS ~1% burst), broadband ~4x spectral peak** → **Wi-Fi/interference, no ELRS link present**
+  (same signature as every prior capture).
+
+**Diagnosis — the blocker is USB sample drops, not detection:**
+1. **Not USB 2.0** — `lsusb -t` shows the B205 on **USB 3.0 @ 5000M** (Bus 002 → hub Dev 009 →
+   Port 003 → Dev 012). So the port speed is fine.
+2. **USB hub contention (the likely cause):** the B205 **shares a 4-port hub (Dev 009)** with a
+   **Mass Storage device (Dev 010 — the external SSD, 5000M)** and an **r8152 Ethernet adapter
+   (Dev 011, 5000M)**. All three are 5 Gbps-class on the same hub. The sweep **writes the
+   `.complex8` captures to disk DURING the capture** (the interleaved loop writes each channel's
+   file as it's captured), so disk I/O to that SSD contends with the B205's stream over the same
+   hub → the stream stalls while disk I/O happens → 37/58 channels drop to <0.3 MS/s.
+3. **10 MS/s is 2.5× the FLRC's 3.9 MHz bandwidth** — 80 MB/s sustained is a heavy USB load.
+
+**Fixes to try (laptop), in order:**
+1. **Plug the B205 directly into a laptop USB 3.0 port** (bypass the 4-port hub that shares with
+   the SSD + Ethernet). The laptop has a 10000M USB 3.1 root (Bus 004) + a 20000M/x2 root (Bus
+   002) — use a direct laptop port, not the hub.
+2. **Re-run the sweep at 5 MS/s** (`?srate=5000000`) — halves the USB data rate (40 MB/s). The
+   FLRC/GFSK link only needs ~3.9 MHz BW, so 5 MS/s (2× oversampling) is plenty for detection.
+   ```bash
+   time curl -s "http://localhost:8899/api/elrs?srate=5000000" > /tmp/s5.json
+   python3 -c "import json; d=json.load(open('/tmp/s5.json')); print('ch:', len(d['channels']), d.get('saved_dir'))"
+   ```
+   **If 5 MS/s → clean channels + finishes in ~15–30 s** → contention confirmed; re-analyze the
+   clean data. **If it still drops** → it's the hub (move the B205 to a direct port).
+
+**Open question (the other load-bearing unknown):** even on the 21 *clean* channels there's **no
+ELRS link** — only Wi-Fi. So *independently* of the USB issue, confirm from the Configurator:
+**rate + UID + ELRS version.** If the Tinyhawk is on **OTA v6**, the v4-derived sync/CRC won't
+match *any* channel regardless of capture quality.
+
+**Possible code change (not yet made, on your say-so):** make the sweep **default to 5 MS/s**
+(one-line web.py default change) so the lower rate is the norm, and/or **buffer captures in memory
+and write the `.complex8` files AFTER the sweep** (instead of during) to remove the disk-IO-during-
+stream contention. Both are small; I'll apply when you confirm the port/rate test.
 
 ---
 
