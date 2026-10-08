@@ -93,19 +93,25 @@ class TargetProtocol:
 CATALOG: tuple[TargetProtocol, ...] = (
     TargetProtocol(
         name="ExpressLRS",
-        phy="LoRa chirp (SF5-8) or FLRC/GFSK",
-        bands=("2.4",),
+        phy="LoRa chirp (SF5-9, long range) + FLRC/GFSK (520/650, high rate); 2.4/868/915; sync = UID-seeded",
+        bands=("2.4", "868", "915"),
         reference_default_on=True,
         our_level=DetectionLevel.FAMILY,
-        our_detector="positivedet.lora_chirp + core.identify (GFSK/FLRC + LoRa paths)",
+        our_detector="detect.py (the engine: hysteresis burst detect -> per-protocol demod -> "
+                     "Net ID extraction -> specific-protocol fingerprint); "
+                     "positivedet.lora_chirp + core.identify (GFSK/FLRC + LoRa paths)",
         validated=True,     # the LoRa chirp detector is capture-validated
         link_id=None,       # the bind UID is UID-seeded; air-recovery not landed yet
-        notes="PRIMARY TARGET. We detect + measure the burst physics (narrowband, "
-              "constant-envelope, bursty) on real wideband IQ, but every burst is "
-              "still `fsk_unidentified` with crc_valid=False: the sync word is "
-              "UID-seeded and the UID is not obtainable (no binding phrase -> "
-              "traditional bind). Reaching SPECIFIC/IDENTIFIED requires sync-word "
-              "AIR-RECOVERY (demod a burst, read the sync out of the packet).",
+        notes="PRIMARY TARGET. The `detect.py` engine runs the full pipeline on a capture "
+              "(hysteresis burst detect + continuous-carrier reject -> per-protocol demod -> "
+              "Net ID extraction -> specific-protocol fingerprint). We detect + measure the "
+              "burst physics (narrowband, constant-envelope, bursty) on real wideband IQ, but "
+              "every burst is still `fsk_unidentified` with crc_valid=False: the sync word is "
+              "UID-seeded and the UID is not obtainable (no binding phrase -> traditional bind). "
+              "Reaching SPECIFIC/IDENTIFIED requires sync-word AIR-RECOVERY (demod a burst, "
+              "read the sync out of the packet) — the reference does this via its `parse_sync_0` "
+              "+ ELRS LoRa core (the 175 MB detection daemon; a firmware-labeling / "
+              "rce-gate-joern task). See docs/COUNTER_UAS_SDR_DETECTION_ID.md.",
         aliases=("ELRS",),
     ),
     TargetProtocol(

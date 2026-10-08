@@ -244,6 +244,21 @@ set + the evidence class, not a confident "found it."
 - `elrs_sdr/protocol_catalog.py` — the **16-protocol target list** from the reference C-UAS SDR +
   our honest `DetectionLevel` per protocol and which per-link ID we can extract
   (`python3 -m elrs_sdr.protocol_catalog` prints the gap report)
+- `elrs_sdr/detect.py` — the **detection + identification engine** (the software port of the
+  reference C-UAS SDR's radio pipeline; see `docs/COUNTER_UAS_SDR_DETECTION_ID.md` for the
+  algorithm + the stage-by-stage mapping). It finds the bursts (hysteresis energy detection +
+  the continuous-carrier discriminator), runs the per-protocol demod + per-link Net ID
+  extraction (the `Detection`/`NetID` dataclasses mirror the reference's `DetectionTaskResult` /
+  `DetectionNetID`), and does the specific-protocol fingerprint (ELRS vs Crossfire vs LoRa).
+  `python3 -m elrs_sdr.detect selftest` runs the synthetic selftest;
+  `python3 -m elrs_sdr.detect <capture.complex8> [srate_hz] [freq_hz]` runs it on a real capture.
+- `docs/COUNTER_UAS_SDR_DETECTION_ID.md` — **how the reference C-UAS SDR detects + identifies**
+  (the 5-stage pipeline: channelizer → hysteresis detect → sync correlation → per-protocol demod
+  → Net ID extraction; the `Protocol`/`DSPCore` enums; the `ScanConfigFSK` ELRS/FLRC/Crossfire
+  rate catalog; the per-protocol `Detect` tables; the `DetectionNetID`; the false-alarm gates;
+  the ECM side; + the `elrs_sdr/detect.py` implementation mapping). This is the "how it works"
+  doc; `docs/COUNTER_UAS_SDR_FIRMWARE_DEEP_DIVE.md` is the "how it's built" (architecture) doc;
+  `docs/REFERENCE_COUNTER_UAS_SDR.md` is the "what it is + how to use it" (operator-manual) doc.
 - `docs/REFERENCE_COUNTER_UAS_SDR.md` — the reference counter-UAS passive SDR notes (protocol
   catalog, Net-ID/UID extraction, passive/active split, + the firmware container breakdown)
 - `analyze_capture.py` — the offline capture analyzer (channel-by-channel, all modes, UID-specific
