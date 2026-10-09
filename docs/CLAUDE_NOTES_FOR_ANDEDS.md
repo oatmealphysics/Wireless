@@ -1127,3 +1127,81 @@ off the air — but **ELRS stays FAMILY until a CRC-valid SYNC payload has plaus
 advances across bursts.**
 
 — Claude
+
+---
+
+## 25. The blocker is COLLECTION, not code: the dataset holds only ~3 in-window SYNC packets (2026-10-09, Claude)
+
+Ran the properly-aligned scaled search (`aligned_scan.py`, new file — the alignment
+`scale_bursts.py` lacked). Null result again, but this time I can show **why**, and it isn't the
+decoder.
+
+### 25a. The runs
+| scan | bursts | aligned sets | trials | raw hits | corroborated |
+|---|---|---|---|---|---|
+| snr ≥ 45 | 108 | 246 | 425,088 | 1 | **0** |
+| snr ≥ 30 | 114 | 273 | 471,744 | 1 | **0** |
+
+Lowering the SNR gate barely moved the burst count (108 → 114), so sensitivity is **not** the
+limiter.
+
+### 25b. The gate math checks out (a useful side effect)
+Expected false accepts were **25.9 / 28.8**, observed **1**. That's the §24 plausibility gate
+working: only `8/256 ≈ 3%` of random decodes have `rf_rate_enum ≤ 7`, so it suppresses ~96% of
+chance accepts. 1 observed vs ~0.8 expected-after-gate ⇒ consistent with pure chance, no signal.
+Net effect: the search's signal-to-noise improved ~30×, so a future hit will mean much more.
+
+### 25c. ⚠️ THE REAL BLOCKER — the dataset can't corroborate, by construction
+Using your §22a figure (`ELRS_SYNC_PERIOD = 32`) and the capture geometry:
+
+- 5 s @ 150 Hz = **750 packets**, of which **23 are SYNC**.
+- Our 5 MS/s window spans ~5 of the 80 ELRS channels ⇒ only **6.25%** of packets land in view.
+- ⇒ **~1.5 in-window SYNC packets per 5 s capture**, so **~3 across both usable captures.**
+
+**Corroboration needs ≥2 SYNC packets that each decode correctly AND show advancing
+`(nonce, fhss_index)`. From a pool of ~3, that is near-hopeless even with a flawless decoder.**
+So the 0-hit results to date do **not** indict the chain — the sample simply doesn't contain
+enough SYNC frames.
+
+**Independent confirmation that my burst finder is right:** theory predicts
+`750 × 5/80 = 46.9` in-window bursts per capture; I observe **52–58**. Good agreement. (It also
+means `scale_bursts.py`'s 141–168 "bursts" per capture were over-counted — its hysteresis detector
+was firing on the CW spurs and burst fragments that my narrowband+bandwidth gate rejects. So the
+"471 bursts" figure was inflated ~4×, which made the sampling look far healthier than it was.)
+
+### 25d. 🎯 WHAT TO COLLECT (this is the unblock — operator action, not code)
+Seconds of capture needed for **10** in-window SYNC packets:
+
+| sample rate | channels in view | in-window SYNC / 5 s | seconds for 10 |
+|---|---|---|---|
+| 5 MS/s (current) | 5 / 80 | 1.5 | **34 s** |
+| **10 MS/s** | 10 / 80 | 2.9 | **17 s** |
+| 20 MS/s | 20 / 80 | 5.9 | **9 s** |
+
+**Recommended: one ~30 s capture at 10 MS/s** (≈17 in-window SYNC packets — comfortable margin for
+corroboration). The USB buffering + `_stop_stream()` fix already sustains clean capture
+(4.9995 MS/s measured, zero drops over 5 s), and 10 MS/s was the pre-fix problem rate, so it's
+worth verifying it holds — if it drops, fall back to 20–30 s at 5 MS/s.
+
+```sh
+python3 -m elrs_sdr capture --freq 2405400000 --srate 10000000 --gain 35 \
+  --samples 300000000 --out captures/sync30_$(date +%Y%m%d_%H%M%S).complex8
+```
+(300 M samples = 30 s at 10 MS/s ≈ 1.2 GB. Drone/controller 1–2 m from the B205, as before.)
+Then: `python3 aligned_scan.py` — it reads the measured rate from the `.meta.txt` automatically.
+
+### 25e. Also landed
+`lora_payload.selftest()` (`python3 -m elrs_sdr.core.lora_payload selftest`) encodes the §24
+refutation as a regression test, since those gates are load-bearing: a genuine SYNC is still
+recovered with no prior UID (both sizes, OTA v2–v6); the `rf_rate_enum=204` artifact is rejected;
+identical `(nonce, fhss_index)` counts as one artifact while advancing state counts as two packets;
+`decode_payload` is deterministic. `elrs_sdr.selftest` ALL PASS, `detect selftest` PASS.
+
+### 25f. Status
+ELRS remains **FAMILY**. Unchanged and correct: PHY pinned (LoRa SF7 @ 812 kHz), demod
+frame-locked (preamble + sync word 0x12 off the air), gates hardened. **The next real step is a
+longer/wider capture, not more decoder work** — and if a 30 s @ 10 MS/s capture still yields no
+corroborated SYNC, *then* hypothesis 2/3 (payload symbol errors / chain structurally incomplete)
+becomes the prime suspect and I'd go back into the interleaver geometry.
+
+— Claude
