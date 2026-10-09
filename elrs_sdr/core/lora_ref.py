@@ -238,3 +238,122 @@ if __name__ == "__main__":  # pragma: no cover
         selftest()
     else:
         print(__doc__)
+
+
+# --------------------------------------------------------------------------- #
+# The TX side — the exact inverse of the chain above.
+#
+# Purpose is diagnostic, not transmission (AGENTS.md §2: the TX path stays
+# gated; this only produces SYMBOL NUMBERS in memory, never IQ and never RF).
+# It lets us round-trip a KNOWN ELRS SYNC packet through the receive chain:
+#   * if the round-trip FAILS, the bug is in our implementation and we can fix
+#     it offline against a known-correct answer;
+#   * if it PASSES, the chain is internally coherent, so a failure on real air
+#     data points at symbol errors or an SX1280-vs-SX127x PHY deviation.
+# A passing round-trip is SELF-CONSISTENT only (AGENTS.md §3) — it does not
+# prove our chain matches Semtech, since both directions are ours.
+# --------------------------------------------------------------------------- #
+def whiten_bytes_to_nibbles(data: bytes, whiten: bool = True) -> list[int]:
+    """Inverse of `dewhiten_nibbles`: bytes -> whitened nibble stream."""
+    w = whitening_seq(len(data) + 2)
+    nibbles: list[int] = []
+    for i, byte in enumerate(data):
+        lo, hi = byte & 0x0F, (byte >> 4) & 0x0F
+        if whiten:
+            lo ^= w[i] & 0x0F
+            hi ^= (w[i] & 0xF0) >> 4
+        nibbles.append(lo & 0xF)
+        nibbles.append(hi & 0xF)
+    return nibbles
+
+
+def hamming_encode_nibble(nib: int, cr: int) -> int:
+    """Inverse of `hamming_decode_nibble` for the data bits.
+
+    `hamming_decode_nibble` reads {cw[3],cw[2],cw[1],cw[0]} (low four bits,
+    reversed), so the encoder places the reversed nibble in the low four bits.
+    Parity bits are left zero: our decoder ignores them (the ELRS CRC is the
+    arbiter), so they are not needed for a round-trip.
+    """
+    return _rev4(nib & 0xF)
+
+
+def interleave_block(codewords: list[int], sf_app: int, cw_len: int,
+                     msb_first: bool = True) -> list[int]:
+    """Inverse of `deinterleave_block`.
+
+    Decoder:  deinter[(i - j - 1) mod sf_app][i] = bit j of symbol i
+    so:       bit j of symbol i = bit i of codeword[(i - j - 1) mod sf_app]
+    """
+    syms = []
+    for i in range(cw_len):
+        bits = []
+        for j in range(sf_app):
+            cw = codewords[(i - j - 1) % sf_app]
+            bits.append((cw >> (cw_len - 1 - i)) & 1)
+        v = 0
+        if msb_first:
+            for b in bits:
+                v = (v << 1) | b
+        else:
+            for k, b in enumerate(bits):
+                v |= b << k
+        syms.append(v)
+    return syms
+
+
+def gray_map(sym: int, sf: int) -> int:
+    """Inverse of `gray_demap` (out = in ^ (in>>1)): the true gray->binary."""
+    out, sh = sym, 1
+    while sh < sf:
+        out ^= sym >> sh
+        sh += 1
+    return out & ((1 << sf) - 1)
+
+
+def encode_payload(data: bytes, sf: int, opts: RefOpts) -> list[int]:
+    """bytes -> LoRa symbol numbers, the inverse of `decode_payload`."""
+    sf_app = (sf - 2) if opts.ldro else sf
+    cw_len = opts.cr + 4
+    nibbles = whiten_bytes_to_nibbles(data, opts.whiten)
+    while len(nibbles) % sf_app:
+        nibbles.append(0)
+    symbols: list[int] = []
+    for b in range(0, len(nibbles), sf_app):
+        block = nibbles[b:b + sf_app]
+        cws = [hamming_encode_nibble(nb, opts.cr) for nb in block]
+        for s in interleave_block(cws, sf_app, cw_len, opts.msb_first):
+            symbols.append(gray_map(s, sf))
+    return symbols
+
+
+def selftest_roundtrip() -> None:
+    """Encode a real ELRS SYNC packet, decode it back, and CRC-validate it."""
+    from . import ota as _o
+    from . import lora_payload as _lp
+
+    uid = bytes([0xAA, 0xBB, 0xCC, 0xDD, 0x2E, 0xE2])
+    ok = 0
+    for is_full in (True, False):
+        for ver in (3, 4):
+            raw = _o.build_sync(is_full=is_full, fhss_index=42, nonce=7,
+                                rf_rate_enum=3, uid4=uid[4], uid5=uid[5],
+                                crc_init=_o.ota_uid_crc_init(uid, ver),
+                                ota_nonce=0)
+            for opts in all_opts():
+                syms = encode_payload(raw, 7, opts)
+                back = decode_payload(syms, 7, opts, max_bytes=len(raw))
+                if back[:len(raw)] != raw:
+                    continue
+                hits = _lp._try_sync(back, is_full)
+                if any(h.uid4 == 0x2E and h.uid5 == 0xE2 and h.ota_version == ver
+                       for h in hits):
+                    ok += 1
+                    break
+            else:
+                raise AssertionError(
+                    f"round-trip FAILED for full={is_full} v{ver}: no option set "
+                    f"recovered the packet -> the chain has an internal bug")
+    print(f"  [PASS] encode->decode->CRC round-trip recovered the ELRS SYNC "
+          f"packet in all {ok} cases (uid 2ee2, OTA v3+v4, both sizes)")
+    print("         (SELF-CONSISTENT only — both directions are ours)")

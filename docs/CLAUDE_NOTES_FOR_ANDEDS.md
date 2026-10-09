@@ -1372,3 +1372,85 @@ ELRS stays **FAMILY**. PHY pinned and now re-confirmed on a third capture at a d
 remaining fault is in the payload chain, not the data.
 
 — Claude
+
+---
+
+## 28. Ported the gr-lora_sdr chain instead of guessing it (operator's call). 5 real corrections, 36× fewer trials, chain round-trip VALIDATED — and the fault is now cornered (2026-10-09, Claude)
+
+The operator said: find a proven implementation and write a new program rather than keep editing
+ours. That was the right call and it paid off.
+
+### 28a. NEW `elrs_sdr/core/lora_ref.py` — a port of tapparelj/gr-lora_sdr
+Each step cites the reference file. Five things it corrected in our first-principles version:
+
+| # | Our version | The reference |
+|---|---|---|
+| 1 | `codeword[i] bit j = symbol[j] bit ((i + diag*j) % sf)` | `deinter_bin[(i-j-1) mod sf_app][i] = inter_bin[i][j]` — **i/j roles swapped, plus a −1 offset** (`lib/deinterleaver_impl.cc`) |
+| 2 | *not modelled at all* | **LDRO**: `sf_app = sf-2` when low-data-rate-optimize/header is on, else `sf`; `cw_len = cr+4`. Changes the whole block geometry |
+| 3 | whitened **bits**, **before** Hamming | whitening is on **NIBBLES, AFTER Hamming**, one step per output byte, CRC bytes excluded (`lib/dewhitening_impl.cc`) |
+| 4 | plain low/high nibble slice | nibble = `{cw[3],cw[2],cw[1],cw[0]}` — low four bits **bit-reversed** (`lib/hamming_dec_impl.cc`) |
+| 5 | `xor_shift` (correct) | `out = in ^ (in>>1)`, no offset — **so ours was right**, which independently confirms the `2ee2` "winner" (which needed `gray='none'`) was an artifact |
+
+**The whitening sequence is generated, then anchored:** 8-bit LFSR, seed `0xFF`, taps
+`b7^b5^b4^b3`, and `selftest()` **asserts** it reproduces the reference table's published first 24
+bytes exactly (`FF FE FC F8 F0 E1 C2 85 0B 17 2F 5E …`). So it's verified against the reference, not
+trusted. Our old taps were right; only the *application* (bits-pre-Hamming) was wrong.
+
+### 28b. The statistical payoff — this is the real point
+The genuinely-unknown parameters collapse from **1152 → 32** (4 CR × LDRO × bit-order × whiten):
+
+| | trials/burst | trials on ~2269 sets | expected chance false-accepts (post-gate) |
+|---|---|---|---|
+| `lora_payload` (guessed) | 2304 | ~5.2 M | **~7** |
+| `lora_ref` (reference) | 64 | **145,216** | **~0.27** |
+
+A corroborated hit now *means* something. In the old search it was indistinguishable from noise —
+which is exactly how `2ee2` and `61f0` happened.
+
+### 28c. Result on the controller-ON capture: a clean, meaningful null
+`sync30_20261009_152002` (9.99986 MS/s, 30 s, link confirmed present at 96% SF7/812 kHz):
+1200 bursts → 2269 payload sets, **145,216 trials, 0 raw hits** (budget 0.27), **0 corroborated.**
+No false positives — consistent with the tight budget — and no recovery.
+
+### 28d. ✅ The chain is NOT the bug: encode→decode→CRC round-trip passes
+I added the TX inverse (`encode_payload`, `interleave_block`, `gray_map`,
+`hamming_encode_nibble`, `whiten_bytes_to_nibbles`) **purely as a diagnostic — it emits symbol
+numbers in memory, never IQ, never RF; the TX gate in AGENTS.md §2 is untouched.** Then:
+
+> built a real ELRS SYNC packet (`ota.build_sync`, uid `2ee2`), encoded it, decoded it back, and
+> **`_try_sync` recovered uid4/uid5 + the OTA version with CRC valid — all 4 cases (OTA v3 & v4,
+> both packet sizes).**
+
+Honest label: **SELF-CONSISTENT only** (AGENTS.md §3) — both directions are ours, so this proves
+internal coherence, not Semtech conformance. But it's decisive in the negative direction: **the
+payload algebra is not where the fault is.**
+
+### 28e. Where that leaves the fault — two candidates, both testable offline
+With signal presence ruled out (§27), sampling solved (~23 SYNC candidates), the chain
+reference-ported *and* round-trip validated, and 0 hits against a 0.27 budget:
+
+1. **Symbol recovery / alignment on real IQ.** The preamble is bin-exact (§19a: 12× bin 17, no
+   jitter) but I have **never verified payload-symbol accuracy** — and one wrong symbol kills the
+   block's CRC outright. The 2.25-symbol SFD offset is also still an assumption for ELRS.
+2. **An SX1280-vs-SX127x PHY deviation.** gr-lora_sdr models SX127x/126x-style LoRa; ELRS runs the
+   **SX1280** at 2.4 GHz. Pure whitening-absence is already covered (whiten on/off is in the 32),
+   but a different interleaver or whitening *seed* on that part would not be.
+
+### 28f. 🎯 The decisive next test (offline, no new captures)
+**End-to-end synthetic injection:** `encode_payload` → `core.lora.modulate` to IQ at 812 kHz →
+prepend preamble + 2 sync symbols + the 2.25-symbol SFD → upsample to 10 MS/s → add noise → push
+through the **real** receive path (`find_bursts` → preamble lock → de-rotate → SFD skip → dechirp →
+`lora_ref.decode_payload`).
+
+That is the one test that exercises **symbol recovery and alignment**, which the round-trip in §28d
+deliberately bypasses. If it fails, candidate 1 is confirmed and fixable offline against a
+known-correct answer. If it passes, the receive path is sound end-to-end on synthetic IQ and
+candidate 2 (SX1280 deviation) becomes the prime suspect — at which point the firmware's own LoRa
+core (`parse_sync_0`, the `.fc64` templates) is the reference to compare against, @andeds.
+
+### 28g. Status
+ELRS stays **FAMILY**. New: the chain is reference-backed and round-trip validated, the search is
+36× tighter, and the fault is cornered to symbol-recovery/alignment or an SX1280 deviation. Still
+**no per-link ID** — not claiming one.
+
+— Claude
