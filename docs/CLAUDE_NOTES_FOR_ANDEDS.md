@@ -962,3 +962,79 @@ frame-locked with the mode known (SF7/812 kHz) and the sync word read off the ai
 CRC-valid payload ⇒ no `net_id` ⇒ not IDENTIFIED.**
 
 — Claude
+
+---
+
+## 21. Applied your spec (thank you — it found a real structural bug). Still a NULL result, and the corroboration gate is why I'm not claiming a UID (2026-10-08, Claude)
+
+Merged your `docs/ELRS_LORA_SYNC_SPEC.md` (clean merge, zero conflicts — the new-file plan in
+§20a worked). It was high-value: it caught a structural bug in my chain.
+
+### 21a. What your spec fixed in my implementation
+1. **Stage ORDER was wrong.** Your §3 table (from the daemon's C++ symbols) gives
+   `dechirp → gray → de-interleave → de-whiten → Hamming → CRC`. I had
+   `… → Hamming → bytes → whiten(bytes)`. De-whitening sits **between de-interleave and Hamming**
+   and acts on the **bit** stream (`unwhiten_seeded(vector<unsigned char> bits, seed, flip)`),
+   not on bytes after FEC. Fixed: `dewhiten_bits()` + reordered `decode_payload()`, and I search
+   both whitening senses (your `flip`).
+2. **THE BIG ONE — I was missing the SFD.** Your `LORADetect` table has **both**
+   `n_upchirp_dets` **and** `n_downchirp_dets`, which means the reference tracks the standard LoRa
+   **2.25 down-chirp SFD** between the sync word and the payload. I had skipped only the 2 sync
+   symbols, so **every payload symbol was misaligned by 2.25 symbols** — that alone guaranteed the
+   CRC could never validate. Now the payload is re-demodulated from
+   `(preamble_end + 1 + 2 + sfd) × 128` samples, with `sfd ∈ {2.0, 2.25, 2.5}` searched.
+3. **`invert_iq` both ways** (your `LORADetect.invert_iq` is 0 or 1 — the reference tries both).
+4. Confirmed **CR is genuinely unknown** even in the firmware, so iterating 4/5–4/8 + CRC-deciding
+   is the right call, not a shortcut. `hamming74_decode` being named suggests 4/7 is real.
+
+### 21b. The result: still NULL, stated with the statistics
+87 payload symbol sets (14 bursts × invert_iq × 3 SFD values, two captures), **150,336 trials**:
+
+| | |
+|---|---|
+| raw CRC hits | **11** |
+| expected false accepts (trials / 2^14) | **9.18** |
+| distinct (uid, ver, opts) combos | **11** — i.e. every hit unique |
+| **corroborated (same uid+ver+opts on ≥2 bursts)** | **0** |
+
+11 hits where ~9 were expected by chance, every one distinct, none repeating ⇒ **these are CRC
+false-accepts, not a recovered link.** A genuine link would show the *same* `(uid4, uid5,
+ota_version, chain-options)` on many independent bursts.
+
+**This is exactly why `recover_from_bursts` requires corroboration.** Without that gate this run
+would have printed "recovered uid=a6f5, OTA v4" and it would have been wrong. Flagging it because
+it's the §3-honesty-contract failure mode we keep hitting: a CRC pass is not proof when you've
+spent 150k trials buying one.
+
+### 21c. Three live hypotheses, in my order of suspicion
+1. **No SYNC packets in the sample (most likely).** ELRS sends SYNC only periodically; at 150 Hz
+   almost every burst is **RC_DATA**, whose CRC mixes the **`ota_nonce`** we don't know — those are
+   *structurally unvalidatable* by this method. I sampled 14 bursts/capture out of **125–145
+   available**. Fixing this needs no chain change at all, just scale.
+2. **Payload symbol errors.** The CRC is all-or-nothing: one wrong symbol kills it. The *preamble*
+   is bin-exact (12× bin 17, no jitter) but payload symbols sit at lower effective SNR, and
+   `demodulate_symbols` applies a Hanning window and does no CFO/fractional-STO correction.
+3. **Chain still structurally incomplete** — interleaver geometry, implicit-header handling, or an
+   SX1280-vs-SX127x deviation beyond what the spec names.
+
+### 21d. Next (mine)
+1. **Scale to all ~400 bursts** across the three captures — tests hypothesis 1 with zero chain
+   changes. Needs the search sped up first (pure-python bit loops; prune on the type byte before
+   running the full chain).
+2. **RC_DATA + nonce sweep** — if the chain is right, an RC_DATA packet should CRC-validate under
+   *some* nonce; that would prove the chain even with no SYNC frame present, and the nonce space is
+   small enough to sweep.
+3. Only if both fail do I treat hypothesis 3 as primary and go back to the interleaver geometry.
+
+**@andeds, two concrete asks:**
+- Does the firmware reveal the **SYNC packet cadence** (how often ELRS emits SYNC vs RC_DATA)? That
+  directly sizes hypothesis 1 — if it's 1-in-100, 14 bursts was hopeless and ~400 is marginal.
+- Anything on **`nzeros`** (your `LORADetect.nzeros` = "LoRa CRC length 0 or 1 byte") — does it
+  shift the payload byte offsets? I'm not modelling it yet and it could be shifting my uid4/uid5
+  read by a byte.
+
+**Status unchanged and deliberate:** ELRS remains **FAMILY** in `protocol_catalog.py`. Frame-locked,
+mode known (SF7/812 kHz), sync word read off the air — but **no corroborated CRC-valid payload ⇒ no
+`net_id` ⇒ not IDENTIFIED.**
+
+— Claude

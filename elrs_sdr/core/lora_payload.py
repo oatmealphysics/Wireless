@@ -164,30 +164,82 @@ class ChainOpts:
     diag: int = 1
     order: str = "msb"
     whiten: bool = False
+    whiten_flip: bool = False      # the reference's `unwhiten_seeded(..., flip)`
+    whiten_seed: int = 0xFF
 
     def as_tuple(self) -> tuple:
         return (self.gray, self.offset, self.cr, self.half, self.diag,
-                self.order, self.whiten)
+                self.order, self.whiten, self.whiten_flip, self.whiten_seed)
+
+
+def _bits_of(codewords: list[int], cw_len: int) -> list[int]:
+    out: list[int] = []
+    for cw in codewords:
+        for b in range(cw_len - 1, -1, -1):
+            out.append((cw >> b) & 1)
+    return out
+
+
+def _regroup(bits: list[int], cw_len: int) -> list[int]:
+    out: list[int] = []
+    for i in range(0, len(bits) - cw_len + 1, cw_len):
+        cw = 0
+        for b in bits[i:i + cw_len]:
+            cw = (cw << 1) | b
+        out.append(cw)
+    return out
+
+
+def dewhiten_bits(bits: list[int], seed: int = 0xFF, flip: bool = False) -> list[int]:
+    """De-whiten a BIT stream — the reference's `unwhiten_seeded(bits, seed, flip)`.
+
+    Per `docs/ELRS_LORA_SYNC_SPEC.md` §3 the reference whitens at the **bit**
+    level, on the de-interleaved stream and BEFORE the Hamming decode, and it
+    tries both the normal and the `flip`ped sequence. (My first implementation
+    whitened *bytes* *after* Hamming — structurally wrong, which is one reason
+    the first on-air search returned 0/21888.)
+    """
+    out: list[int] = []
+    s = seed & 0xFF
+    for i, b in enumerate(bits):
+        k = (s >> 7) & 1 if flip else (s & 1)
+        out.append(b ^ k)
+        fb = ((s >> 7) ^ (s >> 5) ^ (s >> 4) ^ (s >> 3)) & 1   # x^8+x^6+x^5+x^4+1
+        s = ((s << 1) | fb) & 0xFF
+    return out
 
 
 def decode_payload(symbols: list[int], sf: int, opts: ChainOpts,
                    max_bytes: int = 16) -> bytes:
-    """Run symbols through the full payload chain under one option set."""
+    """Run symbols through the payload chain, in the REFERENCE's stage order.
+
+    Per `docs/ELRS_LORA_SYNC_SPEC.md` §3 (the detection daemon's C++ symbols):
+        dechirp -> gray -> de-interleave -> de-whiten(bits) -> Hamming -> CRC
+    Note de-whitening sits BETWEEN de-interleave and Hamming, and acts on bits.
+    """
     n = 1 << sf
     mapped = [gray_map((int(s) + opts.offset) % n, opts.gray) for s in symbols]
     cw_len = 4 + opts.cr
-    nibbles: list[int] = []
+
+    # 3. de-interleave every full block into codewords
+    codewords: list[int] = []
     for b in range(0, len(mapped) - cw_len + 1, cw_len):
-        block = mapped[b:b + cw_len]
-        for cw in deinterleave_block(block, sf, opts.cr, opts.diag):
-            nibbles.append(codeword_to_nibble(cw, opts.cr, opts.half))
-        if len(nibbles) >= max_bytes * 2:
+        codewords.extend(deinterleave_block(mapped[b:b + cw_len], sf,
+                                            opts.cr, opts.diag))
+        if len(codewords) >= max_bytes * 2 + 8:
             break
-    data = nibbles_to_bytes(nibbles, opts.order)
-    if opts.whiten and data:
-        w = lfsr_whitening(len(data))
-        data = bytes(d ^ k for d, k in zip(data, w))
-    return data[:max_bytes]
+    if not codewords:
+        return b""
+
+    # 4. de-whiten on the BIT stream (reference: unwhiten_seeded), then regroup
+    if opts.whiten:
+        bits = dewhiten_bits(_bits_of(codewords, cw_len),
+                             opts.whiten_seed, opts.whiten_flip)
+        codewords = _regroup(bits, cw_len)
+
+    # 5. Hamming/parity -> nibbles, 6. pack
+    nibbles = [codeword_to_nibble(cw, opts.cr, opts.half) for cw in codewords]
+    return nibbles_to_bytes(nibbles, opts.order)[:max_bytes]
 
 
 # --------------------------------------------------------------------------- #
@@ -254,11 +306,13 @@ def recover_sync(symbols: list[int], sf: int,
     """
     hits: list[SyncHit] = []
     trials = 0
-    for gray, off, cr, half, diag, order, whiten in product(
+    # whitening: off, or on with either sequence sense (the reference's `flip`)
+    whiten_modes = ((False, False), (True, False), (True, True))
+    for gray, off, cr, half, diag, order, (wh, wflip) in product(
             GRAY_MODES, SYMBOL_OFFSETS, crs, NIBBLE_HALVES,
-            DIAG_SENSES, BIT_ORDERS, (False, True)):
+            DIAG_SENSES, BIT_ORDERS, whiten_modes):
         opts = ChainOpts(gray=gray, offset=off, cr=cr, half=half,
-                         diag=diag, order=order, whiten=whiten)
+                         diag=diag, order=order, whiten=wh, whiten_flip=wflip)
         data = decode_payload(symbols, sf, opts)
         for is_full in (True, False):
             trials += 1
