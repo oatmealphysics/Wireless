@@ -1278,3 +1278,97 @@ ELRS stays **FAMILY**. Unchanged: PHY pinned (LoRa SF7 @ 812 kHz), demod frame-l
 sync word 0x12), gates hardened and now **validated against a true negative**. No per-link ID.
 
 — Claude
+
+---
+
+## 27. Signal presence RULED OUT (validated with controls) ⇒ the payload chain is now legitimately the suspect. Also retracting §26's "negative control" (2026-10-09, Claude)
+
+### 27a. ⚠️ Retracting §26b: the "controller-off" capture was NOT signal-free
+§26 framed `sync30_20261009_145802.complex8` as a clean negative control. **That is wrong.** Running
+the independently-validated SF7/812 kHz detector over its bursts:
+
+| capture | bursts tested | SF7 @ 812 kHz hits | mean score |
+|---|---|---|---|
+| `145802` ("controller off") | 120 | **116 (97%)** | 0.99 |
+| `152002` (controller on) | 120 | **115 (96%)** | 0.99 |
+
+Both captures are **full of ELRS LoRa SF7 @ 812 kHz**. So `145802` contains the link and cannot
+serve as a negative control, and the "pipeline makes no claim on empty air" result in §26b was
+measured on a capture that wasn't empty. The *gate* conclusions from §26 still hold (the
+independence gate did reject `uid=61f0 ×3` for identical `(nonce, fhss_index)`), but **not** the
+"validated against a true negative" claim. Retracted.
+
+**Operator note (hardware, not code):** the operator's own controller-off spectrum
+(`controller.off.test`, 15:19) *was* genuinely quiet — sole peak at **+0.00 MHz offset**, i.e. the
+B205 DC spike, AP-band 4.0 dB. That is self-consistent with the controller being **on at 14:58**
+(the `145802` capture), **off at 15:19** (the spectrum test), and **on at 15:20** (`152002`). Most
+likely the 14:58 capture simply had the controller on. (The other candidate — the drone's RX
+transmitting telemetry with no TX present — is unlikely, since an unsynced ELRS RX doesn't
+transmit.) Not something I can settle from the RF alone; flagging it rather than guessing.
+
+### 27b. The detector is sound — controls run, not assumed
+Before trusting a 96% hit rate I checked `scan_lora_modes` against negatives:
+
+| input | score | gate is 0.5 |
+|---|---|---|
+| pure complex Gaussian noise | 0.05 | rejected |
+| noise × 100 (amplitude only) | 0.03 | rejected |
+| CW tone @ +300 kHz | 0.09 | rejected |
+| 2-FSK burst (constant-envelope, **not** LoRa) | 0.05 | rejected |
+| **synthetic SF7/812 kHz chirp train** (positive control) | **1.00**, sf=7, bw=812k | ✅ |
+
+Every negative is ≤0.09; the positive control lands exactly on SF7/812 kHz. The detector
+discriminates, so the 96–97% is a real measurement.
+
+### 27c. The controller-ON scan: still 0 corroborated, and now that MEANS something
+`sync30_20261009_152002.complex8` (9.99986 MS/s, 30.0 s, controller on and linked):
+
+| | |
+|---|---|
+| auto SNR gate | 27.8 dB |
+| bursts / aligned payload sets | 1207 / **2250** |
+| expected in-window SYNC candidates | **~23** |
+| trials | 3,888,000 |
+| raw CRC hits | **3** (expected after plausibility gate ≈ 7.1) |
+| `uid=fb64 OTAv3 ×2` | **rejected** — identical `(nonce, fhss_index)` |
+| **corroborated** | **0** |
+
+3 observed vs ~7.1 expected ⇒ below chance, i.e. no signal in the CRC search.
+
+**⇒ Signal presence is now RULED OUT as the blocker.** The link is confirmed present and abundant
+(1207 bursts, 96% SF7 @ 812 kHz, score 0.99), the sampling is solved (~23 SYNC candidates vs the
+~3 we had in §25), and the recovery still finds nothing. **This is the inference I jumped to
+prematurely in §26 and retracted — it is now properly earned:** the problem is hypothesis 2
+(payload symbol errors) or hypothesis 3 (chain structurally incomplete).
+
+### 27d. Another real bug fixed: the DC spike was eating the burst finder
+Measured on both 30 s captures: the B205's **LO/DC spike is the GLOBAL FFT peak in ~65% of all
+frames** (4697–4881 of ~7500). A bare `argmax` therefore reported DC instead of the real emitter,
+and its noise skirts could even pass the 0.3–2 MHz "ELRS-width" gate as a fake burst. The
+operator's controller-off spectrum flagged the same thing independently (sole peak at +0.00 MHz).
+Fixed: `DC_GUARD_HZ = 100 kHz` blanked around DC in **both** `find_bursts` and
+`auto_snr_threshold` (the gate was otherwise being calibrated on the DC spike too).
+
+### 27e. 🎯 Next step — stop hunting captures, test the chain against a synthetic frame
+We no longer need more RF. The tight loop is:
+
+1. **Modulate a known ELRS SYNC packet** as SF7/812 kHz LoRa using our own
+   `core.lora.modulate_frame` / `bits_to_symbols` with a chosen `uid4`/`uid5` and OTA version.
+2. **Push it through the full receive chain** — `aligned_scan`'s preamble lock + de-rotation +
+   SFD skip, then `lora_payload.recover_sync`.
+3. **If it fails to recover a packet we generated ourselves, the chain is broken** — and we can fix
+   it entirely offline, with a known-correct answer to compare against, instead of searching 3.9M
+   combinations against unknown air data.
+
+That isolates hypothesis 3 from hypothesis 2 cleanly: a synthetic frame has *no* symbol errors, so
+a failure there is purely structural. Caveat to keep honest: our modulator shares
+`bits_to_symbols`/`symbols_to_bits` with the demod, so a round-trip that passes is only
+SELF-CONSISTENT — it proves the chain is internally coherent, not that it matches Semtech. But a
+round-trip that *fails* is decisive, and that's the cheap test to run first.
+
+### 27f. Status
+ELRS stays **FAMILY**. PHY pinned and now re-confirmed on a third capture at a different rate
+(SF7 @ 812 kHz, 96% of 120 bursts, controls run). Frame-locked. **No per-link ID**, and the
+remaining fault is in the payload chain, not the data.
+
+— Claude

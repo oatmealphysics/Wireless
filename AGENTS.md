@@ -10,10 +10,10 @@ future agent) MUST read this before making changes. The rolling handoff logs
 
 ## 1. The mission
 
-Passively **detect, identify, and demodulate ExpressLRS (ELRS) drone links** over the air with a
-software-defined radio (Ettus B205mini / B210). The goal is a **general passive ELRS air-state
+Passively **detect, identify, and demodulate all drone links** over the air with a
+software-defined radio (Ettus B205mini / B210). The goal is a **general passive protocol-agnostic air-state
 detector** — it tells you *what is in the air* (link type, version, rate, identity, channel, hop
-behavior) for **whatever ELRS link is present**, not just one specific aircraft. **The detector is
+behavior) for **whatever drone protocol link is present**, not just one specific aircraft. **The detector is
 surfaced in the WaveRaider web-UI** (see the delivery-surface section below) — the UI is how the
 operator actually sees the result, so a detection that can't be shown there isn't finished.
 
@@ -21,16 +21,16 @@ operator actually sees the result, so a detection that can't be shown there isn'
 The detector is **not** an end in itself: the product the operator asked for is a **WaveRaider
 web-UI that shows nearby drones, their protocols, and their identifiers**, driven by the operator's
 **B205mini** (WaveRaider ships configured for a bladeRF; the B205/UHD path in `waveraider/` is ours).
-The air-state classifier (`elrs_sdr/core/identify.py`) is the engine; `waveraider/` (Monitor →
+The air-state classifier (`elrs_sdr/core/identify.py`) is the engine for ELRS; `waveraider/` (Monitor →
 ELRS Find, the spectrum/overlay) is the surface that presents it. A detector improvement that
 can't be surfaced in that UI isn't finished. **ELRS is the current focus, not the ceiling:** the
 broader goal is "nearby *drones*," so shared scanner/overlay code must not bake in ELRS-only
 assumptions — leave room for the other 2.4 GHz drone links WaveRaider also targets (DJI OcuSync
-*presence*, Open Drone ID) rather than making them require a rewrite.
+*presence*, Open Drone ID, etc...) rather than making them require a rewrite.
 
 ### ⚠️ The #1 design goal — GENERAL, not single-target (andeds, 2026-10-08 — REMEMBER THIS)
-The identifier must work against **ALL drones, ALL ELRS versions, ALL UIDs, ALL rates/modes** —
-**not just the one Tinyhawk we're testing against.** It is a *general* passive ELRS air-state
+The identifier must work against **ALL drones, ALL ELRS versions, All other common protools, ALL UIDs, ALL rates/modes** —
+**not just the one Tinyhawk we're testing against.** It is a *general* passive drone protocol air-state
 detector, not a single-target finder. Concretely:
 - **Never hardcode** one UID, one OTA version, one rate, or one target's sync word.
 - **Measure and classify from the RF** — iterate all known OTA versions (v2–v6), all LoRa rates +

@@ -49,6 +49,7 @@ CAPTURES = [
 SF, BW, N = 7, 812_000, 128
 SFD_CANDIDATES = (2.0, 2.25, 2.5)   # the LoRa SFD is nominally 2.25 symbols
 MIN_PREAMBLE = 8                    # symbols; real locks run 10-13 (notes §19a)
+DC_GUARD_HZ = 100_000               # blank +-100 kHz around DC (B205 LO spike)
 
 
 def open_capture(path):
@@ -96,11 +97,14 @@ def auto_snr_threshold(mm, sr, n_complex, sample_s=2.0, pct=88.0, floor_db=25.0)
     """
     nfft, step = 2048, int(sr * 0.4e-3)
     iq = grab(mm, 0, min(int(sr * sample_s), n_complex))
+    mid, guard = nfft // 2, max(1, int(DC_GUARD_HZ / sr * nfft))
     snrs = []
     for k in range(max(0, (len(iq) - nfft) // step)):
         seg = iq[k * step:k * step + nfft]
         S = np.abs(np.fft.fftshift(np.fft.fft(seg * np.hanning(nfft)))) ** 2
-        snrs.append(10 * np.log10(S.max() / (np.median(S) + 1e-30)))
+        med = np.median(S) + 1e-30
+        S[mid - guard: mid + guard + 1] = 0.0          # same DC guard as find_bursts
+        snrs.append(10 * np.log10(S.max() / med))
     if not snrs:
         return floor_db
     return float(max(floor_db, np.percentile(snrs, pct)))
@@ -112,12 +116,20 @@ def find_bursts(mm, sr, n_complex, snr_min=45.0):
     nfft, step = 2048, int(sr * 0.4e-3)
     out, last = [], -1
     chunk = int(sr * 2.0)
+    # Blank a guard band around DC before the peak search. Measured on both 30 s
+    # captures: the B205's LO/DC spike is the GLOBAL FFT peak in ~65% of frames
+    # (4697-4881 of ~7500), so a bare argmax reports DC rather than the real
+    # emitter, and its noise skirts can even sneak past the 0.3-2 MHz bandwidth
+    # gate as a fake "ELRS-width" burst. The operator's own controller-off
+    # spectrum flagged the same thing (sole peak at +0.00 MHz offset).
+    mid, guard = nfft // 2, max(1, int(DC_GUARD_HZ / sr * nfft))
     for base in range(0, n_complex, chunk):
         iq = grab(mm, base, min(chunk + nfft, n_complex - base))
         for k in range(max(0, (len(iq) - nfft) // step)):
             seg = iq[k * step:k * step + nfft]
             S = np.abs(np.fft.fftshift(np.fft.fft(seg * np.hanning(nfft)))) ** 2
             med = np.median(S) + 1e-30
+            S[mid - guard: mid + guard + 1] = 0.0      # exclude DC/LO spike
             pk = int(np.argmax(S))
             if 10 * np.log10(S[pk] / med) < snr_min:
                 continue
