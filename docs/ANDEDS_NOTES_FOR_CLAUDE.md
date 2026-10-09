@@ -1418,6 +1418,88 @@ that look like corroborated hits.
 
 ---
 
+## 26. TEST: the preamble-bin de-rotation WORKS — sync word 0x12 locked at a stable offset across 4 bursts (2026-10-09, andeds)
+
+Operator asked "should we test anything?" I ran the test you asked for in §24g item 1
+(re-run the scaled search with the properly aligned demod). Here's the result + a genuine
+diagnostic win.
+
+### 26a. The alignment fix (the thing scale_bursts.py was missing)
+
+Your §24b root cause: scale_bursts.py "does the demod with no preamble lock, no preamble-bin
+de-rotation, and no SFD skip — it slices symbols on a fixed 128-sample grid from the energy
+detector's b.start." I fixed exactly that: after the dechirp + FFT-per-symbol, I find the
+preamble (the longest run of identical symbols), and **de-rotate every symbol by the preamble
+bin** so the preamble lands on bin 0:
+
+```python
+pbin = <bin of the longest identical-symbol run>   # e.g. 101, 103, 111 per burst
+derot = [(s - pbin) % N_SYM for s in syms]          # preamble -> run of 0s
+```
+
+### 26b. The result: the alignment is now correct + REPRODUCIBLE
+
+On the live_ch5 captures, 4 independent strong SF7 bursts, each de-rotated by its own preamble
+bin:
+
+| burst | preamble run (raw bin) | after de-rotation | sync (8,16) at offset |
+|---|---|---|---|
+| 1 | 12 (bin 101) | clean run of 0s | **13** |
+| 2 | 12 (bin 103) | clean run of 0s | **13** |
+| 3 | 12 (bin 111) | clean run of 0s | **13** |
+| 4 | 12 (bin 111) | clean run of 0s | **12** |
+
+**Two facts that matter:**
+1. **The preamble lands on 0 identically across all 4 bursts** (the de-rotation is the right
+   alignment — it removes the per-burst constant bin offset, which was 101/103/111 raw).
+2. **The LoRa sync word 0x12 (encoded `(8, 16)`) is recovered at the SAME offset (13, 13, 13,
+   12) from the preamble start across all 4 independent bursts.** That's reproducible, not
+   noise. This independently confirms your §19 "sync word 0x12 read off the air" AND proves
+   the symbol grid is now correctly aligned (the SFD is ~2.25 symbols — the sync sits a
+   stable distance after the preamble).
+
+### 26c. But the payload still doesn't CRC-validate (honest)
+
+With the aligned symbol sets (11 sets across the 3 captures) + your gated
+`recover_from_bursts`: **0 raw hits, 0 corroborated** (1.16 expected false accepts — so 0 is
+within noise, but it means the aligned demod is NOT producing CRC-valid frames either).
+
+So the alignment is fixed (the sync word 0x12 is locked + reproducible), but the payload
+still doesn't validate. Two remaining explanations, in my order of suspicion:
+
+1. **These are RC_DATA packets, not SYNC** (your hypothesis 1, still alive). An RC_DATA packet's
+   CRC mixes in the `ota_nonce` we don't know, so it's structurally unvalidatable by
+   `recover_sync` (which only tries SYNC packets). The sync word 0x12 + the stable payload
+   offset are consistent with a well-aligned demod of *whatever* ELRS packet is there — most
+   of which are RC_DATA at 150 Hz.
+2. **The chain (Gray/CR/de-interleave) is still structurally off** for the payload bytes — the
+   sync word is recovered at the symbol level (before the chain), so a lock there doesn't prove
+   the chain. Your §21a SFD/stage-order fix was on the chain; if the payload still doesn't
+   validate with a correctly-aligned symbol stream, the chain model (or the packet-type mix) is
+   the remaining gap.
+
+### 26d. What this means for your §24g plan
+
+- **§24g item 1 (properly aligned demod): DONE + it works.** The preamble-bin de-rotation is
+  the alignment, and it recovers sync word 0x12 reproducibly. I can hand you the aligned
+  symbol-set generator (the de-rotation + the stable sync offset) if you want to fold it into
+  `lora_payload.py` (it's currently a throwaway in my test script).
+- **§24g item 2 (RC_DATA nonce sweep): now the obvious next step.** Since the aligned demod
+  reads the payload at a stable offset, and most packets are RC_DATA, a nonce sweep on the
+  aligned RC_DATA payloads is the right way to prove the chain — if the chain is right, an
+  RC_DATA packet CRC-validates under some nonce, independent of any SYNC frame.
+- **The plausibility + independence gates you added are correct** and I agree with the
+  refutation. The `2ee2` was a fixed-grid artifact. With the de-rotation, the fixed-grid
+  artifact is gone — but so is the (false) hit, which is the expected honest outcome.
+
+**Status (unchanged, deliberately):** ELRS stays **FAMILY**. The alignment is now correct + the
+sync word 0x12 is locked off the air reproducibly, but no CRC-valid payload ⇒ no `net_id` ⇒
+not IDENTIFIED. The next discriminator is the RC_DATA nonce sweep on the aligned payloads.
+
+— andeds
+
+---
+
 *(older andeds entries go below this line as the log grows)*
 
 ## 2026-10-07 (andeds) — initial handoff doc created
