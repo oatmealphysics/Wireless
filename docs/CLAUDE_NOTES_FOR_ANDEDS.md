@@ -784,3 +784,95 @@ have to a spec for step 3/4, and it would save me reverse-engineering the layout
 `identify.classify_lora` (same latent srate==BW bug).
 
 — Claude
+
+---
+
+## 19. DEMOD IS FRAME-LOCKED: preamble + LoRa sync word 0x12 recovered off the air. The remaining gap is `symbols_to_bits` (2026-10-08, Claude)
+
+Progress on §18. Three findings, one of them a concrete bug in `core/lora.py`.
+
+### 19a. VALIDATED: preamble lock works on real bursts
+Dechirping the live bursts at **SF7 / BW 812 kHz** (resample to 812 kHz ⇒ exactly 128 samples/
+symbol, then `core.lora.demodulate_symbols`, `invert_iq=False`) yields a clean **run of 10–13
+identical symbols** on essentially every burst — the LoRa preamble. Tested on 14 bursts from
+`live_ch5_20261008_204114`, snr 45–53 dB.
+
+The **preamble bin differs per burst** (60, 42, 122, 17, 28, 10, 75, 21, 61, 77, 72, 125, 12…) and
+that is CORRECT, not noise: the preamble bin is the residual timing/frequency offset, which differs
+per hop/channel. Use it as the alignment reference and read everything else *relative* to it.
+
+### 19b. VALIDATED: the LoRa sync word is 0x12 (so the per-link ID is NOT in it)
+Taking the two symbols after the preamble, **relative to the preamble bin**, across 12 bursts:
+
+```
+(8,16) (9,17) (9,17) (9,17) (9,17) (8,17) (8,17) (8,16) (9,17) (9,17) (10,18) (8,16)
+```
+
+Rock-solid ≈(8,16) within ±2 quantization/CFO jitter, while symbols 3–5 vary freely (payload).
+Standard LoRa encodes the sync word as `((sw>>4)<<3, (sw&0xF)<<3)`, so (8,16) ⇒ **sync word =
+0x12** — the stock SX12xx "private network" value.
+
+**Two consequences:**
+1. **Our demod chain is correct and frame-locked** — we are reading real LoRa frame structure off
+   the air (preamble → sync → payload), reproducibly, on the operator's own B205 capture.
+2. **The ELRS per-link identity is NOT in the LoRa sync word.** It's the generic 0x12. So the
+   air-recovery target is the **PAYLOAD**, specifically an ELRS **SYNC packet**, which is where
+   the UID bytes actually live (next section). This supersedes my §18 step 3 ("read the UID-seeded
+   sync word") — for ELRS *LoRa* that plan was wrong; it's a FLRC concept.
+
+### 19c. The recovery chain that WILL work (and why there's no chicken-and-egg)
+From `core/ota.py`:
+```
+OtaCrcInitializer = (UID[4] << 8 | UID[5]) ^ (OTA_VERSION_ID << 8)      # ota.py:18, ota_uid_crc_init
+_decode_sync(raw):  fhssIndex, nonce, rfRateEnum, [bits], UID4=raw[4], UID5=raw[5]
+```
+An ELRS **SYNC packet carries uid4 and uid5 in its own payload**, and the CRC seed is derived from
+exactly those two bytes (+ the OTA version). So:
+1. demod a burst to payload bytes,
+2. read candidate `uid4`,`uid5` from payload positions 4,5,
+3. for `v` in OTA v2..v6: `crc_init = (uid4<<8|uid5) ^ (v<<8)`,
+4. `ota.validate_crc(...)`.
+
+**A passing CRC confirms uid4:uid5 AND the OTA version simultaneously, with no prior UID** — the
+CRC-gated discriminator AGENTS.md §3 asks for, and it dissolves the chicken-and-egg completely.
+That is the per-link identifier (the reference's `raw_net_id`).
+
+### 19d. ⚠️ THE BLOCKER, now precisely located: `core/lora.symbols_to_bits` is a stub
+```python
+# core/lora.py:194  symbols_to_bits(symbols, sf)
+bits_per_sym = 2 if sf <= 6 else 1
+...
+raw = (symbols >> (sf - 1)) & 1        # SF>=7: ONE bit per symbol (the MSB)
+```
+A LoRa SF7 symbol carries **7 bits**, not 1. This takes the MSB only and **discards 6 of every 7
+bits**, so it cannot reconstruct an ELRS packet no matter how good the symbol recovery is. Its own
+docstring admits it ("first-order implementation ... MUST be validated against a capture"), and
+`bits_to_bytes` carries the same caveat. This is the single thing standing between us and
+`net_id`.
+
+**What's actually required** (the standard LoRa payload chain, none of which exists yet):
+1. **Gray decode** per symbol (`sym ^= sym >> 1`, or its inverse — try both, CRC decides).
+2. **De-interleave** — the diagonal interleaver over an `SF × (4+CR)` block.
+3. **De-whiten** — the LFSR whitening sequence.
+4. **Hamming FEC decode** — CR 4/5…4/8 (ELRS 2.4 GHz SF7's CR is an unknown; iterate it).
+5. ELRS uses **implicit header** mode and supplies its own CRC, so no LoRa explicit header to parse.
+
+This is exactly the layer AGENTS.md §3 flags as "the single layer that can't be proven on a desk
+(Semtech-proprietary bit-mapping, BPSK differencing, interleaving)". **The good news: we now have
+the perfect validator.** The ELRS CRC14/16 over a recovered uid4/uid5 is a strong check (~1/16384
+false-accept per trial), so we can legitimately *search* the unknowns (gray direction, CR,
+whitening variant, bit order) and let the CRC pick the right combination — "measure, don't assume"
+applied to the decoder itself.
+
+### 19e. Status + what I'm doing next
+- ELRS stays at **FAMILY** in `protocol_catalog.py`. We now know the exact mode (SF7/812 kHz) and
+  are frame-locked, but **no CRC-valid payload ⇒ no `net_id` ⇒ not IDENTIFIED.** Not overclaiming.
+- **Next (mine):** implement the LoRa payload chain in `core/lora.py` (gray/de-interleave/
+  de-whiten/Hamming), CRC-searched over CR + the mapping unknowns, then wire `net_id` through
+  `detect.py`.
+- **@andeds — this is where your firmware notes would save me the most time:** the reference's
+  ELRS **LoRa** core, specifically the **coding rate** it uses for SF7 @ 812 kHz and its
+  de-interleave/whitening constants. Any `.fc64` template or `parse_sync_0` detail on the LoRa
+  (not FLRC) path. If the firmware names the CR, that removes the biggest unknown from the search.
+
+— Claude
