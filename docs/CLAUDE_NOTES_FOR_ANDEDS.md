@@ -1205,3 +1205,76 @@ corroborated SYNC, *then* hypothesis 2/3 (payload symbol errors / chain structur
 becomes the prime suspect and I'd go back into the interleaver geometry.
 
 — Claude
+
+---
+
+## 26. ⚠️ RETRACTION: the 30 s capture was taken with the CONTROLLER OFF — it's a negative control, not a failed recovery (2026-10-09, Claude)
+
+### 26a. The correction
+The operator confirmed **the controller was not powered on** during
+`captures/sync30_20261009_145802.complex8`. So that capture contains **no ELRS link at all**.
+
+**I therefore RETRACT the conclusion I was about to draw from it.** I had the sampling problem
+solved (~18.8 SYNC candidates available after the SNR fix below) and read the 0-corroborated result
+as "hypothesis 1 is ruled out, so the payload chain must be structurally broken." **That inference
+is invalid** — you cannot test a decoder on a capture with no transmitter in it. Hypothesis 1 (too
+few SYNC packets) is **still open**, and nothing here indicts the chain.
+
+The 1001 "bursts" that run found were Wi-Fi, CW spurs and other ambient 2.4 GHz traffic — not ELRS.
+
+### 26b. What it IS good for: a clean negative control (genuinely useful)
+A known-signal-free capture is exactly the false-positive test the honesty contract wants, and the
+pipeline passes it:
+
+| | |
+|---|---|
+| trials on signal-free data | **3,124,224** |
+| raw CRC hits | **5** |
+| expected after the plausibility gate (190.7 × ~3%) | **~5.7** |
+| **corroborated** | **0** |
+
+5 observed vs ~5.7 expected ⇒ indistinguishable from chance. **On a capture with no link, the
+pipeline makes no claim.** That's the correct behaviour and it's now measured, not asserted.
+
+**The independence gate earned its keep again, harder than with `2ee2`:** this run produced
+`uid=61f0 OTAv3` **three times**, and all three had **identical `(nonce, fhss_index)`**
+(`rejected_identical_state: 3`). Without §24's gate it would have reported "uid 61f0, corroborated
+×3" — a *more* convincing false claim than `2ee2` — **on a capture containing no ELRS link at all.**
+Three agreeing hits on empty air is the strongest argument yet for keeping that gate.
+
+### 26c. What still stands from the run (independent of the controller)
+1. **The USB fix holds at 10 MS/s.** Measured **9.99988 MS/s** over 30 s (99.999% of requested), no
+   stall note. 10 MS/s was the rate that collapsed before the recv-ring + `_stop_stream()` fix.
+2. **A real bug found + fixed in my own scanner (`aligned_scan.py`, commit `1f9c2cc`):** the burst
+   gate was a fixed 45 dB tuned on the 5 MS/s captures (link at 48–58 dB). With `nfft` fixed,
+   doubling the sample rate doubles the FFT bin width (2.44 → 4.88 kHz), so the same burst scores
+   several dB lower — at 10 MS/s it lands at ~40–45 dB. Measured on the first 4 s:
+   `snr>40 → 573 bursts after the bandwidth gate; snr>45 → 3`. **The default kept 3 of 573** (~85%
+   loss), which is why the first pass found 83 bursts where the geometry predicts ~562.
+   `auto_snr_threshold()` now derives the gate from each capture's own frame-SNR distribution (88th
+   percentile, floored at 25 dB). **This bug would have crippled the real capture too** — worth
+   having found it on a throwaway.
+3. **1.2 GB captures now memmap-stream** instead of needing ~3.6 GB of RAM.
+
+### 26d. What's needed next — the same capture, controller ON
+No code change required. Re-run the §25d spec with the link actually transmitting:
+
+```sh
+python3 -m elrs_sdr capture --freq 2405400000 --srate 10000000 --gain 35 \
+  --samples 300000000 --out captures/sync30_$(date +%Y%m%d_%H%M%S).complex8
+python3 aligned_scan.py captures/sync30_<new>.complex8      # snr gate is auto now
+```
+Controller **on and linked** to the drone, 1–2 m from the B205. Expect ~**18** in-window SYNC
+candidates at 10 MS/s / 30 s. Sanity check before the long run — the two should differ clearly:
+`python3 -m elrs_sdr spectrum --freq 2405400000 --srate 10000000 --gain 35` with the controller off,
+then on.
+
+**Then the result means something:** with ~18 SYNC candidates and a transmitting link, a still-zero
+corroborated outcome *would* legitimately point at hypothesis 2 (payload symbol errors) or 3 (chain
+structurally incomplete) — which is the inference I jumped to prematurely here.
+
+### 26e. Status
+ELRS stays **FAMILY**. Unchanged: PHY pinned (LoRa SF7 @ 812 kHz), demod frame-locked (preamble +
+sync word 0x12), gates hardened and now **validated against a true negative**. No per-link ID.
+
+— Claude
