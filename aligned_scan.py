@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from elrs_sdr import positivedet as _pd                      # noqa: E402
 from elrs_sdr.core import lora_payload as _lp                 # noqa: E402
+from elrs_sdr.core import lora_sync as _ls                    # noqa: E402
 from elrs_sdr.core.lora import LoRaParams, demodulate_symbols  # noqa: E402
 from elrs_sdr.radio import read_capture_meta                   # noqa: E402
 
@@ -158,8 +159,23 @@ def longest_run(sym, tol=1):
     return best
 
 
-def aligned_payload_sets(mm, sr, bursts, n_complex):
-    """For each burst: preamble-lock, de-rotate, skip sync+SFD, return payload symbols."""
+def aligned_payload_sets(mm, sr, bursts, n_complex, frac_delays=None):
+    """For each burst: preamble-lock, de-rotate, skip sync+SFD, return payload symbols.
+
+    `frac_delays` is the sub-chip timing grid from `core.lora_sync`. It exists
+    because the alignment above is INTEGER-only: `find_bursts` quantises each
+    start to its 0.4 ms FFT hop and the preamble lock resolves whole symbols, so
+    the sub-chip remainder was never removed. `inject_timing.py` measured what
+    that costs on a noise-free synthetic frame with a perfect symbol boundary:
+    100% symbol accuracy up to 0.31 chips of offset, 35% at 0.5, and 0% beyond
+    0.56 -- only 6 of 16 offsets decoded. That is exactly the SNR-independent
+    ~5/12 plateau `inject_sweep.py` saw from 8 dB all the way to 45 dB.
+    `lora_sync.selftest()` shows this 4-point grid takes that 8/16 -> 16/16.
+
+    Pass `frac_delays=(0.0,)` to reproduce the old integer-only behaviour.
+    """
+    if frac_delays is None:
+        frac_delays = _ls.FRAC_DELAYS
     sets = []
     for a, cen in bursts:
         s0 = max(0, a - int(sr * 0.0012))
@@ -178,14 +194,28 @@ def aligned_payload_sets(mm, sr, bursts, n_complex):
             if L < MIN_PREAMBLE:
                 continue                      # no preamble lock on this polarity
             pre = int(np.median(sym[i0:i1 + 1]))
+            # The preamble lock is integer-resolution, which is all IT needs;
+            # the sub-chip remainder is what destroys the PAYLOAD. It is not
+            # estimable from a model we could derive, so a small grid is
+            # searched and the ELRS CRC picks the winner.
+            #
+            # Do NOT also de-rotate by the preamble's fractional bin here. That
+            # was tried twice and measured worse both times (8/16 -> 6/16 in
+            # isolation; 6/12 -> 2/12 frames recovered in this pipeline),
+            # because a sub-chip delay on a chirp ALSO appears as a fractional
+            # bin shift. The two are entangled, so removing one as "frequency"
+            # breaks the premise of the timing grid. See core/lora_sync.py.
+            delayed = [(d, _ls.frac_delay(rs, -d) if d else rs)
+                       for d in frac_delays]
             for sfd in SFD_CANDIDATES:
                 start = int(round((i1 + 1 + 2 + sfd) * N))
                 if start + 6 * N > len(rs):
                     continue
-                psym = demodulate_symbols(rs, p, start,
-                                          min((len(rs) - start) // N, 40))
-                if len(psym) >= 10:
-                    sets.append([(int(v) - pre) % (1 << SF) for v in psym])
+                for _d, rsd in delayed:
+                    psym = demodulate_symbols(rsd, p, start,
+                                              min((len(rsd) - start) // N, 40))
+                    if len(psym) >= 10:
+                        sets.append([(int(v) - pre) % (1 << SF) for v in psym])
             break                             # one polarity is enough once locked
     return sets
 

@@ -1454,3 +1454,222 @@ ELRS stays **FAMILY**. New: the chain is reference-backed and round-trip validat
 **no per-link ID** — not claiming one.
 
 — Claude
+
+---
+
+## §29. The §28f injection test RAN — the receive path is sound, and it found two real bugs
+*(Claude, 2026-10-09, laptop `borealis`, operator present with the controller powered ON)*
+
+I ran the test I proposed in §28f. It passed, and building it exposed two genuine defects that no
+previous test could see. Four new files, all tracked:
+
+| file | what it is |
+|---|---|
+| `inject_test.py` | builds a known ELRS SYNC frame → IQ → noise → a `.complex8` byte-identical to a B205 capture, then runs the **unmodified** receive path over it, stage by stage |
+| `inject_sweep.py` | the same, swept over SNR, to find the sensitivity floor |
+| `inject_timing.py` | isolates sub-chip timing as a variable, noise-free |
+| `elrs_sdr/core/lora_sync.py` | the sub-chip timing grid that came out of it (+ a refuted idea, kept documented) |
+
+**TX guardrail:** these synthesise IQ in memory and to a scratch file only. Nothing imports the TX
+side of `radio.py`; the modulator is local to `inject_test.py` precisely so it stays test
+scaffolding and not a transmitter. AGENTS.md §2 holds.
+
+### 29a. Headline: the path recovers a known SYNC packet end-to-end, down to 8 dB
+`[PASS] end-to-end: the known ELRS SYNC packet was recovered through the unmodified receive path.`
+`find_bursts` → preamble lock → de-rotate → SFD skip → dechirp → `lora_ref.decode_payload` →
+ELRS CRC → the §24 gates, all unmodified, recovered `net_id=2ee2` with **advancing fhss/nonce**
+(7/13, 14/26, 21/39, 35/65, 42/78 — so the independence gate passed on merit, not by luck).
+
+The SNR sweep puts the floor at **8 dB** injected SNR. Real bursts measure 40–46 dB frame-SNR at
+10 MS/s (§25). **SNR is therefore eliminated** as the reason real air yields nothing — by about
+32 dB of margin. So is burst detection, and so is the preamble lock (see 29d).
+
+### 29b. Bug 1 (mine, found by measurement): no sub-chip timing recovery
+`inject_timing.py`, noise-free, perfect integer symbol boundary, swept sub-chip delay only:
+
+```
+delay 0.00–0.31 chips -> 100% symbol accuracy, CRC PASS
+delay 0.375           ->  70%   fail
+delay 0.50            ->  35%   fail
+delay >= 0.5625       ->   0%   fail        (only 6 of 16 offsets decoded)
+```
+
+That is a **deterministic** defect, and it matches the SNR-*independent* ~5/12 frame plateau in the
+sweep (identical from 8 dB to 45 dB — noise cannot do that). Cause: `find_bursts` quantises each
+burst start to its **0.4 ms** FFT hop, and `aligned_payload_sets` then recovered only an *integer*
+symbol boundary plus an *integer* bin de-rotation. The sub-chip remainder was never removed.
+
+Fix: `core/lora_sync.FRAC_DELAYS` — a 4-point sub-chip delay grid, searched like the existing 3 SFD
+candidates and 2 IQ polarities, with the ELRS CRC as arbiter. `lora_sync.selftest()` takes
+symbol-exact offsets from **8/16 → 16/16**. In the real pipeline it lifted raw hits **+60%** (5→8).
+
+**I did not estimate the offset, deliberately.** I tried, twice, and both attempts measured *worse*:
+
+1. de-rotating by the preamble's fractional bin: symbol-exact 8/16 → **6/16**;
+2. the same inside the full pipeline: frames recovered 6/12 → **2/12**, raw hits 8 → 3.
+
+Reason: a sub-chip *delay* on a chirp also appears as a fractional *bin* shift, so that quantity is
+a mixture of the two impairments, not the frequency one alone. Removing it as if it were pure
+frequency breaks the premise the timing grid rests on. A direct two-axis grid search settled it —
+a **time** correction reaches 100% at every offset; the best **frequency** correction stalls at 67%
+at τ=0.5. `estimate_fine_offset()` is kept, marked REFUTED, diagnostic-only. Please don't re-enable
+it without beating those numbers.
+
+### 29c. Bug 2 (mine, and the more serious one): the Hamming data bits were in the wrong place
+`hamming_decode_nibble` returned `_rev4(cw & 0x0F)` — the codeword integer's **low** four bits.
+But `deinterleave_block` packs each codeword **MSB-first**, so `codeword[0..3]` — the data bits —
+are the integer's **high** four bits. The low four bits are the **parity** bits p0..p3 for every
+cr ≥ 2. *We were feeding parity into the payload and discarding the data.*
+
+It survived `selftest_roundtrip()` because `hamming_encode_nibble` made the mirror-image mistake
+(`_rev4(nib)`, parity left zero), so the pair round-tripped perfectly while matching **neither the
+reference nor the air**. This is exactly the failure AGENTS.md §3's "SELF-CONSISTENT is not
+VALIDATED" rule exists to catch, and it caught it — the §28d round-trip was labelled
+SELF-CONSISTENT, and that label turned out to be load-bearing. @andeds: this is the strongest
+argument yet for keeping that labelling discipline.
+
+Both functions are now exact ports of `lib/hamming_{enc,dec}_impl.cc`, verified against the fetched
+source, with real parity:
+
+```
+p0 = d3^d2^d1   p1 = d2^d1^d0   p2 = d3^d2^d0   p3 = d3^d1^d0
+cr>=2:  (d3<<7|d2<<6|d1<<5|d0<<4|p0<<3|p1<<2|p2<<1|p3) >> (4-cr)
+cr==1:  p4 = d0^d1^d2^d3;  d3<<4|d2<<3|d1<<2|d0<<1|p4
+syndrome s0=c0^c1^c2^c4  s1=c1^c2^c3^c5  s2=c0^c1^c3^c6
+```
+
+With the data bits in the right place the parity became usable, so single-error correction is in as
+well: `selftest()` now repairs **240/240** one-bit errors at cr 4/7 and 4/8, where it previously
+repaired **0** (one bad symbol used to kill an entire frame).
+
+### 29d. What this rules OUT for the real-air zero
+A per-burst probe of the synthetic capture (`runlen`, `i0`, `i1`, `pre` per burst) showed **12/12
+injected frames lock the preamble**, runlen 11–12. The "NO LOCK" rows are spurious detector
+re-triggers at +4.8 ms, not frames. So:
+
+- burst detection — **not the problem** (100% recall)
+- preamble lock — **not the problem** (12/12)
+- SNR — **not the problem** (32 dB of margin)
+- payload algebra — **not the problem** (round-trips, and now reference-exact)
+- sub-chip timing — **was** a problem, now fixed and validated
+- Hamming bit positions — **was** a problem, now fixed and validated
+
+### 29e. Fresh capture, controller confirmed ON by the operator
+`captures/ctrlon_20261009_155306.complex8` — 20 s, 10.00005 MS/s measured, 2405.4 MHz, 200 M
+samples, **zero USB drops** (the `num_recv_frames` + `_stop_stream` fix holding at 10 MS/s).
+
+The link is unambiguously there and the FAMILY-level identification is rock solid:
+
+```
+788 bursts; LoRa-mode vote over the 80 strongest:
+   SF7 @ 812 kHz : 78/80      <- mean score 1.000, max 1.000
+   SF9 @ 1625 kHz : 1/80
+   SF6 @ 812 kHz : 1/80
+```
+
+Scan results on it, with the delay grid (pre-Hamming-fix): 6280 aligned payload sets, 401,920
+trials, **0 raw hits** against a 0.74 expected-chance budget. The older `sync30_152002` capture with
+the grid gave 1 raw hit against a 1.06 budget — i.e. exactly chance, 0 corroborated.
+
+### 29f. Where that leaves it
+ELRS stays at **FAMILY**, `link_id=None`. No per-link ID recovered, and I'm not claiming one.
+
+But the hypothesis space is now genuinely small, because the receive path is no longer a suspect —
+it is *validated against a known answer*, end to end, at 32 dB of SNR margin. The two defects found
+were both in the payload chain, both were invisible to every self-consistent test, and both are now
+fixed and measured. The remaining live candidate is the one §28f predicted: **an SX1280-vs-SX127x
+PHY deviation**, since `lora_ref` is a port of a reference that models the **SX127x**. ELRS 2.4 GHz
+runs the **SX1280**, a different silicon generation.
+
+@andeds — the concrete ask, unchanged from §28f but now much better motivated: the reference C-UAS
+SDR firmware's own LoRa core (`parse_sync_0`, the `.fc64` templates) is the comparison target for
+the interleaver and the whitening seed. If the SX1280 differs from the SX127x in either, that is
+the last gap. Everything upstream of it is now proven on a known-correct answer.
+
+— Claude
+
+---
+
+## §30. ANSWERED: why the payload never decodes — ELRS 2.4 uses `CR_LI_4_8`, an undocumented SX1280 mode
+*(Claude, 2026-10-09 — this supersedes the "@andeds please investigate" ask at the end of §29f)*
+
+I don't need andeds to chase the SX1280 deviation: I found it, and it is **VALIDATED against the
+ELRS source**, not inferred. From `ExpressLRS/src/src/common.cpp`, the ISM_2400 air-rate table:
+
+| rate | BW | SF | **coding rate** | PreambleLen | payload |
+|---|---|---|---|---|---|
+| 250 Hz (idx 6) | `BW_0800` | `SF6` | **`SX1280_LORA_CR_LI_4_8`** | 14 | `OTA4_PACKET_SIZE` |
+| **150 Hz (idx 7)** | **`BW_0800`** | **`SF7`** | **`SX1280_LORA_CR_LI_4_8`** | **12** | `OTA4_PACKET_SIZE` |
+
+Three independent confirmations that the 150 Hz row IS our link:
+1. **SF7 @ 812 kHz** — measured, 78/80 bursts, score 1.000 (§29e).
+2. **PreambleLen 12** — our preamble lock measures runlen **11–13** (§19a, and 12/12 at exactly
+   11–12 on the synthetic probe in §29d). Independent agreement, from a field we never fitted.
+3. `OTA4_PACKET_SIZE` — so this link is the **8-byte OTA4** branch, `is_full=False`.
+
+### 30a. Why that is fatal to `lora_ref`'s payload chain
+`LI` = **Long Interleaving**, and the SX1280 defines it as a *separate* set of coding rates from the
+classic ones (`SX1280_Regs.h`):
+
+```c
+SX1280_LORA_CR_4_5 = 0x01,  SX1280_LORA_CR_4_6 = 0x02,
+SX1280_LORA_CR_4_7 = 0x03,  SX1280_LORA_CR_4_8 = 0x04,
+SX1280_LORA_CR_LI_4_5 = 0x05, SX1280_LORA_CR_LI_4_6 = 0x06, SX1280_LORA_CR_LI_4_8 = 0x07,
+```
+
+Semtech's own description of the LI packet engine is **"data whitening, CRC-checksum, interleaving,
+*convolutional coding* and FEC"** — a convolutional code over a packet-spanning interleaver. Our
+`lora_ref` is a port of **gr-lora_sdr**, which models the **SX127x**: per-block *Hamming(8,4)* with a
+diagonal interleaver over `cw_len` symbols. Those are not the same code, not the same block
+structure, and not reachable from one another by any parameter choice.
+
+**So `all_opts()` never contained the right answer.** Its `cr ∈ {1,2,3,4}` are the four *classic*
+rates; LI is a different scheme entirely. That is why 401,920 trials on a confirmed-live link
+returned exactly zero, and why neither the timing fix nor the Hamming fix moved it off zero:
+
+```
+sync30_152002 + delay grid                    1 raw hit / 1.06 expected by chance  -> chance
+ctrlon_155306 + delay grid                    0 raw hits / 0.74 expected           -> nothing
+ctrlon_155306 + delay grid + Hamming fixed    0 raw hits / 0.74 expected           -> nothing
+```
+
+Those two fixes were still worth making — they were **real bugs** (§29b, §29c), both were invisible
+to every self-consistent test, and both are now validated against ground truth. They just weren't
+*this* blocker.
+
+### 30b. The wall is genuine: Semtech does not publish the LI algorithm
+I checked the SX1280/SX1281 datasheet set (Rev 1.1 / 2.2 / 3.0 / 3.2) and the surrounding
+ecosystem. The datasheets **confirm LI exists and name the stages**, and RadioLib exposes it as a
+boolean on `setCodingRate`, but **no public document specifies the LI interleaver geometry or the
+convolutional polynomials.** gr-lora_sdr does not implement LI. I found no public
+reverse-engineering of it either. Sources:
+[SX1280 Rev 3.2](https://www.mouser.com/datasheet/2/761/Semtech_04152020_DS_SX1280-1_V3.2-1832709.pdf) ·
+[SX128x Rev 3.0](https://www.tme.eu/Document/1042f35a88b6ee421559d19923804032/SX128x.pdf) ·
+[RadioLib CR discussion](https://github.com/jgromes/RadioLib/discussions/1631) ·
+[Lora-net 4/8LI issue](https://github.com/Lora-net/gateway_2g4_hal/issues/2)
+
+**Honest conclusion: recovering the ELRS `net_id` by decoding the LoRa payload is blocked by an
+undocumented proprietary code.** I am not going to claim a path I can't see. Per AGENTS.md §3 that
+makes payload-based ELRS identity a **named gap**, not a work item with an ETA.
+
+### 30c. But there IS another passive per-link identifier, and we already have the data for it
+AGENTS.md §1 (Identity goal) says it outright: *"The identifier we can actually recover passively is
+the sync word / **FHSS sequence** (both UID-seeded)."* The FHSS sequence needs **no payload decode
+at all** — it is carried in *which channels the link hops to, in what order*, which we measure
+directly from burst centre frequencies. `find_bursts` already returns exactly that, and the fresh
+capture has **788 bursts over 20 s** with centres spanning −4.89 to +4.89 MHz.
+
+`FHSS_SEQUENCE_LEN = 256` and the sequence is UID-seeded, so the **observed hop sequence is itself a
+stable per-link fingerprint** — we do not need to invert it to a UID to use it as the discriminator
+(and we can't: that would be a 2^48 search). This is the same thing the reference C-UAS SDR surfaces
+as "Net ID", and it sidesteps the LI wall completely.
+
+That is what I'm building next. It also fits the delivery surface: a hop-sequence fingerprint is
+something the WaveRaider UI can actually show per detected link.
+
+### 30d. Status
+ELRS stays at **FAMILY** with `link_id=None` until a hop fingerprint is validated on two captures of
+the same link. What changed is that the *reason* is now known and documented rather than suspected,
+and the receive path is proven correct (§29a) rather than merely unrefuted.
+
+— Claude

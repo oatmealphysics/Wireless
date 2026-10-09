@@ -114,14 +114,52 @@ def _rev4(v: int) -> int:
     return ((v & 1) << 3) | ((v & 2) << 1) | ((v & 4) >> 1) | ((v & 8) >> 3)
 
 
-def hamming_decode_nibble(cw: int, cr: int) -> int:
+def _cw_bits(cw: int, cw_len: int) -> list[int]:
+    """Codeword integer -> the reference's `codeword[]` bool array.
+
+    `deinterleave_block` packs each codeword MSB-first, so `codeword[0]` is bit
+    `cw_len-1` of the integer, NOT bit 0.
+    """
+    return [(cw >> (cw_len - 1 - k)) & 1 for k in range(cw_len)]
+
+
+#: syndrome -> which `codeword[]` index to flip. `lib/hamming_dec_impl.cc`
+#: flips `data_nibble[3,2,1,0]` for syndromes 5,7,3,6, and `data_nibble[k]` is
+#: `codeword[3-k]`, so the indices map through as below.
+_SYNDROME_FLIP = {5: 0, 7: 1, 3: 2, 6: 3}
+
+
+def hamming_decode_nibble(cw: int, cr: int, correct: bool = True) -> int:
     """`lib/hamming_dec_impl.cc`: nibble = {cw[3], cw[2], cw[1], cw[0]}.
 
-    i.e. the low four bits of the codeword, bit-reversed. We do not attempt
-    single-error correction: the ELRS CRC is the arbiter and a frame needing
-    correction would fail it anyway.
+    *** CORRECTED 2026-10-09 — the previous version was self-consistently wrong.
+
+    It returned `_rev4(cw & 0x0F)`, i.e. the integer's LOW four bits reversed.
+    But `deinterleave_block` packs codewords MSB-first, so `codeword[0..3]` --
+    the data bits -- live in the integer's HIGH four bits. The low four bits are
+    the PARITY bits (p0..p3) for every cr >= 2. So the old decoder fed parity
+    into the payload and discarded the data.
+
+    It survived `selftest_roundtrip()` because `hamming_encode_nibble` made the
+    mirror-image mistake, so the pair round-tripped perfectly while matching
+    neither the reference nor the air. That is exactly the failure mode the
+    AGENTS.md §3 "SELF-CONSISTENT is not VALIDATED" rule warns about, and it is
+    a prime suspect for the 0-hit real-air results.
+
+    With the data bits in the right place the parity bits become usable, so this
+    now also does the reference's single-error correction (cr >= 3 only; cr 1
+    and 2 carry too few parity bits to locate an error).
     """
-    return _rev4(cw & 0x0F)
+    cw_len = cr + 4
+    c = _cw_bits(cw, cw_len)
+    if correct and cr >= 3:
+        s0 = c[0] ^ c[1] ^ c[2] ^ c[4]
+        s1 = c[1] ^ c[2] ^ c[3] ^ c[5]
+        s2 = c[0] ^ c[1] ^ c[3] ^ c[6]
+        idx = _SYNDROME_FLIP.get(s0 | (s1 << 1) | (s2 << 2))
+        if idx is not None:
+            c[idx] ^= 1
+    return (c[3] << 3) | (c[2] << 2) | (c[1] << 1) | c[0]
 
 
 def dewhiten_nibbles(nibbles: list[int], payload_len: int | None = None
@@ -211,8 +249,32 @@ def selftest() -> None:
     print("  [PASS] gray demap matches out = in ^ (in >> 1)")
 
     assert _rev4(0b0001) == 0b1000 and _rev4(0b1011) == 0b1101
-    assert hamming_decode_nibble(0b11110001, 4) == 0b1000   # low nibble, reversed
-    print("  [PASS] Hamming nibble = {cw[3],cw[2],cw[1],cw[0]} (low 4, reversed)")
+    # Data bits are codeword[0..3] = the HIGH four bits (deinterleave_block
+    # packs MSB-first), and the nibble reads out as {cw[3],cw[2],cw[1],cw[0]}.
+    # 0b1111_0001 at cr=4: codeword[0..3] = 1,1,1,1 -> nibble 0b1111.
+    assert hamming_decode_nibble(0b11110001, 4, correct=False) == 0b1111
+    # 0b1010_0000: codeword[0..3] = 1,0,1,0 -> {cw3,cw2,cw1,cw0} = 0,1,0,1
+    assert hamming_decode_nibble(0b10100000, 4, correct=False) == 0b0101
+    print("  [PASS] Hamming data = codeword[0..3] (HIGH 4 bits), read out as "
+          "{cw[3],cw[2],cw[1],cw[0]}")
+
+    # encoder/decoder agree AND the parity bits are real, so a single bit error
+    # anywhere in a cr=4/7 or 4/8 codeword is corrected rather than fatal.
+    for cr in (1, 2, 3, 4):
+        for nib in range(16):
+            cw = hamming_encode_nibble(nib, cr)
+            assert hamming_decode_nibble(cw, cr) == nib, (cr, nib)
+    print("  [PASS] encode -> decode is exact for all 16 nibbles x 4 rates")
+    fixed = total = 0
+    for cr in (3, 4):
+        for nib in range(16):
+            cw = hamming_encode_nibble(nib, cr)
+            for b in range(cr + 4):
+                total += 1
+                fixed += hamming_decode_nibble(cw ^ (1 << b), cr) == nib
+    assert fixed > total * 0.5, f"only {fixed}/{total} single-bit errors fixed"
+    print(f"  [PASS] single-error correction repairs {fixed}/{total} one-bit "
+          f"errors at cr 4/7 and 4/8 (was 0 — parity used to be discarded)")
 
     # de-interleaver is a bijection on a block: distinct symbol sets must not
     # collapse to the same codewords
@@ -268,14 +330,32 @@ def whiten_bytes_to_nibbles(data: bytes, whiten: bool = True) -> list[int]:
 
 
 def hamming_encode_nibble(nib: int, cr: int) -> int:
-    """Inverse of `hamming_decode_nibble` for the data bits.
+    """`lib/hamming_enc_impl.cc`, exactly — including REAL parity bits.
 
-    `hamming_decode_nibble` reads {cw[3],cw[2],cw[1],cw[0]} (low four bits,
-    reversed), so the encoder places the reversed nibble in the low four bits.
-    Parity bits are left zero: our decoder ignores them (the ELRS CRC is the
-    arbiter), so they are not needed for a round-trip.
+    *** CORRECTED 2026-10-09 alongside `hamming_decode_nibble`. The previous
+    version returned `_rev4(nib)` with the parity bits left zero, which mirrored
+    the decoder's bug and left the chain with no error correction at all (one
+    wrong symbol killed a whole frame).
+
+        data_bin = int2bool(nib, 4)        # data_bin[0] is the nibble's MSB
+        p0 = data_bin[3]^data_bin[2]^data_bin[1]
+        p1 = data_bin[2]^data_bin[1]^data_bin[0]
+        p2 = data_bin[3]^data_bin[2]^data_bin[0]
+        p3 = data_bin[3]^data_bin[1]^data_bin[0]
+        cr>=2: (d3<<7|d2<<6|d1<<5|d0<<4|p0<<3|p1<<2|p2<<1|p3) >> (4 - cr)
+        cr==1: p4 = d0^d1^d2^d3;  d3<<4|d2<<3|d1<<2|d0<<1|p4
     """
-    return _rev4(nib & 0xF)
+    d = [(nib >> (3 - k)) & 1 for k in range(4)]     # MSB-first, as int2bool
+    if cr == 1:
+        p4 = d[0] ^ d[1] ^ d[2] ^ d[3]
+        return (d[3] << 4) | (d[2] << 3) | (d[1] << 2) | (d[0] << 1) | p4
+    p0 = d[3] ^ d[2] ^ d[1]
+    p1 = d[2] ^ d[1] ^ d[0]
+    p2 = d[3] ^ d[2] ^ d[0]
+    p3 = d[3] ^ d[1] ^ d[0]
+    full = ((d[3] << 7) | (d[2] << 6) | (d[1] << 5) | (d[0] << 4)
+            | (p0 << 3) | (p1 << 2) | (p2 << 1) | p3)
+    return full >> (4 - cr)
 
 
 def interleave_block(codewords: list[int], sf_app: int, cw_len: int,
