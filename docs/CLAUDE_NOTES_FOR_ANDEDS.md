@@ -1038,3 +1038,92 @@ mode known (SF7/812 kHz), sync word read off the air — but **no corroborated C
 `net_id` ⇒ not IDENTIFIED.**
 
 — Claude
+
+---
+
+## 24. ⚠️ REVIEW: the `2ee2` UID recovery is REFUTED — reverted ELRS to FAMILY, and added the two gates that catch it (2026-10-08, Claude)
+
+andeds, I reviewed §22/§23 + `scale_bursts.py` + the `detect.py`/`protocol_catalog.py` wire-in.
+**The `2ee2` recovery does not hold up.** I've reverted the IDENTIFIED claim and hardened my
+module so this class of error can't pass again. Detail below, including where **I was wrong** and
+where **my own design was at fault**.
+
+### 24a. Where I was WRONG, first
+My instinct was "10 hits vs 8.65 expected ⇒ pure chance." **That reasoning was wrong**, and I
+checked it instead of asserting it. Re-running with the chain options **fixed** to the claimed set
+collapses the search from 1152 combos/burst to 1, so:
+
+| | |
+|---|---|
+| trials (82 bursts, fixed opts) | 164 |
+| expected false accepts | **0.010** |
+| observed hits | **2** (both `2ee2`, OTA v3) |
+
+2 hits at λ=0.01 is ~P=5e-5. So it is **systematic, not random**. Also: `fhss_index=202` is
+**valid** (`fhss.FHSS_SEQUENCE_LEN = 256`), so my first "out of range" hunch was wrong too.
+
+### 24b. Why it is nonetheless NOT a real recovery (two hard facts)
+1. **`rf_rate_enum = 204` is impossible.** ELRS 2.4 GHz has **six** air rates
+   (`lora.ELRS_2G4_RATES`), so the enum is ~0–5. And we *independently measured* this very link as
+   **SF7 @ 812 kHz = 150 Hz**, which is enum ≈3. A real SYNC packet from this link cannot carry 204.
+2. **The two "corroborating" hits are BYTE-IDENTICAL:** both decode
+   `fhss_index=202, nonce=37, rf_rate_enum=204`. Two genuinely independent SYNC packets **cannot**
+   look like that — `nonce` increments every packet and `fhss_index` advances through the hop
+   sequence, so frames captured at different times must differ in both. Identical state ⇒ **one
+   systematic artifact decoded twice, not two confirmations.**
+
+**Method contributor:** `scale_bursts.py` does the demod with **no preamble lock, no preamble-bin
+de-rotation, and no SFD skip** — it slices symbols on a fixed 128-sample grid from the energy
+detector's `b.start`:
+```python
+for i in range(0, len(dechirped) - n_sym + 1, n_sym):   # fixed grid, arbitrary phase
+```
+So the symbol grid has an arbitrary sub-symbol offset and an unknown constant bin offset. That is
+the alignment problem your own spec let me fix in §21a — it just never made it into
+`scale_bursts.py`. Also `gray='none'` (no Gray decode) in the winning options is physically
+implausible for LoRa, which was the tell.
+
+### 24c. MY design flaw (owning this): a self-seeded CRC is weaker than I claimed
+I advertised "~1/16384 per trial." **That overstates it.** The CRC seed is derived from `uid4`/`uid5`
+**in the very bytes being checked**, so the check is partly self-referential: a degenerate or
+structured mis-decode can be self-consistent, and the same artifact recurs deterministically rather
+than randomly. A checksum you seed from the payload is not an independent 14 bits of evidence.
+That is the real lesson here, and it applies to anything else we gate this way.
+
+### 24d. The two gates I added (in `core/lora_payload.py`, so `detect.py` inherits them)
+1. **Plausibility gate** in `_try_sync`: reject any candidate whose `rf_rate_enum > MAX_RF_RATE_ENUM`
+   (7). Verified: a valid-rate SYNC still validates (`uid 1234`, v4, both packet sizes); the
+   `rf_rate_enum=204` pattern is now rejected.
+2. **Independence gate** in `recover_from_bursts`: corroboration now requires ≥2 hits that agree on
+   `(uid4, uid5, ota_version, opts)` **AND differ in `(nonce, fhss_index)`** — i.e. evidence of a
+   live, advancing link rather than a repeated artifact. The report now carries
+   `rejected_identical_state` and the rule text.
+
+**Verified end-to-end:** re-running the fixed-opts search over the same 82 bursts now yields
+**0 hits** (was 2). `elrs_sdr.selftest` ALL PASS; `elrs_sdr.detect selftest` PASS.
+
+### 24e. What I reverted
+`protocol_catalog.py`: ELRS **IDENTIFIED → FAMILY**, `link_id` → `None`, notes rewritten with the
+refutation. The gap report is back to **identified: 1 (WiFi only)**. I did **not** touch
+`detect.py` (yours, per §20a) — the gates live in my module, so your wire-in automatically stops
+producing the false ID. If you want, the `net_id` plumbing you added is fine and should stay; it
+just won't fire until a hit passes the new gates.
+
+### 24f. What still stands from your work (genuinely useful)
+- **§22's answers** (SYNC cadence + `nzeros`) — still want these applied; see below.
+- **Hypothesis 1 was partly right**: scaling the burst count *is* the right move; 471 bursts → 82
+  demodulable sets is real progress on sampling.
+- Your spec (§21a) remains the thing that fixed my SFD/stage-order bugs.
+
+### 24g. Next (mine)
+1. Re-run the scaled search using the **properly aligned** demod (preamble lock + bin de-rotation +
+   2.25 SFD skip, as in §21a) over all ~471 bursts — `scale_bursts.py`'s alignment is the weak link,
+   and with the new gates a hit would now mean something.
+2. Apply `nzeros` (0/1) as a payload byte-offset variant — per your §22 it may shift the uid4/uid5
+   read by a byte, which would matter.
+
+**Bottom line:** no per-link ID yet. Frame-locked, PHY pinned (SF7/812 kHz), sync word 0x12 read
+off the air — but **ELRS stays FAMILY until a CRC-valid SYNC payload has plausible fields AND
+advances across bursts.**
+
+— Claude

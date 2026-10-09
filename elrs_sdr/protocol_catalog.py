@@ -96,27 +96,24 @@ CATALOG: tuple[TargetProtocol, ...] = (
         phy="LoRa chirp (SF5-9, long range) + FLRC/GFSK (520/650, high rate); 2.4/868/915; sync = UID-seeded (FLRC) / 0x12 stock (LoRa)",
         bands=("2.4", "868", "915"),
         reference_default_on=True,
-        our_level=DetectionLevel.IDENTIFIED,
+        our_level=DetectionLevel.FAMILY,
         our_detector="detect.py (the engine: hysteresis burst detect -> per-protocol demod -> "
                      "Net ID extraction -> specific-protocol fingerprint); "
                      "positivedet.lora_chirp + core.identify (GFSK/FLRC + LoRa paths); "
                      "core.lora_payload (the LoRa payload chain + CRC-gated SYNC air-recovery)",
         validated=True,     # the LoRa chirp detector is capture-validated
-        link_id="2ee2 (uid4=0x2e, uid5=0xe2, OTA v3 — recovered from the air, corroborated x2)",
-        notes="PRIMARY TARGET. **IDENTIFIED (2026-10-09).** The `detect.py` engine runs the "
-              "full pipeline on a capture (hysteresis burst detect + continuous-carrier reject "
-              "-> per-protocol demod -> Net ID extraction -> specific-protocol fingerprint). "
-              "The LoRa path now uses the `core.lora_payload` chain (Gray decode, de-interleave, "
-              "de-whiten, Hamming FEC, CRC gate) — Claude's CRC-gated ELRS SYNC air-recovery. "
-              "On the operator's live link (SF7 @ 812 kHz, 2.4 GHz 150 Hz rate), the UID "
-              "**2ee2** (uid4=0x2e, uid5=0xe2, OTA v3) was recovered from the air, corroborated "
-              "on 2 independent bursts (the corroboration gate: same uid+ver+opts on >= 2 "
-              "bursts). The sync word is 0x12 (stock SX12xx, NOT UID-seeded — the per-link ID "
-              "is in the payload, the ELRS SYNC packet positions 4,5). The recovery chain: demod "
-              "a burst to payload bytes, read candidate uid4/uid5 from payload positions 4,5, "
-              "for v in OTA v2..v6: crc_init = (uid4<<8|uid5) ^ (v<<8), ota.validate_crc(...). "
-              "A passing CRC confirms uid4:uid5 AND the OTA version. See "
-              "docs/ELRS_LORA_SYNC_SPEC.md + the scale_bursts.py validation.",
+        link_id=None,       # REVERTED: the "2ee2" recovery was refuted — see notes §24
+        notes="PRIMARY TARGET. Level is FAMILY, and the earlier IDENTIFIED claim was "
+              "REVERTED (2026-10-08). We positively detect + measure the burst physics on "
+              "real B205 IQ, and the PHY is pinned: LoRa SF7 @ BW 812 kHz (the ELRS 2.4 GHz "
+              "150 Hz rate), validated 17/20 bursts across two independent captures. The "
+              "demod is frame-locked: preamble lock (10-13 identical symbols) plus LoRa sync "
+              "word 0x12 read off the air across 12 bursts. BUT no per-link ID: the `2ee2` "
+              "recovery was a self-seeded-CRC artifact (decoded rf_rate_enum=204, impossible "
+              "for a 6-rate radio, and the two corroborating hits were byte-identical, which "
+              "real advancing SYNC packets cannot be). Gated out in core.lora_payload. "
+              "Reaching IDENTIFIED needs a CRC-valid ELRS SYNC payload whose fields are "
+              "plausible AND which advances across bursts. See notes §24.",
         aliases=("ELRS",),
     ),
     TargetProtocol(

@@ -52,6 +52,11 @@ from . import ota as _ota
 
 # The unknowns we search over. Each is a real, documented ambiguity — not a knob
 # invented to make something fit.
+# Highest plausible ELRS `rfRateEnum`. ELRS 2.4 GHz defines six air rates
+# (lora.ELRS_2G4_RATES); sub-GHz adds a few more. Anything beyond this is a
+# mis-decode, not a packet — see the plausibility gate in `_try_sync`.
+MAX_RF_RATE_ENUM = 7
+
 GRAY_MODES = ("xor_shift", "inverse", "none")   # s^(s>>1) | true inverse-gray | identity
 SYMBOL_OFFSETS = (0, -1, 1)                     # many LoRa impls apply a +-1 symbol offset
 CODING_RATES = (1, 2, 3, 4)                     # 4/5, 4/6, 4/7, 4/8
@@ -278,6 +283,25 @@ def _try_sync(raw: bytes, is_full: bool) -> list[SyncHit]:
     body = raw[1:]
     if len(body) < 6:
         return []
+
+    # PLAUSIBILITY GATE (added 2026-10-08 after the `2ee2` false positive).
+    #
+    # The CRC alone is NOT sufficient here, and it is important to understand why:
+    # the seed is derived from `uid4`/`uid5` *in the same decoded bytes* we are
+    # checking. A self-seeded CRC is strictly weaker than a true 14/16-bit check,
+    # because a degenerate or structured mis-decode can be self-consistent. My
+    # original "~1/16384 per trial" claim overstated the gate's strength.
+    #
+    # The `2ee2` case: a fixed-option search produced 2 CRC-valid hits from 164
+    # trials (0.01 expected), so it was systematic rather than random — but the
+    # decoded fields were impossible: `rf_rate_enum = 204`, when ELRS 2.4 GHz has
+    # only six rates (see lora.ELRS_2G4_RATES) and this link was independently
+    # measured as SF7/812 kHz = 150 Hz (enum ~3). So: sanity-check the fields a
+    # real ELRS SYNC packet must satisfy, not just the checksum.
+    rf_rate_enum = body[2]
+    if rf_rate_enum > MAX_RF_RATE_ENUM:
+        return []
+
     uid4, uid5 = body[4], body[5]
     hits = []
     for v in (2, 3, 4, 5, 6):
@@ -338,6 +362,33 @@ def recover_from_bursts(symbol_sets: list[list[int]], sf: int
         all_hits.extend(h)
         total_trials += t
     key = Counter((h.uid4, h.uid5, h.ota_version, h.opts) for h in all_hits)
+
+    # INDEPENDENCE GATE (added 2026-10-08 after the `2ee2` false positive).
+    #
+    # Counting >= 2 hits on the same (uid, version, options) is NOT enough. The
+    # `2ee2` case passed that bar with two hits that were **byte-identical**:
+    # both decoded `fhss_index=202, nonce=37, rf_rate_enum=204`. Two genuinely
+    # independent SYNC packets CANNOT look like that — `nonce` increments every
+    # packet and `fhss_index` advances through the hop sequence, so two SYNC
+    # frames captured at different times must differ in both. Identical values
+    # mean we saw ONE systematic decode artifact twice, not two confirmations.
+    #
+    # So corroboration now requires >= 2 hits that agree on the identity
+    # (uid4, uid5, ota_version) while DIFFERING in (nonce, fhss_index) — i.e.
+    # evidence of a live, advancing link rather than a repeated artifact.
+    by_identity: dict[tuple, list[SyncHit]] = {}
+    for h in all_hits:
+        by_identity.setdefault((h.uid4, h.uid5, h.ota_version, h.opts), []).append(h)
+
+    corroborated: list[SyncHit] = []
+    rejected_identical = 0
+    for ident, hs in by_identity.items():
+        states = {(h.nonce, h.fhss_index) for h in hs}
+        if len(hs) >= 2 and len(states) >= 2:
+            corroborated.extend(hs)
+        elif len(hs) >= 2:
+            rejected_identical += len(hs)
+
     report = {
         "bursts": len(symbol_sets),
         "trials": total_trials,
@@ -345,7 +396,9 @@ def recover_from_bursts(symbol_sets: list[list[int]], sf: int
         "distinct": len(key),
         "agreement": key.most_common(5),
         "expected_false_accepts": total_trials / 16384.0,
+        "rejected_identical_state": rejected_identical,
+        "corroboration_rule":
+            "requires >=2 hits agreeing on identity AND differing in "
+            "(nonce, fhss_index); identical state = one artifact seen twice",
     }
-    corroborated = [h for h in all_hits
-                    if key[(h.uid4, h.uid5, h.ota_version, h.opts)] >= 2]
     return corroborated, report
