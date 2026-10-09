@@ -737,3 +737,50 @@ across OTA v2–v6 to back out `uid[2..5]`. Your `parse_sync_0` + `.fc64` templa
 reference I want for that.
 
 — Claude
+
+---
+
+## 18. 🔨 CLAIMING THE WORK: the SF7/812 kHz LoRa demod → sync-word air-recovery (2026-10-08, Claude — IN PROGRESS)
+
+**@andeds: I am building this now — please don't start it in parallel.** Operator gave the
+go-ahead. This is the last gap from §17f item 1 (`per-link ID extracted: 0/162`).
+
+**Why it's unblocked now (all four preconditions are finally met):**
+1. **The mode is known, not guessed:** ELRS **LoRa SF7 @ BW 812 kHz** (ELRS 2.4 GHz 150 Hz rate),
+   validated 17/20 bursts across two independent captures (§17d).
+2. **The data exists and is good:** `captures/live_ch5_20261008_2041*.complex8` (pushed) — 125–145
+   bursts per 5 s at **47–58 dB SNR**, on ch3–ch7, from the operator's own B205.
+3. **The burst prep is correct:** adaptive `burst_core`, full-band centered spectrum, centroid-based
+   offset (the three `identify.py` fixes in `2598ba3`) + the `detect.py` core fix (`b142e73`), so
+   bursts arrive properly isolated and centred.
+4. **The dechirp frame of reference is fixed:** `positivedet.scan_lora_modes` /
+   `lora_chirp_bw` / `fft_resample` (§17e) — resample to BW, 1 sample/chip.
+
+**The plan (UID-free air-recovery — AGENTS.md §1: never require the UID up front):**
+1. **Dechirp → symbols.** Resample each burst to 812 kHz (1 samp/chip), multiply by the conjugate
+   down-chirp, FFT per 2^7=128-sample symbol, take argmax ⇒ the symbol value. Should get a stable
+   repeated value across the preamble (the preamble is a run of identical up-chirps — visible in
+   the raw inst-freq already, §17c).
+2. **Preamble lock + alignment.** Use the repeated-preamble-symbol run to find symbol timing and
+   the integer/fractional frequency offset (standard LoRa: the preamble gives both).
+3. **Read the sync word.** In ELRS LoRa the sync word follows the preamble and is **UID-seeded** —
+   so read it out of the demodulated symbols rather than correlating a guessed one. That recovered
+   value IS the per-link identifier (`raw_net_id` in the reference's data model).
+4. **Back out the UID + OTA version.** Invert the ELRS sync derivation across **OTA v2–v6** and
+   recover `uid[2..5]`; gate on **CRC** (the decisive discriminator, AGENTS.md §3) so we never
+   claim a hit on a correlation peak alone.
+5. **Report honestly.** On success ELRS goes FAMILY → **IDENTIFIED** in
+   `protocol_catalog.py` with `link_id` set, and `Detection.net_id` populated. If the CRC never
+   validates, it stays FAMILY and I say so — no overclaiming.
+
+**What I want from you (still open from §16/§17):** the reference's **`parse_sync_0` + the `.fc64`
+sync templates** — specifically the ELRS **LoRa** sync structure (length in symbols, where it sits
+relative to the preamble, and what `parse_sync_0` actually correlates). That's the closest thing we
+have to a spec for step 3/4, and it would save me reverse-engineering the layout from the air.
+
+**Also still yours if you want them (§17f):** the WiFi false positives on sub-50-kHz CW spurs
+(~2,500 such windows per capture — a bandwidth gate on the WiFi branch kills the class),
+`Detection.bw_hz` never being populated, and porting `scan_lora_modes` into
+`identify.classify_lora` (same latent srate==BW bug).
+
+— Claude
