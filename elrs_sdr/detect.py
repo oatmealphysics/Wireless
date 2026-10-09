@@ -740,6 +740,7 @@ def detect_and_identify(iq: np.ndarray, srate: float,
 
     # 3. for each burst, the per-protocol demod + Net ID extraction
     dets: list[Detection] = []
+    lora_bursts: list[tuple[int, int, float, float]] = []  # (start, stop, srate, offset)
     for b in bursts:
         # the CORE burst (the hysteresis-detected span, before padding) — used for the
         # burst-structure discriminator (a continuous carrier has a low CV over its core;
@@ -776,6 +777,9 @@ def detect_and_identify(iq: np.ndarray, srate: float,
         sf = extra.get("sf")
         if sf is None and extra.get("sf_bw_pair"):
             sf = extra["sf_bw_pair"][0]
+        # collect the LoRa bursts for the capture-level corroboration
+        if proto in ("LoRa", "ExpressLRS", "Crossfire"):
+            lora_bursts.append((s0, s1, srate, offset))
         dets.append(Detection(
             protocol=proto,
             detection_level=level,
@@ -789,6 +793,83 @@ def detect_and_identify(iq: np.ndarray, srate: float,
             crc_valid=extra.get("crc_valid", False),
             extra=extra,
         ))
+
+    # 4. capture-level LoRa corroboration (the net_id wire-in)
+    #
+    # Wire-in (andeds, 2026-10-09): the per-burst _demod_burst returns a net_id only
+    # if the single-burst recover_sync hits (which is rare — most bursts are RC_DATA,
+    # not SYNC). The DEFINITIVE net_id recovery is the capture-level corroboration:
+    # run recover_from_bursts over ALL the LoRa bursts in the capture, and if there's
+    # a corroborated hit (same uid+ver+opts on >= 2 bursts), attach it to all the
+    # LoRa detections + upgrade them to IDENTIFIED.
+    if lora_bursts:
+        try:
+            from elrs_sdr.core import lora_payload as _lp
+            from elrs_sdr.core import lora as _lora
+            from elrs_sdr import positivedet as _pd
+
+            # The SF (the most common one across the LoRa bursts)
+            sf_counts = {}
+            for d in dets:
+                if d.protocol in ("LoRa", "ExpressLRS", "Crossfire") and d.sf:
+                    sf_counts[d.sf] = sf_counts.get(d.sf, 0) + 1
+            sf = max(sf_counts, key=sf_counts.get) if sf_counts else 7
+
+            # Demod all the LoRa bursts to symbols
+            symbol_sets = []
+            for (s0, s1, sr, off) in lora_bursts:
+                try:
+                    core = iq[s0:s1]
+                    if len(core) < 2 * (1 << sf):
+                        continue
+                    # Shift to baseband
+                    core_bb = _identify.freq_shift_to_baseband(core, sr, off)
+                    # Resample to BW (1 sample/chip)
+                    bw = 812_500.0  # the validated BW (SF7 @ 812 kHz)
+                    if sr > bw * 1.1:
+                        core_bb = _pd.fft_resample(core_bb, int(len(core_bb) * bw / sr))
+                    # Dechirp + FFT per 2^sf samples
+                    base = _lora._base_chirp(sf)
+                    n_sym = 1 << sf
+                    down_chirp = np.conj(base)
+                    n_tiles = int(np.ceil(len(core_bb) / n_sym))
+                    tiled = np.tile(down_chirp, n_tiles)[:len(core_bb)]
+                    dechirped = core_bb * tiled
+                    symbols = []
+                    for i in range(0, len(dechirped) - n_sym + 1, n_sym):
+                        seg = dechirped[i:i+n_sym]
+                        if len(seg) < n_sym:
+                            break
+                        fft = np.fft.fft(seg)
+                        symbols.append(int(np.argmax(np.abs(fft))))
+                    if len(symbols) >= 20:
+                        symbol_sets.append(symbols)
+                except Exception:
+                    continue
+
+            if len(symbol_sets) >= 2:
+                # The capture-level corroboration
+                corroborated, report = _lp.recover_from_bursts(symbol_sets, sf)
+                if corroborated:
+                    # Attach the corroborated net_id to all the LoRa detections
+                    top = corroborated[0]
+                    uid_bytes = bytes([0, 0, 0, 0, top.uid4, top.uid5])
+                    corroborated_net_id = NetID(
+                        raw_net_id=uid_bytes,
+                        net_id_str=f"{top.uid4:02x}{top.uid5:02x}",
+                        kind="uid",
+                        evidence=EvidenceClass.SELF_CONSISTENT,
+                    )
+                    for d in dets:
+                        if d.protocol in ("LoRa", "ExpressLRS", "Crossfire"):
+                            d.net_id = corroborated_net_id
+                            d.detection_level = DetectionLevel.IDENTIFIED
+                            d.evidence = EvidenceClass.SELF_CONSISTENT
+                            d.crc_valid = True
+                            d.extra["corroborated_bursts"] = len(corroborated)
+                            d.extra["ota_version"] = top.ota_version
+        except Exception:
+            pass
 
     # sort by power (strongest first) — the reference shows the strongest targets first
     dets.sort(key=lambda d: d.power_db, reverse=True)
