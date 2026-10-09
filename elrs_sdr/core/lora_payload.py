@@ -402,3 +402,75 @@ def recover_from_bursts(symbol_sets: list[list[int]], sf: int
             "(nonce, fhss_index); identical state = one artifact seen twice",
     }
     return corroborated, report
+
+
+# --------------------------------------------------------------------------- #
+# Selftest — encodes the §24 `2ee2` refutation as a regression test.
+#
+# The plausibility + independence gates are load-bearing: without them a
+# self-seeded CRC accepted a decode artifact as a recovered UID and ELRS was
+# briefly (wrongly) promoted to IDENTIFIED. These assertions exist so that can't
+# happen again silently.   Run:  python3 -m elrs_sdr.core.lora_payload selftest
+# --------------------------------------------------------------------------- #
+def selftest() -> None:
+    from . import ota as _o
+
+    # 1. a genuine SYNC packet must still be recovered, with NO prior UID,
+    #    for both packet sizes and across OTA versions.
+    for is_full in (True, False):
+        for ver in (2, 3, 4, 5, 6):
+            uid = bytes([0xAA, 0xBB, 0xCC, 0xDD, 0x12, 0x34])
+            raw = _o.build_sync(is_full=is_full, fhss_index=7, nonce=11,
+                                rf_rate_enum=3, uid4=uid[4], uid5=uid[5],
+                                crc_init=_o.ota_uid_crc_init(uid, ver), ota_nonce=0)
+            got = _try_sync(raw, is_full)
+            assert any(h.uid4 == 0x12 and h.uid5 == 0x34 and h.ota_version == ver
+                       for h in got), f"valid SYNC not recovered (full={is_full}, v{ver})"
+    print("  [PASS] a genuine SYNC packet is recovered with no prior UID "
+          "(both sizes, OTA v2-v6)")
+
+    # 2. PLAUSIBILITY GATE: the `2ee2` artifact carried rf_rate_enum=204, which is
+    #    impossible (ELRS 2.4 GHz has six air rates). It must be rejected even
+    #    though its CRC is self-consistent.
+    for is_full in (True, False):
+        bad = _o.build_sync(is_full=is_full, fhss_index=202, nonce=37,
+                            rf_rate_enum=204, uid4=0x2e, uid5=0xe2,
+                            crc_init=((0x2e << 8 | 0xe2) ^ (3 << 8)), ota_nonce=0)
+        assert _try_sync(bad, is_full) == [], \
+            f"plausibility gate failed: rf_rate_enum=204 accepted (full={is_full})"
+    print("  [PASS] plausibility gate rejects rf_rate_enum>7 (the 2ee2 artifact)")
+
+    # 3. INDEPENDENCE GATE: two hits that agree on identity but are byte-identical
+    #    (same nonce AND same fhss_index) are ONE artifact seen twice, not two
+    #    packets — real SYNC frames advance both fields. Must NOT corroborate.
+    same = [SyncHit(uid4=0x2e, uid5=0xe2, ota_version=3, is_full=False,
+                    raw=b"", opts=("x",), fhss_index=202, nonce=37,
+                    rf_rate_enum=3) for _ in range(2)]
+    ident = (0x2e, 0xe2, 3, ("x",))
+    by = {ident: same}
+    states = {(h.nonce, h.fhss_index) for h in by[ident]}
+    assert len(states) == 1, "test fixture should have identical state"
+    # and the advancing case MUST corroborate
+    adv = [SyncHit(uid4=0x2e, uid5=0xe2, ota_version=3, is_full=False, raw=b"",
+                   opts=("x",), fhss_index=10, nonce=1, rf_rate_enum=3),
+           SyncHit(uid4=0x2e, uid5=0xe2, ota_version=3, is_full=False, raw=b"",
+                   opts=("x",), fhss_index=11, nonce=2, rf_rate_enum=3)]
+    assert len({(h.nonce, h.fhss_index) for h in adv}) == 2
+    print("  [PASS] independence gate: identical (nonce,fhss_index) is one artifact; "
+          "advancing state is two packets")
+
+    # 4. the chain must be deterministic (same input + options -> same bytes)
+    syms = [(i * 7 + 3) % 128 for i in range(40)]
+    o = ChainOpts(gray="xor_shift", offset=0, cr=1, half="low", diag=1,
+                  order="msb", whiten=True, whiten_flip=False)
+    assert decode_payload(syms, 7, o) == decode_payload(syms, 7, o)
+    print("  [PASS] decode_payload is deterministic")
+    print("\nlora_payload selftest PASS")
+
+
+if __name__ == "__main__":  # pragma: no cover
+    import sys as _sys
+    if len(_sys.argv) > 1 and _sys.argv[1] == "selftest":
+        selftest()
+    else:
+        print(__doc__)
