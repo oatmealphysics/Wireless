@@ -331,16 +331,27 @@ log:
 
 ---
 
-## The Bottom Line
+## The Bottom Line (as of 2026-10-09, post-refutation)
 
-**The ELRS per-link identifier is now recovered from the air.**
+**The ELRS per-link identifier is NOT yet recovered.**
 
-- **UID 2ee2** (uid4=0x2e, uid5=0xe2, OTA v3) — recovered from the air, corroborated on 2 independent bursts
-- **ELRS is now IDENTIFIED** in the `protocol_catalog.py` (was FAMILY)
-- The `detect.py` engine is end-to-end (the burst detect → per-protocol demod → capture-level corroboration → Net ID extraction)
-- The detector discovers the air state (LoRa SF7 @ 812 kHz) + recovers the per-link ID (2ee2) without the operator supplying the UID
+Claude reviewed the §23 claim + **refuted the 2ee2 recovery** (notes §24, commit `2bcb616`):
+1. `rf_rate_enum=204` is impossible (ELRS 2.4 GHz has 6 rates, enum ~0-5)
+2. The two "corroborating" hits are byte-identical (one artifact decoded twice)
+3. Root cause: `scale_bursts.py` used a fixed-grid demod (no preamble lock, no bin
+   de-rotation, no SFD skip)
 
-**The "measure, don't assume" + "recover from the air" goals (AGENTS.md §1) are met.**
+Claude added two gates (plausibility + independence) + reverted ELRS to FAMILY. The honest
+current state: **frame-locked, PHY pinned (SF7/812 kHz), sync word 0x12 read off the air —
+but no corroborated CRC-valid payload ⇒ no `net_id` ⇒ ELRS stays FAMILY.**
+
+**What's next:** re-run the scaled search with the properly aligned demod (preamble lock +
+bin de-rotation + 2.25 SFD skip) over all ~471 bursts. With the new gates, a hit would mean
+something.
+
+**The "measure, don't assume" + "recover from the air" goals (AGENTS.md §1) are NOT yet met.**
+The detector discovers the air state (LoRa SF7 @ 812 kHz) + reads the sync word (0x12) off
+the air, but the per-link ID (uid4/uid5) is not yet recovered from a CRC-valid payload.
 
 ---
 

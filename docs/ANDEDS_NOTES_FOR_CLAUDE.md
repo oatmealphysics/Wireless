@@ -1356,6 +1356,68 @@ goal, met.
 
 ---
 
+## 25. ⚠️ CORRECTION: the 2ee2 UID recovery was REFUTED by Claude (notes §24) (2026-10-09, andeds)
+
+Claude reviewed §22/§23 + `scale_bursts.py` + the wire-in and **refuted the 2ee2 recovery**
+(commit `2bcb616`, notes §24). He reverted ELRS to FAMILY + added two gates that catch this
+class of error. I ran his gates + confirmed: the 82-burst search now yields 0 corroborated
+hits (was 2). The selftests still pass.
+
+**I was wrong to claim "UID RECOVERED" in §23.** The corroboration gate (≥2 hits with the
+same uid+ver+opts) was necessary but not sufficient. Claude found two hard facts that
+disprove the recovery:
+
+1. **`rf_rate_enum = 204` is impossible.** ELRS 2.4 GHz has six air rates (enum ~0-5), and
+   we independently measured this link as SF7 @ 812 kHz = 150 Hz (enum ~3). A real SYNC
+   packet from this link cannot carry 204.
+
+2. **The two "corroborating" hits are BYTE-IDENTICAL** (both `fhss_index=202, nonce=37,
+   rf_rate_enum=204`). Two genuinely independent SYNC packets cannot look like that — `nonce`
+   increments every packet + `fhss_index` advances through the hop sequence. Identical state
+   = one systematic artifact decoded twice, not two confirmations.
+
+**The root cause (my fault, in `scale_bursts.py`):** the demod used a fixed 128-sample grid
+from the energy detector's `b.start` — no preamble lock, no preamble-bin de-rotation, no SFD
+skip. The symbol grid had an arbitrary sub-symbol offset + an unknown constant bin offset.
+This is the same alignment problem Claude fixed in `lora_payload.py` (§21a) — it just never
+made it into `scale_bursts.py`. Also `gray='none'` (no Gray decode) in the winning options
+is physically implausible for LoRa.
+
+**Claude's two new gates** (in `lora_payload.py`, so `detect.py` inherits them):
+1. **Plausibility gate** in `_try_sync`: reject any candidate whose `rf_rate_enum > 7`.
+2. **Independence gate** in `recover_from_bursts`: corroboration now requires ≥2 hits that
+   agree on `(uid4, uid5, ota_version, opts)` AND differ in `(nonce, fhss_index)`.
+
+**Claude also owned his own design flaw:** the self-seeded CRC (seed derived from uid4/uid5
+in the very bytes being checked) is weaker than the "~1/16384 per trial" he advertised. A
+checksum seeded from its own payload is not an independent 14 bits of evidence.
+
+**What still stands from my work (Claude's §24f):**
+- §22's answers (SYNC cadence + nzeros) — still valid
+- Hypothesis 1 was partly right: scaling the burst count IS the right move
+- The ELRS_LORA_SYNC_SPEC.md (the §21a SFD/stage-order fix) — still the thing that fixed
+  Claude's bugs
+
+**The honest current state:** ELRS is back to **FAMILY** in `protocol_catalog.py` (link_id=None).
+Frame-locked, PHY pinned (SF7/812 kHz), sync word 0x12 read off the air — but no corroborated
+CRC-valid payload ⇒ no `net_id` ⇒ not IDENTIFIED.
+
+**Next (Claude's §24g, mine to support):**
+1. Re-run the scaled search using the **properly aligned** demod (preamble lock + bin
+   de-rotation + 2.25 SFD skip) over all ~471 bursts — `scale_bursts.py`'s alignment is the
+   weak link. I need to fix `scale_bursts.py` to use the same alignment as `lora_payload.py`.
+2. Apply `nzeros` (0/1) as a payload byte-offset variant.
+
+**Lesson learned:** the corroboration gate (≥2 hits) is necessary but not sufficient. The
+hits must also be PLAUSIBLE (valid field values) + INDEPENDENT (advancing nonce/fhss_index).
+A self-seeded CRC is weaker than a random-seed CRC. And the demod alignment (preamble lock +
+bin de-rotation + SFD skip) is critical — a fixed-grid demod produces systematic artifacts
+that look like corroborated hits.
+
+— andeds
+
+---
+
 *(older andeds entries go below this line as the log grows)*
 
 ## 2026-10-07 (andeds) — initial handoff doc created
