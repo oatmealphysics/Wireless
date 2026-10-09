@@ -58,6 +58,20 @@ def run(path: str):
         shown = sorted(fold.items())[:12]
         print(f"    first positions: "
               f"{', '.join(f'{p}->ch{c}' for p, c in shown)}")
+    sync = F.find_sync_channel(pat)
+    if sync.get("channel") is not None:
+        af = F.absolute_fold(pat)
+        print(f"  PINNED SYNC CHANNEL: raw ch{sync['channel']} recurs every "
+              f"{sync['mean_gap_hops']} hops (spread {sync['spread_hops']}, "
+              f"{sync['n_sightings']} sightings, unique={sync['unique']})")
+        print(f"    => absolute channel calibration offset {sync['index_offset']:+d} "
+              f"(ELRS sync channel is {F.ISM.freq_count//2})")
+        print(f"    => hop interval refined to {sync['hop_interval_refined_s']*1000:.5f} ms")
+        print(f"    => ABSOLUTE fold: {len(af['positions'])}/{F.SEQ_LEN} TRUE "
+              f"sequence positions ({af['n_dropped']} dropped), no rotation needed")
+    else:
+        print(f"  pinned sync channel NOT visible in this window "
+              f"({sync.get('reason')}) -> fingerprint is rotation-relative only")
     bp = F.block_phase(pat)
     print(f"  block structure: {bp}")
     if bp.get("phase") is not None:
@@ -91,10 +105,40 @@ def main() -> int:
     for i in range(len(pats)):
         for j in range(i + 1, len(pats)):
             (pa, a), (pb, b) = pats[i], pats[j]
+            # If BOTH captures can see the pinned sync channel, compare true
+            # sequence positions directly -- no rotation search, so nothing is
+            # fitted between the two captures. That is the strongest form of
+            # the test available.
+            fa, fb = F.absolute_fold(a), F.absolute_fold(b)
+            if fa["positions"] and fb["positions"]:
+                pa_, pb_ = fa["positions"], fb["positions"]
+                common = sorted(set(pa_) & set(pb_))
+                if common:
+                    ok = sum(1 for p in common if pa_[p] == pb_[p])
+                    print(f"\n  {Path(pa).name}  vs  {Path(pb).name}")
+                    print(f"    ABSOLUTE (no rotation search): {ok}/{len(common)} "
+                          f"shared positions agree = {ok/len(common)*100:.1f}%")
+                    vis = max(1, len(set(a.channels_seen)))
+                    print(f"    chance rate ~1/{vis}; position 0 holds channel "
+                          f"{pa_.get(0, '?')} (the sync channel is "
+                          f"{F.ISM.freq_count//2})")
+                    print("    VERDICT: " + (
+                        "ABSOLUTE sequence positions reproduce exactly -> a "
+                        "validated per-link identifier."
+                        if ok == len(common) and len(common) >= 10
+                        else "inconclusive at absolute level."))
+                    continue
             rot, agree, n = F.crosscheck(a, b)
             vis = max(1, len(set(a.channels_seen) | set(b.channels_seen)))
             chance = 1.0 / vis
             print(f"\n  {Path(pa).name}  vs  {Path(pb).name}")
+            if agree != agree:      # NaN sentinel from crosscheck()
+                print("    NOT APPLICABLE: the two capture windows see "
+                      f"disjoint channel sets ({a.channels_seen[0]}-"
+                      f"{a.channels_seen[-1]} vs {b.channels_seen[0]}-"
+                      f"{b.channels_seen[-1]}), so no sequence position can "
+                      "appear in both. Re-centre one capture to overlap.")
+                continue
             print(f"    best rotation {rot}, agreement {agree*100:.0f}% over "
                   f"{n} overlapping positions")
             print(f"    chance rate for {vis} visible channels: "

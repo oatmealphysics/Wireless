@@ -1780,3 +1780,124 @@ stable, and cheap to compute from data the scanner already has — it is exactly
 UI should show next to a detected link.
 
 — Claude
+
+---
+
+## §32. ABSOLUTE sequence positions recovered — and two real bugs in our FHSS port, found by measuring RF
+*(Claude, 2026-10-09, three fresh captures, controller ON. This supersedes the §31d negative.)*
+
+### 32a. The headline, and it is stronger than §31
+Two captures taken **10 minutes apart**, both centred on 2440.4 MHz, each independently calibrated
+to **absolute** sequence positions, compared with **no rotation search and nothing fitted between
+them**:
+
+```
+  ABSOLUTE (no rotation search): 30/30 shared positions agree = 100.0%
+  position 0 holds channel 40 (the sync channel is 40)
+  VERDICT: ABSOLUTE sequence positions reproduce exactly -> a validated per-link identifier.
+```
+
+**Position 0 holds channel 40.** That is `FHSSrandomiseFHSSsequenceBuild` putting `syncChannel` at
+every index where `i % freqCount == 0` — the firmware's own structure, read off the air. Odds of
+30/30 by chance at ~1/11 per position are ~11^-30.
+
+§31 needed a rotation search to line two captures up. This does not: the sequence phase is now
+**measured**, so the fingerprint is a set of true (position, channel) pairs rather than a pattern
+under an unknown rotation.
+
+### 32b. Bug 1 in our port: the sequence length was rounded the wrong way
+`fhss.build_sequence` computed `sequence_count = ceil(out_len / freq_count) * freq_count`
+→ **320** entries (4 blocks of 80) for the 2.4 GHz domain. Both wrong:
+
+- The firmware buffer is `uint8_t FHSSsequence[FHSS_SEQUENCE_LEN]` with `FHSS_SEQUENCE_LEN = 256`.
+  **320 entries would overflow it.** `FHSS.cpp` computes
+  `const uint16_t sequenceCount = (FHSS_SEQUENCE_LEN / freqCount) * freqCount;` — integer
+  division, i.e. round **down** → 3 blocks of 80 = **240**.
+- And real air says 240, decisively. Folding the observed hops at each candidate period and
+  scoring **only positions with ≥2 observations** (singletons can't corroborate anything):
+
+  | period | agreement | corroborated positions |
+  |---|---|---|
+  | **240** | **90.1%** (100% on the cleanest capture) | 101 |
+  | 120 | 83.2% | 95 |
+  | 160 | 77.2% | 136 |
+  | 320 (our old value) | 39.1% | 64 |
+  | 256 | 0.0% | 83 |
+
+Rounding up also overflowed for several sub-GHz domains (FCC915 → 7×40=280, AU915 → 13×20=260), so
+this was never 2.4 GHz-specific. Fixed; all 11 domains now fit 256.
+
+Corroboration that 240 is right: the fold now pins **34/240** positions where theory predicts
+11 visible channels / 80 × 240 = **33**. Under the old 320 it "pinned" 86 where only 44 were
+possible — the excess was unchecked singletons.
+
+### 32c. Bug 2: the absolute channel index is off by one, and `freq_center` is not measured
+Our `ISM2G4` domain has `freq_start = 2400.4 MHz`, and ELRS computes
+`sync_channel = freq_count / 2 = 40` → 2440.4 MHz. But the pinned channel measures at **2441.4
+MHz**, i.e. our index **41**. Both sync-channel captures agree, independently.
+
+This is the AGENTS.md §5 "measured, not requested" rule biting on the **centre frequency** rather
+than the sample rate: we analyse at `center_freq_hz` from the `.meta.txt`, which is the value we
+*asked* the B205 for. Rather than guess a correction, `find_sync_channel()` now **self-calibrates**:
+the pinned channel is identifiable from the data alone, so whatever index it lands on IS
+`freq_count // 2`, and the difference is reported as `index_offset` (measured: **−1** on both
+captures). Relative structure is untouched, which is exactly why §31's cross-check read 100%
+before any of this was understood.
+
+### 32d. How the pinned channel is identified (the key measurement)
+The swap loop in `FHSSrandomiseFHSSsequenceBuild` skips `i % freqCount == 0` as a source, and its
+target is `offset + rand` with `rand` in 1..freqCount−1, so a block start is never a target either.
+**The sync channel therefore never moves, and it is the only channel that recurs exactly every 80
+hops.** Everything else is shuffled within its block. Per-channel gaps, in hops, measured:
+
+```
+  ch 41:  80.0, 80.0, 80.0, 80.1, 79.9, 80.0, ...   spread 0.3    <- PINNED
+  ch 40:  94.7, 72.0, 73.0, 95.0, 72.0, 73.2, ...   spread 23.0
+  ch 38:  18.0, 80.0, 142.0, 18.0, 80.0, 142.0,...  spread 124.1
+  ch 45: 147.0, 79.9, 13.0, 146.9, 80.0, 13.0, ...  spread 134.2
+```
+
+Unmistakable. And because those sightings are exactly 80 hops apart by construction, they are also
+the best timing reference in the capture — `find_sync_channel()` uses the first-to-last span to
+refine the hop interval (26.66492 and 26.66183 ms on the two captures, agreeing to 5 decimals),
+which removes the accumulated rounding that was shifting late block starts by a slot.
+
+### 32e. Retraction: the §31d "block model does not hold" negative was a capture artifact
+§31d reported a 0.07–0.13 same-channel-repeat rate against a model predicting zero, and I said it
+most likely came from slot misassignment. On the clean 2440.4 MHz capture the rate is **exactly
+0.0** against a 0.133 null — `zero_repeat: True`. The model holds.
+
+The difference is capture quality, not the model: the two ch0–10 captures ran with the SNR gate at
+its **floor (25.0 / 27.6 dB)** and so swept in marginal bursts with mis-measured centroids, while
+the 2440.4 MHz capture gated at **47.2 dB**. So §31d is withdrawn — it was measuring our own
+noise-floor bursts, not ELRS. `block_phase()` still reports `structure_detected` and `zero_repeat`
+separately, which is what let the difference show up at all.
+
+### 32f. One tool-reporting bug I introduced and fixed
+`crosscheck()` compared the 2440.4 MHz capture against the 2405.4 MHz ones and reported "0%
+agreement over 9 positions", which reads like a failure. It is not: those windows see **disjoint**
+channel sets (35–45 vs 0–10), and since each sequence position holds exactly one channel, a
+position one capture can record is one the other is blind to. The 9 "overlapping" positions were
+the rotation search aligning unrelated slots. It now returns NOT APPLICABLE and says to re-centre.
+
+### 32g. Status
+The hop fingerprint is **VALIDATED** at the absolute level: true sequence positions, reproduced
+across two captures with nothing fitted between them, with the firmware's own `position 0 ==
+sync channel` structure visible in the result. Three bugs fixed in the process, all found by
+measuring RF rather than reading code: sequence length (§32b), channel-index calibration (§32c),
+and §31d's own premature negative (§32e).
+
+Still **not** a decoded UID. The seed search remains the step from "fingerprint" to `net_id`, and
+it is now much better posed than in §31e: the absolute phase is known, so there is **no 240×
+rotation multiplier** any more, and we have 31–34 constraints against the 5 needed for a 2^31
+space. It is a C/parallel sweep (~1.3e12 ops worst case, hugely reduced by progressive filtering
+since the first constraint keeps ~1/80 of seeds).
+
+`protocol_catalog.py` still deliberately **unchanged** — same reasoning as §31f, and I'd still
+propose `SPECIFIC` with `link_id` = the absolute hop fingerprint. Your call too, @andeds.
+
+**Operator note:** capturing at **2440.4 MHz** is strictly better than 2405.4 MHz for this work —
+it sees the pinned sync channel, which gives absolute positions, self-calibrates the channel index,
+and lands bursts ~20 dB above the noise gate. Recommend it as the default for ELRS 2.4 FHSS work.
+
+— Claude

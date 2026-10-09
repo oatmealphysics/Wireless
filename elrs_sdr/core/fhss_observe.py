@@ -56,8 +56,14 @@ import numpy as np
 from .fhss import DOMAINS, FHSS_SEQUENCE_LEN, build_sequence
 
 ISM = DOMAINS["ISM2G4"]
-#: 80 channels at 1 MHz spacing -> the sequence is 4 blocks of 80
-SEQ_LEN = ((FHSS_SEQUENCE_LEN + ISM.freq_count - 1) // ISM.freq_count) * ISM.freq_count
+#: Sequence period: the whole multiple of `freq_count` that FITS in the
+#: firmware's 256-entry buffer, i.e. 3 blocks of 80 = **240**, not 4 of 320.
+#: This used to round UP and was wrong; the period was then measured off the
+#: air at 240 (90% fold agreement over 101 corroborated positions, vs 39% at
+#: 320 and 0% at 256) and confirmed against FHSS.cpp, whose own expression is
+#: `(FHSS_SEQUENCE_LEN / freqCount) * freqCount` -- integer division. See
+#: `fhss.build_sequence` and notes §32.
+SEQ_LEN = (FHSS_SEQUENCE_LEN // ISM.freq_count) * ISM.freq_count
 
 
 def channel_of(freq_hz: float, domain=ISM) -> int | None:
@@ -282,6 +288,14 @@ def crosscheck(a: HopPattern, b: HopPattern, seq_len: int = SEQ_LEN
     fa, fb = a.folded(seq_len), b.folded(seq_len)
     if not fa or not fb:
         return 0, 0.0, 0
+    # Two captures whose windows see DISJOINT channel sets can never share a
+    # sequence position: each position holds exactly one channel, so a position
+    # one capture can record is one the other is blind to. Comparing them is
+    # meaningless, and the rotation search will happily align unrelated
+    # positions and report 0% over a handful of them. Say "not applicable"
+    # instead of implying a failed test.
+    if not (set(a.channels_seen) & set(b.channels_seen)):
+        return 0, float("nan"), 0
     best = (0, 0.0, 0)
     for rot in range(seq_len):
         common = [(fa[p], fb[(p + rot) % seq_len])
@@ -292,6 +306,105 @@ def crosscheck(a: HopPattern, b: HopPattern, seq_len: int = SEQ_LEN
         if (agree, len(common)) > (best[1], best[2]):
             best = (rot, agree, len(common))
     return best
+
+
+def find_sync_channel(pat: HopPattern, freq_count: int = 80,
+                      tol: float = 3.0) -> dict:
+    """Find the PINNED sync channel, which calibrates both axes at once.
+
+    `FHSSrandomiseFHSSsequenceBuild` puts `syncChannel` at every index where
+    `i % freqCount == 0`, and the swap loop touches neither those indices (never
+    a source, since it skips `i % freqCount == 0`) nor them as targets (the
+    target is `offset + rand` with `rand` in 1..freqCount-1). So the sync
+    channel is the ONE channel that recurs exactly every `freq_count` hops;
+    every other channel is shuffled within its block and recurs irregularly.
+
+    Measured on `sync_ch40_20261009_161112` (20 s at 2440.4 MHz, 10 MS/s), that
+    signature is unmistakable -- gaps in hops, per channel:
+
+        ch 41:  80.0, 80.0, 80.0, 80.1, 79.9, ...   spread 0.3   <- pinned
+        ch 40:  94.7, 72.0, 73.0, 95.0, 72.0, ...   spread 23.0
+        ch 45: 147.0, 79.9, 13.0, 146.9, 80.0, ...  spread 134.2
+
+    Two things come out of it, neither of which has to be assumed:
+
+    1. **Absolute channel calibration.** ELRS computes
+       `sync_channel = freq_count / 2` = 40, i.e. 2440.4 MHz. We measured the
+       pinned channel one index higher (2441.4 MHz), so this capture's absolute
+       indices are offset by one -- a tuning/labelling offset, exactly the
+       "measured, not requested" trap AGENTS.md §5 flags for the sample rate,
+       applied to the centre frequency. `index_offset` is that correction.
+       Relative structure is unaffected, which is why the hop fingerprint
+       cross-checked at 100% before this was understood.
+
+    2. **Absolute sequence phase.** The sync channel's slots ARE the block
+       starts, so sequence position 0 is pinned instead of being anchored on
+       whichever hop we happened to see first. That removes the rotation
+       ambiguity that would otherwise multiply a seed search by `SEQ_LEN`.
+    """
+    T = pat.hop_interval_s
+    if T <= 0 or not pat.hops:
+        return {"channel": None, "reason": "no hop interval"}
+    cands = []
+    for ch in sorted(set(h.channel for h in pat.hops)):
+        t = [h.t_s for h in pat.hops if h.channel == ch]
+        if len(t) < 3:
+            continue
+        g = np.diff(np.array(t)) / T
+        spread = float(g.max() - g.min())
+        if spread <= tol and abs(float(g.mean()) - freq_count) <= tol:
+            cands.append((spread, ch, float(g.mean()), t))
+    if not cands:
+        return {"channel": None,
+                "reason": f"no channel recurs every ~{freq_count} hops"}
+    cands.sort()
+    spread, ch, mean_gap, times = cands[0]
+    # The sync-channel sightings are, by construction, EXACTLY `freq_count`
+    # hops apart -- a far cleaner timing reference than the grid search over
+    # channel-change gaps. Use the first-to-last span to refine the hop
+    # interval, which removes the accumulated rounding that otherwise shifts
+    # late block starts by a slot (seen as a 79-hop gap among 80s).
+    t_ref = float(times[-1] - times[0])
+    n_span = freq_count * (len(times) - 1)
+    hop_refined = t_ref / n_span if n_span > 0 else T
+    t0 = pat.hops[0].t_s
+    block_slots = [int(round((x - t0) / hop_refined)) for x in times]
+    return {
+        "channel": ch,
+        "mean_gap_hops": round(mean_gap, 3),
+        "spread_hops": round(spread, 3),
+        "n_sightings": len(times),
+        "index_offset": freq_count // 2 - ch,
+        "block_start_slots": block_slots,
+        "hop_interval_refined_s": hop_refined,
+        "unique": len(cands) == 1,
+    }
+
+
+def absolute_fold(pat: HopPattern, freq_count: int = 80,
+                  seq_len: int = SEQ_LEN) -> dict:
+    """Fold onto the sequence with position 0 pinned by the sync channel.
+
+    Unlike `folded()`, whose position 0 is just the first hop we happened to
+    see, this returns true sequence positions (and true channel indices, via
+    `index_offset`), so two captures of the same link fold onto the SAME
+    positions with no rotation search.
+    """
+    sync = find_sync_channel(pat, freq_count)
+    if sync.get("channel") is None:
+        return {"positions": {}, "sync": sync}
+    off = sync["index_offset"]
+    base = sync["block_start_slots"][0]
+    t0 = pat.hops[0].t_s
+    # use the sync-channel-refined interval, not the grid estimate
+    T = sync.get("hop_interval_refined_s") or pat.hop_interval_s
+    votes: dict[int, list[int]] = {}
+    for h in pat.hops:
+        slot = int(round((h.t_s - t0) / T))
+        votes.setdefault((slot - base) % seq_len, []).append(h.channel + off)
+    pos = {p: v[0] for p, v in votes.items() if len(set(v)) == 1}
+    return {"positions": pos, "sync": sync,
+            "n_dropped": len(votes) - len(pos)}
 
 
 def block_phase(pat: HopPattern, freq_count: int = 80) -> dict:
@@ -448,6 +561,44 @@ def selftest(verbose: bool = True) -> None:
         print(f"  [PASS] crosscheck of two phases of the same link: "
               f"rotation {rot}, agreement {agree*100:.0f}% over {n} positions")
     assert agree > 0.95 and n >= 10, (rot, agree, n)
+
+    # --- the sync-channel calibration, on a window that CAN see channel 40 --- #
+    center40 = ISM.channel_freq(ISM.sync_channel)
+    vis40 = set(range(ISM.sync_channel - 5, ISM.sync_channel + 6))
+    b40 = []
+    for slot in range(900):
+        ch = seq[slot % SEQ_LEN]
+        if ch not in vis40:
+            continue
+        f_off = ISM.channel_freq(ch) - center40
+        for k in range(4):
+            b40.append((int((slot * hop_s + k * 0.0066) * srate), f_off))
+    p40 = observe(b40, srate, center40)
+    sync = find_sync_channel(p40)
+    if verbose:
+        print(f"  sync channel found: ch={sync['channel']} "
+              f"mean_gap={sync['mean_gap_hops']} hops "
+              f"spread={sync['spread_hops']} offset={sync['index_offset']} "
+              f"unique={sync['unique']}")
+    assert sync["channel"] == ISM.sync_channel, sync
+    assert abs(sync["mean_gap_hops"] - ISM.freq_count) < 1.0, sync
+    assert sync["index_offset"] == 0, sync
+    assert sync["unique"], "the pinned channel must be unambiguous"
+    starts = sync["block_start_slots"]
+    # allow one slot of quantisation slack; real captures measured a spread of
+    # only 0.255 hops over 10 sightings, well inside this.
+    assert all(abs((b - a) - ISM.freq_count) <= 1
+               for a, b in zip(starts, starts[1:])), starts
+    if verbose:
+        print(f"  [PASS] the pinned sync channel is identifiable and its "
+              f"sightings are exactly {ISM.freq_count} hops apart")
+
+    af = absolute_fold(p40)
+    wrong = [(p, c) for p, c in af["positions"].items() if seq[p] != c]
+    assert not wrong, f"absolute fold disagrees with the sequence at {wrong[:5]}"
+    if verbose:
+        print(f"  [PASS] absolute fold pinned {len(af['positions'])}/{SEQ_LEN} "
+              f"TRUE sequence positions with 0 errors and NO rotation search")
     print("fhss_observe selftest PASS")
 
 

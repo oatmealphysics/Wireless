@@ -120,8 +120,22 @@ def build_sequence(seed: int, freq_count: int, sync_channel: int,
 
     Returns a list of length sequenceCount (>= out_len).
     """
-    # Round up to whole multiple of freqCount
-    sequence_count = ((out_len + freq_count - 1) // freq_count) * freq_count
+    # Whole multiple of freqCount that FITS IN `out_len` — i.e. round DOWN.
+    #
+    # *** CORRECTED 2026-10-09, found by measuring real RF (notes §32). ***
+    # This used to round UP, giving 4 blocks = 320 entries for the 80-channel
+    # 2.4 GHz domain. That is wrong twice over:
+    #   1. The firmware's buffer is `uint8_t FHSSsequence[FHSS_SEQUENCE_LEN]`
+    #      with FHSS_SEQUENCE_LEN = 256, so 320 entries would OVERFLOW it. The
+    #      header's own comment says the result is "always a whole multiple of
+    #      freqCount", and the only multiple that fits 80 into 256 is 3 -> 240.
+    #   2. The hop period measured off the air is 240, decisively: folding the
+    #      observed hops at P=240 gives 90% agreement over 101 corroborated
+    #      positions (100% on the cleanest capture), against 39% at P=320 and
+    #      0% at P=256.
+    # Rounding up also overflowed for several sub-GHz domains (FCC915: 7*40=280,
+    # AU915: 13*20=260), so this was not 2.4 GHz-specific.
+    sequence_count = (out_len // freq_count) * freq_count
 
     seq = []
     for i in range(sequence_count):
