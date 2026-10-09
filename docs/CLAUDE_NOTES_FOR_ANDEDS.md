@@ -876,3 +876,89 @@ applied to the decoder itself.
   (not FLRC) path. If the firmware names the CR, that removes the biggest unknown from the search.
 
 — Claude
+
+---
+
+## 20. LoRa payload chain built + CRC-gated SYNC recovery: framework VALIDATED, 0/21888 on air (honest) — and a merge plan (2026-10-08, Claude)
+
+### 20a. MERGE PLAN (operator asked how we avoid colliding — please follow this)
+You're working in parallel, so I deliberately put this build in a **NEW file**:
+**`elrs_sdr/core/lora_payload.py`**. New files cannot conflict. **File ownership while this is
+live:**
+- **Mine:** `elrs_sdr/core/lora_payload.py` (new), and I'll keep touching
+  `docs/CLAUDE_NOTES_FOR_ANDEDS.md` (yours is `ANDEDS_NOTES_FOR_CLAUDE.md` — we never cross).
+- **Yours, untouched by me:** `elrs_sdr/detect.py`, `elrs_sdr/core/identify.py`,
+  `elrs_sdr/core/lora.py`, `docs/COUNTER_UAS_SDR_*.md`.
+- **Shared, so coordinate:** `AGENTS.md`, `elrs_sdr/protocol_catalog.py`,
+  `elrs_sdr/positivedet.py`. I added `fft_resample`/`lora_chirp_bw`/`scan_lora_modes` to the
+  bottom of `positivedet.py` — **append at the bottom, don't restructure**, and we won't collide.
+- When I wire `net_id` into `detect.py` it'll be **one line** in `_demod_burst`; I'll flag it in
+  advance here rather than refactoring your file.
+- Mechanics: `git pull --rebase` before you work, small commits, push often. If we do conflict,
+  the capture binaries are the painful part — never `git add -A` from the repo root.
+
+### 20b. What I built: `core/lora_payload.py`
+The real chain that `core/lora.symbols_to_bits` only stubbed (§19d):
+`symbols → (±offset) → gray → diagonal de-interleave → Hamming/parity → nibbles → bytes →
+[optional de-whitening] → ELRS packet`, plus the air-recovery:
+- `recover_sync(symbols, sf)` — searches the genuinely-unknown parameters
+  (gray mode ×3, symbol offset ×3, CR 4/5–4/8, data-nibble half ×2, diagonal sense ×2, bit order
+  ×2, whitening ×2 = **576 combos**, × 2 packet sizes) and lets the **ELRS CRC** pick.
+- `recover_from_bursts(...)` — requires **corroboration**: the same
+  `(uid4, uid5, ota_version, chain-options)` on **≥2 independent bursts**. A lone CRC pass is
+  noise and is reported as such, with the expected-false-accept count.
+- `SyncHit.net_id` = `uid4uid5` hex = the reference device's `raw_net_id`.
+
+**Why no chicken-and-egg:** a SYNC packet carries `uid4`,`uid5` in its own payload, the seed is
+`(uid4<<8|uid5) ^ (ota_version<<8)`, and `validate_crc` uses `nonce_validator = 0` for SYNC. So the
+CRC is computable **entirely from bytes the packet hands us** — no prior UID.
+
+**Framework VALIDATED (SELF-CONSISTENT):** built valid SYNC packets with
+`ota.build_sync`+`ota_uid_crc_init` for OTA v4 and v6, both OTA4 (8 B/CRC14) and OTA8 (13 B/CRC16),
+and `_try_sync` recovered **uid4=0x12, uid5=0x34 and the correct version in all four cases**, with
+no UID supplied and no false hits on the wrong versions. So the recovery logic is right; what's
+unproven is the chain feeding it.
+
+### 20c. On real air: 0 CRC-valid SYNC out of 21,888 trials (19 preamble-locked bursts)
+Not a hit. Stated plainly. Context that matters: expected false accepts were **1.34** and we got
+**0**, so the CRC gate is behaving — it is not spuriously firing.
+
+### 20d. What I RULED OUT, and the two live hypotheses
+I first assumed symbol-recovery precision (CFO/STO) was the problem. **Diagnostics disprove that:**
+- Preamble: **twelve consecutive symbols of exactly bin 17** — no drift, no ±1 jitter.
+- Then `26, 34` ⇒ minus the preamble bin = **(9,17) = sync word 0x12**, matching §19b.
+- Per-symbol dechirp peaks are **sharp** (peak/median 70–138) and windowed vs un-windowed FFT agree
+  on the bin. Only the pre-preamble symbol is noise (peak/med 2.0).
+- Start-offset sweep: a +N-sample shift moves the bin by +N, exactly as LoRa STO should — stable,
+  not jittery.
+⇒ **Symbol recovery is bin-exact. The failure is downstream.**
+
+**Hypothesis 1 (strong, and it may fully explain 0 hits): most bursts aren't SYNC packets.**
+ELRS sends SYNC only periodically; at 150 Hz the overwhelming majority of bursts are **RC_DATA**,
+whose CRC mixes in the **`ota_nonce`** — which we do NOT know. Those are *unvalidatable* by this
+method by construction. With 19 bursts I may have sampled **zero** SYNC packets, regardless of
+whether my chain is correct. **This is the cheapest thing to fix: use far more bursts** (there are
+125–145 per 5 s capture × 3 captures ≈ 400) to actually catch SYNC frames.
+
+**Hypothesis 2: the chain model is structurally incomplete** — e.g. the interleaver block geometry,
+an implicit-header stage, or an SX1280-specific deviation from textbook SX127x LoRa. Not a
+parameter I'm searching, but a missing stage.
+
+### 20e. Next steps (mine, in order)
+1. **Scale the burst count** (~400 bursts, all three captures) to catch actual SYNC frames — tests
+   hypothesis 1 without touching the chain. Needs the search made faster first (it's pure-python
+   bit loops; vectorise or prune combos early).
+2. **Extend to RC_DATA with a nonce sweep** — the OTA nonce is small; if the chain is right, a
+   nonce sweep on RC_DATA packets would CRC-validate and prove the chain even with no SYNC frame.
+3. If both fail ⇒ hypothesis 2, and the chain needs the reference's actual LoRa constants.
+
+**@andeds — still the highest-value thing you could hand me:** the reference firmware's ELRS
+**LoRa** path — the **coding rate** at SF7/812 kHz, the de-interleave/whitening constants, and
+whether it treats the payload as implicit-header. Any one of those collapses my search space; the
+CR alone removes a factor of 4.
+
+**Status unchanged, deliberately:** ELRS stays **FAMILY** in `protocol_catalog.py`. We are
+frame-locked with the mode known (SF7/812 kHz) and the sync word read off the air, but **no
+CRC-valid payload ⇒ no `net_id` ⇒ not IDENTIFIED.**
+
+— Claude
