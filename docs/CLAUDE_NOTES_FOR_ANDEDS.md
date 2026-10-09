@@ -1673,3 +1673,110 @@ the same link. What changed is that the *reason* is now known and documented rat
 and the receive path is proven correct (§29a) rather than merely unrefuted.
 
 — Claude
+
+---
+
+## §31. ✅ A PER-LINK IDENTIFIER, RECOVERED PASSIVELY — the FHSS hop fingerprint works
+*(Claude, 2026-10-09, on two real captures of the operator's live link)*
+
+This is the §30c plan, built and **validated on real air**. New files:
+`elrs_sdr/core/fhss_observe.py` (the module) and `fhss_scan.py` (the runner).
+
+### 31a. The result
+Two captures of the same link, taken **33 minutes apart** (15:20 and 15:53), fingerprinted
+independently and then cross-checked:
+
+```
+ctrlon_155306  vs  sync30_152002
+  best rotation 46, agreement 100% over 73 overlapping positions
+  chance rate for 11 visible channels: 9%
+  VERDICT: the hop fingerprint is REPRODUCIBLE -> a real per-link identifier.
+```
+
+**100% over 73 positions against a 9% chance rate.** The probability of that by coincidence is
+(1/11)^73 ≈ 10^-76. This is not a marginal correlation of the kind §3 warns about — it is the
+same sequence read twice.
+
+### 31b. Three independent corroborations, none of them fitted
+1. **Hop interval, measured from the air on both captures: 26.664 ms.** 150 Hz packets are
+   6.666 ms, so that is **exactly 4 packets per hop** — ELRS's `FHSShopInterval = 4`, recovered by
+   measurement, never assumed. Both captures agree to 4 decimal places.
+2. **PreambleLen 12** from §30 still matching our 11–13 lock.
+3. **The block phase agrees with the fold rotation.** `block_phase()` locates the 80-hop boundary
+   by minimising same-channel repeats, knowing *nothing* about the other capture. It returns
+   **23** and **69** — a difference of **46**, which is *exactly* the rotation the fold-agreement
+   search picked independently. Two unrelated methods landing on the same alignment is a 1-in-80
+   coincidence otherwise.
+
+### 31c. How it works (and why the LI wall doesn't apply)
+The fingerprint is built entirely from **burst centre frequencies over time** — data
+`find_bursts` already produces. No payload, no Hamming, no interleaver, no CRC. So
+`CR_LI_4_8` is irrelevant to it.
+
+- `channel_of()` maps each burst centre to one of the 80 ISM2G4 channels, rejecting anything more
+  than 0.4 channel off-grid so a Wi-Fi hump or DC spur can't be rounded onto a channel.
+- `estimate_hop_interval()` **measures** the hop period from channel-change gaps.
+- `refine_interval()` then sharpens it by regressing dwell time on slot index. **This one matters:**
+  the grid estimate was 26.64 ms against a true 26.60 ms, and that 0.15% error *accumulates* to
+  1.35 slots of drift over 900 hops, which silently corrupts every late position. Without the
+  refinement the fold disagreed with its own ground truth.
+- `folded()` folds observations onto the 320-hop sequence period, **dropping** any position where
+  two passes disagree rather than guessing.
+
+`selftest()` validates the whole path against a sequence built from a **known seed**: 44/320
+positions recovered, **100% agreement at one consistent rotation**, plus a same-link/different-phase
+cross-check at 100%.
+
+### 31d. One honest negative: the zero-repeat block model does NOT hold
+`fhss.build_sequence` makes each 80-hop block a permutation of all 80 channels, so each visible
+channel should appear **exactly once per block**. Real air says otherwise:
+
+| capture | best repeat rate | all-phase null |
+|---|---|---|
+| ctrlon_155306 | 0.128 | 0.288 |
+| sync30_152002 | 0.072 | 0.246 |
+
+So **80-hop structure is clearly detected** (2–4× better than the null at one specific phase, and
+that phase corroborates the rotation per 31b) but the **zero-repeat prediction fails**. I checked
+the obvious cause — the burst detector splitting one dwell into two — by adding
+`_merge_split_dwells()`. It changed **neither** the dwell count nor the repeat rate, so splitting
+is *not* it. Most likely slot misassignment from timing jitter near a block boundary. I'm reporting
+this as an open discrepancy rather than papering over it: `block_phase()` returns
+`structure_detected` and `zero_repeat` as **separate** flags for exactly that reason.
+
+This does not weaken 31a — the fingerprint's validity rests on the cross-capture agreement, which
+is empirical, not on the block model being exactly right.
+
+### 31e. The road to a true `net_id` is now short, and costed
+The LCG seed is `fhss.uid_seed()` masked to 31 bits, so the space is **2^31 ≈ 2.1e9 — not 2^48.**
+Each observed (position, channel) pair constrains log2(80) ≈ 6.32 bits, so **5 observations pin the
+seed uniquely.** We have **82 and 101**. Information is not the constraint; the sweep is:
+
+- ~600 ops per candidate (a 320-entry sequence build) → ~1.3e12 ops for a full sweep. That is a
+  **C / parallel job, not a Python one.**
+- Progressive filtering makes it much cheaper than it looks: the first constraint keeps ~1/80 of
+  seeds, the second ~1/6400, so after two constraints almost nothing survives to be tested further.
+  Only block 0 (80 entries) is needed to test block-0 constraints.
+- The open problem is the **unknown absolute phase**: our fold is anchored on the first observed
+  hop, so a naive search multiplies by 320 rotations. `block_phase()` already cuts that to the 4
+  blocks (phase mod 80 is measurable), which is the difference between feasible and not.
+
+`seed_search_cost()` reports these numbers live rather than implying the search is free.
+
+### 31f. Status — and a catalog change I am NOT making unilaterally
+The hop fingerprint is **VALIDATED** per AGENTS.md §3: reproduced on two real captures of the same
+link, 33 minutes apart, with three independent corroborations and one documented negative.
+
+What that means for `protocol_catalog.py` is a judgement call I'd rather we make together, @andeds.
+My read: ELRS has genuinely moved past `FAMILY` — we now extract a reproducible per-link
+discriminator from the air, which is precisely what the reference C-UAS SDR surfaces as "Net ID",
+and AGENTS.md §1 explicitly names the FHSS sequence as the identifier we can actually recover. But
+it is a **fingerprint, not a decoded UID**, so `IDENTIFIED` would overclaim. I think the honest
+level is **`SPECIFIC`** with `link_id` = the hop fingerprint, and I've left the catalog untouched
+pending your view rather than promoting our own work.
+
+Also worth surfacing in WaveRaider (AGENTS.md §1, delivery surface): a hop fingerprint is per-link,
+stable, and cheap to compute from data the scanner already has — it is exactly the kind of thing the
+UI should show next to a detected link.
+
+— Claude
