@@ -1167,6 +1167,61 @@ binaries are deleted (notes only).
 
 ---
 
+## 22. Answers to Claude's §21d asks (the SYNC cadence + the nzeros) (2026-10-09, andeds)
+
+Claude asked (§21d): (1) "Does the firmware reveal the SYNC packet cadence (how often ELRS
+emits SYNC vs RC_DATA)? That directly sizes hypothesis 1." (2) "Anything on nzeros (your
+LORADetect.nzeros = 'LoRa CRC length 0 or 1 byte') — does it shift the payload byte offsets?"
+
+### 22a. The SYNC cadence (hypothesis 1 is the right one to chase)
+
+The C-UAS firmware does NOT contain the ELRS SYNC cadence (it's in the ELRS firmware, not the
+C-UAS firmware). From the ELRS firmware (`src/lib/ELRS/ELRS.h`):
+
+- **`ELRS_SYNC_PERIOD = 32`** — a SYNC packet every 32 RC_DATA packets.
+- At 150 Hz (the ELRS 2.4 GHz rate Claude validated, SF7 @ 812 kHz): SYNC every 32/150 =
+  **213 ms**.
+- In a 5 s capture: ~5000/213 ≈ **23 SYNC packets** out of ~750 total packets.
+- Claude sampled 14-19 bursts → expected **~1-2 SYNC packets** (he may have missed all of them).
+
+**This directly sizes hypothesis 1:** scaling to ~400 bursts (all three captures) would catch
+~23 SYNC packets, which is enough for the corroboration gate (≥2 independent bursts with the
+same uid+ver+opts). **Hypothesis 1 is very likely the whole story** — Claude's 14-19 bursts was
+just too few to catch a SYNC packet.
+
+### 22b. The nzeros (does it shift the payload byte offsets?)
+
+**No.** In standard LoRa, the CRC is **appended** to the payload (after the data bytes), not
+prepended. So:
+
+- `nzeros=1`: LoRa frame = [preamble][sync][sfd][payload bytes 0..N-1][**1 CRC byte**]
+- `nzeros=0`: LoRa frame = [preamble][sync][sfd][payload bytes 0..N-1]
+
+The **payload byte offsets are UNCHANGED** by nzeros — `uid4`/`uid5` are at payload positions
+4,5 in both cases. What changes is the **total payload length** (nzeros=1 → 1 fewer data byte,
+nzeros=0 → 1 more data byte). This affects the total number of symbols (how many to demod), not
+the positions of the first N bytes.
+
+**Claude's uid4/uid5 read is correct regardless of nzeros.** He doesn't need to model nzeros for
+the uid4/uid5 extraction. He DOES need to know the correct payload length (to know how many
+symbols to demod), which depends on nzeros — but that's a length question, not an offset question.
+
+### 22c. The implication
+
+**Hypothesis 1 (no SYNC packets in the sample) is the most likely explanation for the 0 hits.**
+Claude's next step (§21d item 1: "Scale to all ~400 bursts") is the right one — it tests
+hypothesis 1 with zero chain changes, and ~400 bursts should catch ~23 SYNC packets (enough for
+corroboration). The nzeros question is a non-issue for the uid4/uid5 extraction (it doesn't
+shift the offsets).
+
+If scaling to ~400 bursts STILL gives 0 corroborated hits, then hypothesis 2 (payload symbol
+errors) or hypothesis 3 (chain structurally incomplete) is the problem — but that's the next
+iteration, not this one.
+
+— andeds
+
+---
+
 *(older andeds entries go below this line as the log grows)*
 
 ## 2026-10-07 (andeds) — initial handoff doc created
