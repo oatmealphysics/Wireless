@@ -645,3 +645,95 @@ structure (length, chip rate, what `parse_sync_0` actually correlates) out of th
 I'll implement the correlator against these bursts on the laptop.
 
 — Claude
+
+---
+
+## 17. ROOT CAUSE FOUND: `lora_chirp` assumed srate == LoRa BW. The link is ELRS **LoRa SF7 @ BW 812 kHz** (2026-10-08, Claude, VALIDATED on live RF)
+
+The operator ran three 5 s B205 captures on my recommended channel. This turn produced the first
+real identification. Read 17c — it invalidates a conclusion we both held.
+
+### 17a. The captures (and the USB fix holding up outside the sweep path)
+`captures/live_ch5_20261008_2040*.complex8` — 3 × 5 s, 25 M samples, **2405.4 MHz**,
+measured **4.9995 MS/s** (99.99% of the requested 5 MS/s), **no PARTIAL/stall note**, no clipping
+(`clip%=0.000`), DC ≈ 0. So the recv-ring + `_stop_stream()` fix sustains a 5-second
+single-channel stream, not just the 30 ms/channel sweep. Capture 1 was ~11× weaker than 2 and 3
+(mean |iq| 0.0009 vs 0.0102/0.0124) — use 204103 / 204114.
+
+### 17b. How I picked the channel (and my earlier recommendations were bad)
+I had recommended ch41, then ch76, off a **60 ms slice** of the `.cdif`. The operator pushed back,
+so I finally analysed the **`.fft` properly: it's a 1153-bin × 3500-frame waterfall, 90.08 MHz from
+2396.43 MHz, 11.68 ms/frame = 40.9 s** — i.e. the whole band, the whole hop. Result: **all 80
+channels are in the hop set**, peak excursions 48–60 dB over a uniform −100.5 dB floor, hit rates
+5–14%. But not uniform: **ch0–ch10 are the strongest (57.7–60.4 dB)** and **ch50–ch57 the weakest
+(47.3–53.0 dB)** — and the 20 MHz stare was centred at 2450 = **ch50, the worst region in the band**.
+That likely explains much of why the stare captures only ever reached PRESENCE. Lesson: use the
+90 MHz waterfall to pick the stare channel; don't extrapolate from a 60 ms slice.
+
+### 17c. ⚠️ It is LoRa, NOT FLRC — and my own measurement nearly said otherwise
+I first measured the live bursts as 312–662 kHz wide, constant-envelope (ampCV 0.06), deviation
+~±250 kHz, and concluded **FLRC/GFSK**. That was wrong, caused by my own ±400 kHz channel filter
+**clipping** an 812 kHz signal. With a ±1 MHz filter the instantaneous frequency is an unmistakable
+**LoRa chirp**: a monotonic ramp with **linear-ramp correlation r = −1.000**, repeatedly wrapping
+(+218 kHz → −574 kHz, snap back, repeat) = the chirp sawtooth of a **LoRa preamble**.
+**So §15c's "looks like a LoRa chirp" was right and my FLRC reading was the artifact.** Be careful:
+constant-envelope does NOT discriminate — LoRa and FLRC are both constant-amplitude. The
+discriminator is inst-freq *structure* (linear ramp vs discrete levels), and the filter must be
+wider than the signal or you will manufacture the wrong answer.
+
+### 17d. THE ROOT-CAUSE BUG (this is the one that blocked identification all along)
+`positivedet.lora_chirp()` dechirps against `_base_chirp(sf)`, which is 2^sf samples sweeping the
+**full sample rate** — i.e. it implicitly assumes **srate == the LoRa bandwidth** (1 sample/chip).
+On any wideband capture that is false, so a genuine LoRa link scores **0.0 at every SF**:
+
+| same burst | SF5 | SF6 | **SF7** | SF8 | SF9 |
+|---|---|---|---|---|---|
+| native 4.9995 MS/s (BW 812 k = 16% of srate) | 0.00 | 0.00 | **0.00** | 0.00 | 0.00 |
+| resampled to 812 kHz (1 sample/chip) | 0.00 | 0.00 | **1.00** | 0.00 | 0.00 |
+
+**Validated: 17 of 20 bursts across the two independent captures score SF7 = 1.00**, SF6/SF8
+rejected, at many times and on ch3/4/5/6/7. ⇒ the link is **ELRS LoRa SF7 @ BW 812 kHz = the ELRS
+2.4 GHz 150 Hz packet rate.**
+
+**This single assumption explains everything we've been chasing:** your `detect.py` LoRa branch
+never fired (`lora_chirp` 0.0 → fell through to `unknown`), `identify.classify_lora` returned zero
+`lora_hits` on the 28 MS/s `.cdif` (BW is only 2.9% of *that* rate), and every burst was reported
+`fsk_unidentified`. It was never "no clean burst" — it was the detector's frame of reference.
+
+### 17e. The fix (landed, numpy-only — scipy is NOT a package dependency)
+- **`positivedet.fft_resample()`** — spectrum-truncating resampler (scipy's `resample`, in numpy).
+  For downsampling it inherently low-passes, which IS the channel filter for a baseband burst.
+- **`positivedet.lora_chirp_bw(iq, srate, sf, bw)`** — resample to `bw`, then score.
+- **`positivedet.scan_lora_modes(iq, srate)`** — scans the (bw, sf) grid over
+  `ELRS_LORA_BWS = (812k, 1625k, 500k)` × `SFS = (5..9)` and **discovers** the mode rather than
+  assuming it. `lora_chirp`'s own validated contract is untouched.
+- **`detect.py::_demod_burst`** LoRa branch now centres the burst (it was dechirping off-centre)
+  and calls `scan_lora_modes`.
+
+**End-to-end result on the live capture** — first time past `unknown` on real RF:
+`protocols seen: ExpressLRS, LoRa, WiFi` with `LoRa 2405.41 MHz 55.3 dB SF7`.
+Both selftests pass (`elrs_sdr.detect selftest`, `elrs_sdr.selftest` ALL PASS).
+
+### 17f. What's still broken / for you
+1. **`per-link ID extracted: 0/162`** — the Net ID / sync-word air-recovery still does not fire.
+   That is now THE single remaining gap, and it is no longer blocked on data or on the LoRa mode:
+   we know it's SF7/812 kHz, we have 125–145 bursts per 5 s at 47–58 dB, and the preamble is
+   visibly clean. What's needed is the actual LoRa demod → sync word.
+2. **WiFi false positives.** The run emits many `WiFi 2407.0x MHz` detections at 11–24 dB with
+   `0 kHz` bandwidth. Those are the **CW spurs** (I counted 2,389–2,653 windows with <50 kHz
+   bandwidth in these captures) tripping the OFDM/WiFi branch. A sub-50-kHz "bandwidth" cannot be
+   802.11 — a width gate on the WiFi branch would kill the whole class.
+3. **`bw_hz` is never populated** in the `Detection` dataclass (it lives only in `extra`), so every
+   line prints `0 kHz`. Cosmetic, but it hides exactly the number that would have exposed #2.
+4. **`identify.classify_lora` has the same latent srate==BW bug** — I only fixed the `detect.py`
+   path. Worth porting `scan_lora_modes` into it so both engines agree.
+5. Evidence class reads `synthetic` for the SF7 LoRa hits, but `lora_chirp` is the
+   capture-validated detector and this is now validated against real RF — probably should be
+   `validated` for the LoRa path.
+
+**My next step** (unless you've already got it): the LoRa demod at SF7/812 kHz — dechirp, recover
+symbols, find the sync word, and compare against `flrc_sync_word`/the ELRS LoRa sync derivation
+across OTA v2–v6 to back out `uid[2..5]`. Your `parse_sync_0` + `.fc64` template notes are the
+reference I want for that.
+
+— Claude

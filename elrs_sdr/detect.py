@@ -501,25 +501,40 @@ def _demod_burst(burst: np.ndarray, srate: float,
     extra["freq_offset_hz"] = offset
 
     # ---- 1. LoRa (ELRS / Crossfire / LoRa-PHY) ----
-    # The LoRa chirp detector (positivedet.lora_chirp) gives the SF + a score.
-    # Try each SF (5-9) to find the best (the reference iterates the LoRa DSP cores
-    # at 250/500/812.5 Hz — we iterate the SFs).
-    best_sf, best_score = None, -1.0
+    # DISCOVER the (bandwidth, spreading-factor) pair — don't assume it.
+    #
+    # Fix (Claude, 2026-10-08, VALIDATED on the operator's live link): this used
+    # to call `lora_chirp(burst, srate, sf=sf)` on the raw burst at the capture's
+    # sample rate. `lora_chirp` dechirps against a 2^sf reference that sweeps the
+    # FULL sample rate, i.e. it assumes srate == the LoRa bandwidth (1 sample per
+    # chip). On any real wideband capture that assumption is false, so a perfectly
+    # good LoRa link scored 0.0 at every SF and this branch never fired — which is
+    # why every real burst came back `unknown`/`fsk_unidentified`.
+    #   Same burst, native 4.9995 MS/s (BW 812 kHz = 16% of srate): SF5..9 = 0.000
+    #   Same burst, resampled to 812 kHz (1 sample/chip):            SF7  = 1.000
+    # 17 of 20 bursts across two independent captures agree: ELRS LoRa SF7 @
+    # BW 812 kHz (the ELRS 2.4 GHz 150 Hz rate). `positivedet.scan_lora_modes`
+    # now scans the (bw, sf) grid, resampling to each candidate BW first.
+    # Also centre the burst before dechirping (it was being dechirped off-centre).
+    best_sf, best_score, best_bw = None, -1.0, None
+    bb_lora = burst
     try:
         from elrs_sdr import positivedet as _pd
-        for sf in (5, 6, 7, 8, 9, 12):
-            score, _lbl = _pd.lora_chirp(burst, srate, sf=sf)
-            if score > best_score:
-                best_score, best_sf = score, sf
+        bb_lora = _identify.freq_shift_to_baseband(burst, srate, offset)
+        best_score, best_sf, best_bw, lora_metric = _pd.scan_lora_modes(bb_lora, srate)
+        extra["lora_mode"] = lora_metric
+        if best_bw:
+            extra["lora_bw_hz"] = best_bw
     except Exception:
         pass
     if best_sf is not None and best_score > 0.5:
         # it's LoRa-PHY; now fingerprint to the specific protocol (the SPECIFIC bar)
-        proto, ev, fx = fingerprint_lora_protocol(burst, srate, best_sf, bw or 250e3)
+        proto, ev, fx = fingerprint_lora_protocol(bb_lora, srate, best_sf,
+                                                  best_bw or bw or 250e3)
         extra.update(fx)
         extra["lora_score"] = best_score
         # extract the Net ID (the ELRS bind UID via air-recovery)
-        net_id = _extract_elrs_net_id(burst, srate, uid)
+        net_id = _extract_elrs_net_id(bb_lora, srate, uid)
         # the detection level: SPECIFIC if the fingerprint named ELRS/Crossfire,
         # FAMILY if it stayed at LoRa; IDENTIFIED if we got a Net ID.
         if net_id is not None:

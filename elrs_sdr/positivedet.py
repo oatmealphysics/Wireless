@@ -394,3 +394,92 @@ def ocusync_phy(iq: np.ndarray, srate: float) -> tuple[float, str]:
         score += 0.4 * min(1.0, (prom - 1.2) / 2.0)
     return min(1.0, score), (f"OcuSync? M@2us={m_ocusync:.2f} "
                              f"vs 802.11={m_80211:.2f} (prom={prom:.2f})")
+
+
+# ---------------------------------------------------------------------------- #
+# BW-aware LoRa mode scan — the fix for "lora_chirp scores 0.0 on a real link"
+#
+# THE BUG THIS EXISTS TO FIX (Claude, 2026-10-08, VALIDATED on real RF):
+#   `lora_chirp()` dechirps against `_base_chirp(sf)`, which is 2^sf samples long
+#   and sweeps the FULL sample rate. That implicitly assumes **srate == the LoRa
+#   bandwidth** (one sample per chip). Hand it a wideband capture and the
+#   reference chirp no longer matches the signal's sweep rate at all, so a
+#   perfectly good LoRa link scores 0.0.
+#
+#   Measured on the operator's own live ELRS link (captures/live_ch5_*.complex8,
+#   B205mini @ 4.9995 MS/s, 2405.4 MHz, drone+controller 1-2 m away):
+#     same burst, native 5 MS/s (BW 812 kHz = 16% of srate):  SF5..SF9 all 0.000
+#     same burst, resampled to 812 kHz (1 sample/chip):        SF7 = 1.000
+#   Across 20 bursts in two independent captures, 17 scored SF7 = 1.00 with
+#   SF6/SF8 rejected => the link is ELRS LoRa SF7 @ BW 812 kHz (the ELRS 2.4 GHz
+#   150 Hz packet rate). This single assumption is why every engine
+#   (detect.py's LoRa branch, identify.classify_lora) reported
+#   `fsk_unidentified` / zero lora_hits on real captures.
+#
+# So: resample the (already baseband-centred) burst to each candidate LoRa
+# bandwidth before dechirping, and scan the (bw, sf) grid. numpy-only on purpose
+# — scipy is NOT a dependency of this package.
+# ---------------------------------------------------------------------------- #
+
+# ELRS LoRa bandwidths. 2.4 GHz uses 812 / 1625 kHz; the sub-GHz rates use 500 kHz.
+ELRS_LORA_BWS: tuple[float, ...] = (812e3, 1625e3, 500e3)
+ELRS_LORA_SFS: tuple[int, ...] = (5, 6, 7, 8, 9)
+
+
+def fft_resample(x: np.ndarray, num: int) -> np.ndarray:
+    """Resample `x` to `num` samples by truncating/zero-padding its spectrum.
+
+    Equivalent to scipy.signal.resample but numpy-only. For DOWN-sampling this
+    inherently low-passes (the spectrum is truncated), which is exactly the
+    channel filter we want on a burst that is already shifted to baseband.
+    """
+    x = np.asarray(x, dtype=np.complex128)
+    n = len(x)
+    if num <= 0 or n == 0:
+        return np.zeros(0, dtype=np.complex64)
+    if num == n:
+        return x.astype(np.complex64)
+    X = np.fft.fft(x)
+    Y = np.zeros(num, dtype=np.complex128)
+    keep = min(n, num)
+    half = keep // 2
+    Y[:half] = X[:half]                      # positive frequencies
+    if keep - half:
+        Y[-(keep - half):] = X[-(keep - half):]   # negative frequencies
+    return (np.fft.ifft(Y) * (num / n)).astype(np.complex64)
+
+
+def lora_chirp_bw(iq: np.ndarray, srate: float, sf: int, bw: float) -> tuple[float, str]:
+    """`lora_chirp` for a signal whose bandwidth is NOT the sample rate.
+
+    Resamples to `bw` (one sample per chip, what the dechirp reference assumes)
+    and then scores. `iq` should already be centred at baseband.
+    """
+    if srate <= 0 or bw <= 0 or len(iq) < 16:
+        return 0.0, "too short"
+    num = int(round(len(iq) * bw / srate))
+    if num < (1 << sf) * 2:          # need at least a couple of symbols
+        return 0.0, f"too short at bw={bw/1e3:.0f}k (n={num})"
+    rs = fft_resample(iq, num)
+    score, metric = lora_chirp(rs, bw, sf=sf)
+    return score, f"{metric} @ SF{sf}/BW{bw/1e3:.0f}k"
+
+
+def scan_lora_modes(iq: np.ndarray, srate: float,
+                    bws: tuple[float, ...] = ELRS_LORA_BWS,
+                    sfs: tuple[int, ...] = ELRS_LORA_SFS,
+                    ) -> tuple[float, int | None, float | None, str]:
+    """Scan the (bandwidth, spreading-factor) grid and return the best LoRa claim.
+
+    This is the 'measure, don't assume' entry point for the LoRa PHY: it does not
+    take the rate/BW as a given, it DISCOVERS which (bw, sf) the link is using.
+
+    Returns (best_score, best_sf, best_bw, metric).
+    """
+    best = (0.0, None, None, "no lora mode matched")
+    for bw in bws:
+        for sf in sfs:
+            score, metric = lora_chirp_bw(iq, srate, sf, bw)
+            if score > best[0]:
+                best = (score, sf, bw, metric)
+    return best
