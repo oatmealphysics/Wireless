@@ -18,6 +18,20 @@
 > **Handling note:** the firmware binary was provided as an `.xz`-compressed tar. I decompressed it
 > to analyze the structure, then **deleted all the device binaries** (the operator's rule: don't
 > keep the device material on disk — notes only). These notes are the durable artifact.
+>
+> **This is the "how it's built" (architecture) doc.** It's the middle doc in a three-doc set:
+> - `docs/COUNTER_UAS_SDR_DETECTION_ID.md` — **how it works** (the 5-stage detection/identification
+>   pipeline, the per-protocol DSP cores, the hysteresis detection, the sync correlation, the
+>   per-protocol demod, the per-link Net ID extraction, the false-alarm gates, the ECM side, + the
+>   `elrs_sdr/detect.py` implementation mapping). Written the same day, from a deeper algorithm
+>   analysis.
+> - **`docs/COUNTER_UAS_SDR_FIRMWARE_DEEP_DIVE.md` (this doc)** — **how it's built** (the RF
+>   front-end, the FPGA, the daemons, the flatbuffers data model, the loadset/ECM config).
+> - `docs/REFERENCE_COUNTER_UAS_SDR.md` — **what it is + how to use it** (the operator manual).
+>
+> **The implementation that ports this firmware's detection/identification algorithm into our
+> system is `elrs_sdr/detect.py`** (the software analog of the reference's radio pipeline; see the
+> DETECTION_ID doc §9 for the stage-by-stage mapping).
 
 ---
 
