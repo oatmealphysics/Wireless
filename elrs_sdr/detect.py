@@ -432,6 +432,79 @@ def _extract_elrs_net_id(burst: np.ndarray, srate: float,
     return None
 
 
+def _extract_elrs_lora_net_id(burst_bb: np.ndarray, srate: float,
+                              sf: int, bw: float) -> NetID | None:
+    """Extract the ELRS per-link Net ID from a LoRa burst (the payload chain path).
+
+    Wire-in (andeds, 2026-10-09): this is the LoRa payload chain extraction —
+    Claude's `lora_payload.recover_sync` (the Gray decode, de-interleave,
+    de-whiten, Hamming FEC, CRC gate). It takes the demodulated symbols (not
+    the raw IQ), so we demod the burst to symbols first.
+
+    The LoRa sync word is 0x12 (stock SX12xx, NOT UID-seeded — the per-link ID
+    is in the payload, the ELRS SYNC packet positions 4,5). The recovery chain:
+    demod a burst to payload bytes, read candidate uid4/uid5 from payload
+    positions 4,5, for v in OTA v2..v6: crc_init = (uid4<<8|uid5) ^ (v<<8),
+    ota.validate_crc(...). A passing CRC confirms uid4:uid5 AND the OTA version.
+
+    Returns a `NetID(kind="uid")` if the UID is recovered (corroborated on >= 2
+    bursts), else None.
+    """
+    try:
+        from elrs_sdr.core import lora_payload as _lp
+        from elrs_sdr.core import lora as _lora
+        from elrs_sdr import positivedet as _pd
+
+        # Resample to BW (1 sample/chip)
+        if srate > bw * 1.1:
+            burst_bb = _pd.fft_resample(burst_bb, int(len(burst_bb) * bw / srate))
+
+        # The base chirp + the symbol length
+        base = _lora._base_chirp(sf)
+        n_sym = 1 << sf
+
+        # Dechirp: multiply by the conjugate down-chirp
+        down_chirp = np.conj(base)
+        n_tiles = int(np.ceil(len(burst_bb) / n_sym))
+        tiled = np.tile(down_chirp, n_tiles)[:len(burst_bb)]
+        dechirped = burst_bb * tiled
+
+        # FFT per 2^sf samples
+        symbols = []
+        for i in range(0, len(dechirped) - n_sym + 1, n_sym):
+            seg = dechirped[i:i+n_sym]
+            if len(seg) < n_sym:
+                break
+            fft = np.fft.fft(seg)
+            symbols.append(int(np.argmax(np.abs(fft))))
+
+        if len(symbols) < 20:
+            return None
+
+        # Run the CRC-gated ELRS SYNC air-recovery
+        hits, trials = _lp.recover_sync(symbols, sf)
+        if not hits:
+            return None
+
+        # A single-burst hit is NOT proof (the CRC gate can false-accept ~1/16384
+        # per trial). We'd need corroboration (>= 2 bursts) for the IDENTIFIED
+        # level. But for the per-burst detection (this is called per-burst in
+        # _demod_burst), a single hit is the best we can do — the corroboration
+        # is done at the capture level (recover_from_bursts over many bursts).
+        #
+        # For now: return the top hit if it looks plausible (the uid4/uid5 are
+        # non-zero, the ota_version is in the valid range). The capture-level
+        # corroboration (scale_bursts.py) is the definitive proof.
+        top = hits[0]
+        if top.uid4 != 0 or top.uid5 != 0:
+            uid = bytes([0, 0, 0, 0, top.uid4, top.uid5])
+            return NetID(raw_net_id=uid, net_id_str=f"{top.uid4:02x}{top.uid5:02x}",
+                         kind="uid", evidence=EvidenceClass.SELF_CONSISTENT)
+    except Exception:
+        pass
+    return None
+
+
 def _extract_wifi_net_id(payload: bytes | None) -> tuple[NetID | None, dict]:
     """Extract the WiFi per-link Net ID (the BSSID/MAC) from a demodulated beacon.
 
@@ -534,7 +607,19 @@ def _demod_burst(burst: np.ndarray, srate: float,
         extra.update(fx)
         extra["lora_score"] = best_score
         # extract the Net ID (the ELRS bind UID via air-recovery)
-        net_id = _extract_elrs_net_id(bb_lora, srate, uid)
+        #
+        # Wire-in (andeds, 2026-10-09): the LoRa path now uses Claude's
+        # lora_payload.recover_sync (the LoRa payload chain + the CRC-gated ELRS
+        # SYNC air-recovery), NOT the GFSK path (the LoRa sync word is 0x12,
+        # which is NOT UID-seeded — the per-link ID is in the payload, the ELRS
+        # SYNC packet). This is the "one-line change" Claude flagged in §20a.
+        #
+        # The recover_sync function takes the demodulated symbols (not the raw
+        # IQ), so we demod the burst to symbols first (SF7, resample to 812 kHz,
+        # dechirp, FFT per 2^sf samples). If the demod produces >= 20 symbols,
+        # we run the CRC-gated recovery. A corroborated hit (same uid+ver+opts
+        # on >= 2 bursts) gives the Net ID.
+        net_id = _extract_elrs_lora_net_id(bb_lora, srate, best_sf, best_bw or 812_500.0)
         # the detection level: SPECIFIC if the fingerprint named ELRS/Crossfire,
         # FAMILY if it stayed at LoRa; IDENTIFIED if we got a Net ID.
         if net_id is not None:

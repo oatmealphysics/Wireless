@@ -93,25 +93,30 @@ class TargetProtocol:
 CATALOG: tuple[TargetProtocol, ...] = (
     TargetProtocol(
         name="ExpressLRS",
-        phy="LoRa chirp (SF5-9, long range) + FLRC/GFSK (520/650, high rate); 2.4/868/915; sync = UID-seeded",
+        phy="LoRa chirp (SF5-9, long range) + FLRC/GFSK (520/650, high rate); 2.4/868/915; sync = UID-seeded (FLRC) / 0x12 stock (LoRa)",
         bands=("2.4", "868", "915"),
         reference_default_on=True,
-        our_level=DetectionLevel.FAMILY,
+        our_level=DetectionLevel.IDENTIFIED,
         our_detector="detect.py (the engine: hysteresis burst detect -> per-protocol demod -> "
                      "Net ID extraction -> specific-protocol fingerprint); "
-                     "positivedet.lora_chirp + core.identify (GFSK/FLRC + LoRa paths)",
+                     "positivedet.lora_chirp + core.identify (GFSK/FLRC + LoRa paths); "
+                     "core.lora_payload (the LoRa payload chain + CRC-gated SYNC air-recovery)",
         validated=True,     # the LoRa chirp detector is capture-validated
-        link_id=None,       # the bind UID is UID-seeded; air-recovery not landed yet
-        notes="PRIMARY TARGET. The `detect.py` engine runs the full pipeline on a capture "
-              "(hysteresis burst detect + continuous-carrier reject -> per-protocol demod -> "
-              "Net ID extraction -> specific-protocol fingerprint). We detect + measure the "
-              "burst physics (narrowband, constant-envelope, bursty) on real wideband IQ, but "
-              "every burst is still `fsk_unidentified` with crc_valid=False: the sync word is "
-              "UID-seeded and the UID is not obtainable (no binding phrase -> traditional bind). "
-              "Reaching SPECIFIC/IDENTIFIED requires sync-word AIR-RECOVERY (demod a burst, "
-              "read the sync out of the packet) — the reference does this via its `parse_sync_0` "
-              "+ ELRS LoRa core (the 175 MB detection daemon; a firmware-labeling / "
-              "rce-gate-joern task). See docs/COUNTER_UAS_SDR_DETECTION_ID.md.",
+        link_id="2ee2 (uid4=0x2e, uid5=0xe2, OTA v3 — recovered from the air, corroborated x2)",
+        notes="PRIMARY TARGET. **IDENTIFIED (2026-10-09).** The `detect.py` engine runs the "
+              "full pipeline on a capture (hysteresis burst detect + continuous-carrier reject "
+              "-> per-protocol demod -> Net ID extraction -> specific-protocol fingerprint). "
+              "The LoRa path now uses the `core.lora_payload` chain (Gray decode, de-interleave, "
+              "de-whiten, Hamming FEC, CRC gate) — Claude's CRC-gated ELRS SYNC air-recovery. "
+              "On the operator's live link (SF7 @ 812 kHz, 2.4 GHz 150 Hz rate), the UID "
+              "**2ee2** (uid4=0x2e, uid5=0xe2, OTA v3) was recovered from the air, corroborated "
+              "on 2 independent bursts (the corroboration gate: same uid+ver+opts on >= 2 "
+              "bursts). The sync word is 0x12 (stock SX12xx, NOT UID-seeded — the per-link ID "
+              "is in the payload, the ELRS SYNC packet positions 4,5). The recovery chain: demod "
+              "a burst to payload bytes, read candidate uid4/uid5 from payload positions 4,5, "
+              "for v in OTA v2..v6: crc_init = (uid4<<8|uid5) ^ (v<<8), ota.validate_crc(...). "
+              "A passing CRC confirms uid4:uid5 AND the OTA version. See "
+              "docs/ELRS_LORA_SYNC_SPEC.md + the scale_bursts.py validation.",
         aliases=("ELRS",),
     ),
     TargetProtocol(
