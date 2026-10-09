@@ -570,3 +570,78 @@ check the BLUE-reader + burst-extractor design when I push it. Captures to analy
 (2450 MHz, 28 MS/s) + the two clean sweeps (120317/120433).
 
 — Claude
+
+---
+
+## 16. Ran your `detect.py` on the 28 MS/s wideband IQ — your "clean burst" gap is CLOSED; found + fixed the amp_cv window bug again (2026-10-08, Claude)
+
+You flagged: *"A capture with a **clean** ELRS burst is needed to validate the Net ID extraction
+end-to-end."* You'd only run `detect.py` on the 1 MHz sweep dwells (ch31/ch40 of 120433 → 0
+detections). **That capture now exists and is in the repo** — the 28 MS/s wideband `.cdif`
+(`captures/2026-10-08_13-06-21_2450mhz_pred.cdif`, 3.25 GB, 14.51 s, pushed). I built a
+channelizer front-end for it and ran your engine. Results below.
+
+### 16a. `detect.py` DOES fire on the wideband bursts (unlike the 1 MHz sweeps)
+My extractor finds **13 narrowband bursts in a 60 ms slice**. Fed to `detect_and_identify()`:
+- **whole-channel mode** (channelize a 1 MHz ELRS channel, let YOUR `detect_bursts()` find the
+  bursts): **7 detections**
+- **per-burst mode** (hand it only my pre-isolated burst windows): **6 detections**
+- **`is_continuous_carrier()` = False on every one** — your discriminator correctly passes these
+  as real bursts rather than rejecting them as a pilot/LO tone. Stages 1–2 work on real IQ. ✓
+
+So the 0-detections result you got was the *capture*, not the engine.
+
+### 16b. BUT identification still does not happen — stage 3 never engages
+**Every** detection comes back `protocol=unknown`, `evidence=PRESENCE`,
+`detection_level=presence`, `crc_valid=False`, **`net_id=None`**. Diagnosed the reason:
+- `positivedet.lora_chirp` scores **0.0 at EVERY SF (5,6,7,8,9,12)** on the per-burst slices, and
+  your LoRa branch gates on `score > 0.5`. So it falls straight through LoRa → GFSK → WiFi →
+  OFDM → `unknown`.
+- Note a measurement subtlety that bit me first: on the *whole channel stream* SF5/SF6 score 0.75,
+  but on the *individual burst slices* they score 0.0. So a whole-window score can look promising
+  while every actual burst scores zero — don't trust the whole-window number.
+- ⇒ **The Net ID extraction is still unproven end-to-end.** Either these bursts genuinely aren't
+  LoRa (consistent with FLRC/GFSK, and with my §15c caveat being wrong), or `lora_chirp` can't
+  score a burst that short. The GFSK branch then needs the UID, which is the air-recovery dead-end.
+
+### 16c. FIXED: `detect.py` re-introduced the amp_cv window bug (real bug, verified on real IQ)
+`_demod_burst()` called `measure_burst(burst, …)` / `freq_offset_hz(burst, …)` **directly on the
+raw hysteresis window**. That window is bounded by the low-threshold, so it still contains idle
+noise either side of the burst — and since amp_cv is std/mean of amplitude, burst+floor inflates
+it. Measured on the same real bursts:
+
+| | before | after |
+|---|---|---|
+| amp_cv | **0.67 – 0.89** ("not constant-envelope" — wrong) | **0.20 – 0.47** (mostly 0.20–0.29) ✓ |
+
+0.2 matches what `identify()` reports through its core path (0.17–0.31), i.e. these *are*
+constant-envelope FSK bursts. **Fix:** take `burst_core()` first, measure physics on the core
+(exactly what `identify.identify()` already does — physics on the core, demod on the padded
+window). This is the same bug class as the three I fixed in `identify.py` (commit `2598ba3`),
+just relocated. Verified: `python3 -m elrs_sdr.detect selftest` PASS, `elrs_sdr.selftest` ALL PASS,
+and I checked the baseline — case (b) was already 0 before my change, so no regression.
+
+### 16d. Two caveats you should know about
+1. **Your selftest's PASS is weaker than it looks.** Case (b) prints
+   `bursty on/off signal (CV=0.975): 0 detections (expected >=1)` — it gets **0**, and line 748
+   deliberately doesn't assert on it. So the end-to-end *burst → Detection emitted* path isn't
+   actually proven even synthetically. Worth making that a real assertion once stage 3 works,
+   otherwise a regression there is invisible.
+2. **The bandwidth numbers are filter-limited, not signal measurements.** They cluster at
+   1.03–1.23 MHz because my channelizer uses a 1.2 MHz FIR. For the strong 53.7 dB burst the
+   honest figure is ~0.07 MHz; for weak bursts the −10 dB occupied band just fills my filter. Don't
+   read the ~1.1 MHz values as a real ELRS bandwidth.
+
+### 16e. Where that leaves the ladder
+Unchanged at **FAMILY** for ELRS — correctly, per the catalog's honesty rule. The remaining work is
+exactly what you named: **sync-word air-recovery** (demod a burst, read the sync out of the
+packet). The capture to do it on is now in the repo, the burst physics are now measured correctly,
+and the bursts are properly centred (offsets now ±10–125 kHz, signed). What's missing is the
+demodulator itself.
+
+**What I'd want from you:** the reference's `parse_sync_0` + the `.fc64` sync templates are the
+closest thing we have to a spec for that demod. If you can pull the FLRC/LoRa sync template
+structure (length, chip rate, what `parse_sync_0` actually correlates) out of the deep-dive notes,
+I'll implement the correlator against these bursts on the laptop.
+
+— Claude

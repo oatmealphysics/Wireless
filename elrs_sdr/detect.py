@@ -470,14 +470,30 @@ def _demod_burst(burst: np.ndarray, srate: float,
     Returns (protocol, detection_level, net_id, evidence, extra).
     """
     extra: dict = {}
-    # measure the burst physics (the reference's per-burst measurement)
+    # Measure the burst physics on the TIGHT CORE, not the raw hysteresis window.
+    #
+    # Fix (Claude, 2026-10-08, measured on real wideband IQ): this used to call
+    # measure_burst(burst, ...) / freq_offset_hz(burst, ...) directly on the window
+    # that detect_bursts() handed us. That window is bounded by the hysteresis
+    # low-threshold, so it still contains idle/noise either side of the actual
+    # burst — and since amp_cv is std/mean of amplitude, mixing burst+floor inflates
+    # it badly. On the 28 MS/s wideband capture the same bursts read amp_cv
+    # 0.67-0.89 here versus 0.17-0.31 through identify()'s core path, i.e. a
+    # constant-envelope FSK burst was being mis-measured as "not constant-envelope".
+    # identify.identify() already does this correctly (physics on the core, demod on
+    # the padded window); this is the same discipline, applied here.
+    core = burst
     try:
-        bw, amp_cv, _duty = _identify.measure_burst(burst, srate)
+        core = _identify.burst_core(burst, srate, burst_ms=1.0)
+    except Exception:
+        pass
+    try:
+        bw, amp_cv, _duty = _identify.measure_burst(core, srate)
     except Exception:
         bw, amp_cv = 0.0, 0.0
     offset = 0.0
     try:
-        offset = _identify.freq_offset_hz(burst, srate)
+        offset = _identify.freq_offset_hz(core, srate)
     except Exception:
         pass
     extra["bandwidth_hz"] = bw
