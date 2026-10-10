@@ -861,10 +861,52 @@ def fhss_fingerprint(radius, srate: float = 10e6, gain: float = 40.0,
     n = int(len(samples)) if samples is not None else 0
     del samples                     # release ~1 GB before the analysis pass
 
-    out = _fo.observe_capture(path, snr_min=snr_min)
-    out["iq_file"] = os.path.basename(path)
+    out = _fhss_analyse(path, snr_min=snr_min, verify_seed=verify_seed)
     out["n_samples"] = n
     out["requested_freq_hz"] = float(freq_hz)
+    out["source"] = "live"
+    return out
+
+
+def fhss_from_capture(path: str, snr_min: float | None = None,
+                      verify_seed: int | None = None) -> dict:
+    """Same analysis, run over a SAVED capture instead of the radio.
+
+    Replay matters for three reasons, all of which came up in practice:
+      * the link is only live when the operator powers the controller, and the
+        first live test of this route returned 0 bursts at 23:26 because the
+        controller was off — correct behaviour, but it proves nothing about the
+        success path;
+      * it makes the result reproducible, so a regression in the hop chain shows
+        up against a known-good capture rather than against whatever is in the
+        air at the time;
+      * it lets the surface be exercised with no hardware at all.
+
+    Path validation is the caller's job (see web.py) — this does not police
+    where `path` points.
+    """
+    if not core_available():
+        return {"error": core_error()}
+    import os as _os
+    out = _fhss_analyse(path, snr_min=snr_min, verify_seed=verify_seed)
+    out["source"] = "replay"
+    out["n_samples"] = (_os.path.getsize(path) // 4
+                        if _os.path.exists(path) else 0)
+    return out
+
+
+def _fhss_analyse(path: str, snr_min: float | None = None,
+                  verify_seed: int | None = None) -> dict:
+    """Capture file -> fingerprint + link_id (+ net_id if a seed confirms).
+
+    Shared by the live and replay paths so they cannot drift apart: a replay
+    result is the same computation as a live one, differing only in `source`.
+    """
+    import os
+    from elrs_sdr.core import fhss_observe as _fo
+
+    out = _fo.observe_capture(path, snr_min=snr_min)
+    out["iq_file"] = os.path.basename(path)
 
     # The link_id is the fingerprint rendered as a short stable string. It is a
     # FINGERPRINT, not a decoded UID — labelled that way deliberately, since the
@@ -875,17 +917,37 @@ def fhss_fingerprint(radius, srate: float = 10e6, gain: float = 40.0,
         import hashlib
         canon = ";".join(f"{int(p)}:{c}" for p, c in
                          sorted(fp.items(), key=lambda kv: int(kv[0])))
-        out["link_id"] = hashlib.sha256(canon.encode()).hexdigest()[:12]
-        out["link_id_basis"] = ("absolute FHSS sequence positions"
-                                if out.get("absolute")
-                                else "FHSS positions relative to first hop")
+        # A DIGEST OF THIS CAPTURE, and deliberately not called an identifier.
+        #
+        # This started life as `link_id`, which was wrong and testing caught it:
+        # two dwells on the SAME link produced e65504306293 and 58abf4f227ca,
+        # because the hash covers whichever sequence positions that dwell
+        # happened to recover (32 vs 31) and any difference changes the hash
+        # completely. A hash over a variable set cannot be a stable ID, so
+        # presenting it as one would have shown two IDs for one aircraft.
+        #
+        # The stable identifier is the SEED (`net_id`): it is a property of the
+        # link rather than of the dwell, and the same seed verified on all four
+        # captures we have. So `link_id` is only populated when a seed confirms.
+        out["fingerprint_digest"] = hashlib.sha256(canon.encode()).hexdigest()[:12]
+        out["fingerprint_basis"] = ("absolute FHSS sequence positions"
+                                    if out.get("absolute")
+                                    else "FHSS positions relative to first hop")
+        out["fingerprint_note"] = (
+            "Digest of THIS capture's recovered positions. It is NOT stable "
+            "across captures of the same link — compare links with the seed "
+            "(net_id), or by cross-checking two folds directly.")
+        out["link_id"] = None
+        out["link_id_basis"] = None
         out["evidence"] = "VALIDATED" if out.get("absolute") else "SELF-CONSISTENT"
     else:
+        out["fingerprint_digest"] = None
         out["link_id"] = None
         out["link_id_basis"] = None
         out["evidence"] = "NONE"
         out.setdefault("note", "No hop pattern recovered — no link detected, or "
-                               "the dwell was too short.")
+                               "the dwell was too short. This does not "
+                               "establish that no link is present.")
 
     # Optional: confirm a seed recovered earlier, which costs one sequence build
     # (~1 ms) against the ~90-minute sweep that discovery needs. That asymmetry
@@ -909,6 +971,10 @@ def fhss_fingerprint(radius, srate: float = 10e6, gain: float = 40.0,
         out["seed_check"] = v
         if v.get("match"):
             out["net_id"] = f"{int(verify_seed):08x}"
+            # Only now is there a STABLE per-link identifier (see the digest
+            # note above): the seed is a property of the link, not the dwell.
+            out["link_id"] = out["net_id"]
+            out["link_id_basis"] = "ELRS FHSS LCG seed (UID-seeded), confirmed"
             out["net_id_basis"] = (
                 "ELRS FHSS LCG seed, confirmed against this capture's hop "
                 "sequence. fhss.uid_seed() derives it from the bind UID, so it "
@@ -917,3 +983,4 @@ def fhss_fingerprint(radius, srate: float = 10e6, gain: float = 40.0,
                 "known only up to the XOR with OTA_VERSION_ID.")
             out["evidence"] = "VALIDATED"
     return out
+

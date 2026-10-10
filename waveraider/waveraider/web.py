@@ -339,6 +339,43 @@ class Handler(BaseHTTPRequestHandler):
                               "~6.4 s to cover one period at 26.66 ms/hop"}))
             import time as _time
             cap_root = Path(__file__).resolve().parents[2] / "captures"
+
+            # REPLAY: analyse a saved capture instead of driving the radio.
+            # Useful because the link only exists while the operator powers the
+            # controller (the first live test of this route honestly returned
+            # 0 bursts because it was off), and because it makes the result
+            # reproducible against a known-good capture.
+            #
+            # `file` is operator-supplied, so it is a path-traversal risk and is
+            # validated rather than trusted: resolve it under the captures root
+            # (symlinks included, via resolve()) and refuse anything that lands
+            # outside, anything that is not a regular .complex8 file, and any
+            # absolute path. The error never echoes a resolved filesystem path.
+            want = q.get("file", [""])[0]
+            if want:
+                if Path(want).is_absolute() or "\x00" in want:
+                    return self._send(400, json.dumps(
+                        {"error": "file must be a path relative to captures/"}))
+                try:
+                    root = cap_root.resolve(strict=True)
+                    target = (root / want).resolve(strict=True)
+                except (OSError, RuntimeError):
+                    return self._send(404, json.dumps({"error": "no such capture"}))
+                if not target.is_relative_to(root) or not target.is_file():
+                    return self._send(400, json.dumps(
+                        {"error": "file must be a regular file under captures/"}))
+                if target.suffix != ".complex8":
+                    return self._send(400, json.dumps(
+                        {"error": "file must be a .complex8 capture"}))
+                from .protocols import elrs as _ep
+                try:
+                    out = _ep.fhss_from_capture(str(target), snr_min=snr_min,
+                                                verify_seed=verify_seed)
+                except Exception as e:
+                    return self._send(500, json.dumps(
+                        {"error": f"{type(e).__name__}: {e}"}))
+                return self._send(200, json.dumps(out, default=str))
+
             out_dir = str(cap_root / f"fhss_{_time.strftime('%Y%m%d_%H%M%S')}")
             try:
                 from elrs_sdr.radio import RadioDevice

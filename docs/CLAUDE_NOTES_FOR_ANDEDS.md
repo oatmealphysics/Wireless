@@ -2244,3 +2244,90 @@ Two specific things to point at:
 `specific`**, LoRa `family`, per-link ID extractable 2/16.
 
 — Claude
+
+---
+
+## §38. WaveRaider integration — live route, replay mode, UI control, and a bad ID caught in testing
+*(Claude, 2026-10-09 late. Operator wants a hands-on test in the morning.)*
+
+The hop fingerprint is now integrated into WaveRaider end to end, and
+`docs/WAVERAIDER_FHSS_TEST_PLAN.md` is the turnkey walkthrough.
+
+### 38a. Live route exercised against real hardware — and it honestly found nothing
+First live hit of `GET /api/elrs/fhss` returned **HTTP 200 in 18.8 s** with `n_bursts: 0`,
+`evidence: NONE`. The controller was off (the operator confirmed), and the saved capture proves the
+null was real, not a bug: mean power **−60 dB**, peak −40 dB, **zero bursts at every gate from
+45 dB down to 15 dB**. So the plumbing is validated and the no-link path reports honestly.
+
+### 38b. Replay mode, because a null live test proves nothing about the success path
+`GET /api/elrs/fhss?file=<name>` analyses a saved capture instead of the radio. Added for three
+reasons that all bit in practice: the link only exists while the controller is powered; a result
+should be reproducible against a known-good capture rather than against whatever is in the air; and
+the surface should be exercisable with no hardware. Live and replay share one `_fhss_analyse()` so
+they cannot drift — a replay result is the same computation, differing only in `source`.
+
+Validated over HTTP on a known-good capture: **751 bursts, 106 dwells, hop interval 26.6642 ms,
+sync ch 41, `elrs<=3.x`, absolute, 32/240 positions, net_id `00111858`, evidence VALIDATED,
+seed_check 31/31 at rotation 80.**
+
+`file` is operator-supplied, so it is validated rather than trusted — resolved under the captures
+root (symlinks included), rejected if it escapes, is absolute, is not a regular file, or is not
+`.complex8`, and the error never echoes a resolved filesystem path. All five attempts refused:
+
+```
+../AGENTS.md          -> 400 file must be a regular file under captures/
+/etc/passwd           -> 400 file must be a path relative to captures/
+../../etc/passwd      -> 404 no such capture
+...meta.txt           -> 400 file must be a .complex8 capture
+nope.complex8         -> 404 no such capture
+```
+
+And the RF gate still refuses an unmarked request (**403**), replay included — the route can drive
+the radio, so it stays gated regardless of which branch a given call takes.
+
+### 38c. UI control in Inspect RF
+**📡 ELRS hop fingerprint** next to the DroneID button, following `specDroneID()`'s pattern exactly:
+same `#spAnalysis` target, same staleness guards (retune / radio change / re-render), and the call
+goes through `specApi` so the marker header is set and `test_monitor`'s "exactly one `fetch(`"
+invariant still holds.
+
+Wording follows WaveRaider's discipline, and it is now **enforced by test** rather than reviewed:
+the result says it identifies a radio *link*, "not an aircraft", and the empty case says the result
+"does not establish that nothing is present".
+
+### 38d. A bad identifier, caught by testing and fixed before the demo
+The dry run gave `link_id = e65504306293` on one capture and `58abf4f227ca` on another — **the same
+link.** `link_id` was a SHA-256 of the recovered sequence positions, and the two dwells recovered 32
+and 31 positions, so the hash changed completely. **A hash over a variable set cannot be a stable
+identifier.** In the morning that would have shown two IDs for one aircraft and looked like a
+broken feature.
+
+Fixed by splitting the two concepts:
+- **`fingerprint_digest`** — per-capture, reported with a note saying it is not stable across
+  captures. The UI labels it "this dwell only".
+- **`link_id`** — populated *only* when a seed confirms, and then equal to `net_id`. The seed is a
+  property of the link rather than of the dwell, so it is the same on both captures
+  (**`00111858`** on each) and was the same across all four captures in §35.
+
+Without a seed, `link_id` is `null` by design: there is no honest way to match two captures from one
+dwell's hash. The UI says so and points at `fhss_seed_scan.py`.
+
+Both behaviours are pinned by hardware-free regression tests (monkeypatched folds): two folds of
+one link must not yield two identifiers, and a non-confirming seed must not yield one either.
+
+### 38e. Test status
+WaveRaider **621 passed / 4 failed / 3 skipped** — the 4 are the pre-existing
+`opendroneid-core-c` fixture failures, still yours. `tests/test_elrs_fhss_route.py` is now 10 tests:
+cross-site gating (derived by parsing `web.py`, not a hand-maintained list), no stale gate entries,
+the TX gate, the UI wiring through `specApi`, the wording discipline, the evidence label, and the
+digest-vs-stable-id distinction. All core selftests pass.
+
+### 38f. For you, @andeds
+Nothing blocking. Two things if you want them:
+- The §36c ask still stands and you've started it (§28c) — the adversarial pass over
+  `fhss_observe.py` / `fhss.py`. §38d is a fifth instance of the same pattern: a plausible-looking
+  identifier that no selftest questioned, caught only by running it on two real captures.
+- `fhss_from_capture()` + `file=` give you a hardware-free way to exercise the full surface from the
+  enclave against any capture the laptop uploads, which you could not do before.
+
+— Claude

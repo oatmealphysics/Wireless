@@ -70,6 +70,7 @@ async function specMount(){
     '<div class="specctl"><span class="preset">Drone bands:</span>'+
       DRONE_BANDS.map(b=>'<button class="chip" type="button" id="spBand'+b[0].replace(".","_")+'" aria-pressed="false" onclick="specPreset('+b[4]+','+b[5]+')" title="'+specEsc(b[1])+' — '+b[2]+'–'+b[3]+' MHz; tuning stays inside this band">'+specEsc(b[1])+'</button>').join("")+
       '<button class="chip spgo" onclick="specDroneID()" title="experimental pilot-pair candidate scan; no payload/CRC validation or GPS (needs bladeRF)">🛰 Experimental DroneID scan</button>'+
+      '<button class="chip spgo" onclick="specElrsFhss()" title="dwells the ELRS sync channel (~2440.4 MHz) for 12 s and reads the frequency-hopping sequence; reports an RF link fingerprint, not an aircraft identity">📡 ELRS hop fingerprint</button>'+
       '</div>'+
     '<div id="spTuneNote" role="status"></div>'+
     '<div class="specctl"><span class="preset">Trace:</span>'+
@@ -223,6 +224,52 @@ async function specDroneID(){
     else if(r.detected){el.innerHTML='<div class="rdy">'+range+'<b>🛰 OFDM-like correlation</b> — no matching DroneID pilot pair. metric '+r.metric+'.<br>'+specEsc(r.note)+'</div>';}
     else{el.innerHTML='<div class="rdy">'+range+'🛰 No DroneID burst detected in this capture. '+specEsc(r.note)+'</div>';}
   }catch(e){if(specCurrent(mount)&&center===specCenter&&device===specDevice&&el===document.getElementById("spAnalysis"))el.innerHTML='<div class="rdy">🛰 DroneID scan failed. '+specEsc(e.message)+'</div>';}
+}
+// ELRS frequency-hopping fingerprint. Reads the hop SEQUENCE off the air and
+// reports a per-link fingerprint; it never decodes a payload, so it is
+// unaffected by the undocumented SX1280 long-interleaving payload coding.
+//
+// Wording: this identifies an RF LINK, not an aircraft. The text below says so
+// and must keep saying so.
+async function specElrsFhss(){
+  const el=document.getElementById("spAnalysis"), device=specDevice, mount=specMountGen;
+  if(!el)return;
+  const sync=2440.4e6;   // the ELRS 2.4 GHz sync channel, pinned to every block start
+  if(!specCurrent(mount))return;
+  el.innerHTML='<div class="rdy">📡 Dwelling '+(sync/1e6).toFixed(1)+' MHz for 12 s to read the hop sequence. '+
+    'The radio is held for the whole dwell; this takes ~20 s.</div>';
+  try{
+    const r=await specApi("/api/elrs/fhss?dwell_s=12&freq="+Math.round(sync)+"&device="+encodeURIComponent(device));
+    // a retune, radio change, close or re-render while it ran makes this obsolete
+    if(!specCurrent(mount)||device!==specDevice||el!==document.getElementById("spAnalysis"))return;
+    if(r.error){el.innerHTML='<div class="rdy">📡 '+specEsc(r.error)+'</div>';return;}
+    const head='Dwelled '+(r.duration_s||0)+' s at '+((r.center_freq_hz||0)/1e6).toFixed(3)+' MHz; '+
+      (r.n_bursts||0)+' bursts, '+(r.n_dwells||0)+' channel dwells.<br>';
+    if(!r.fingerprint_digest){
+      el.innerHTML='<div class="rdy">'+head+'📡 No hop pattern recovered — no ELRS link in this dwell, '+
+        'or the transmitter is off. This does not establish that nothing is present.</div>';return;}
+    const sy=r.sync||{};
+    let body='<b>📡 ELRS 2.4 link — hop sequence read</b><br>'+
+      'Capture digest <code>'+specEsc(r.fingerprint_digest)+'</code> '+
+      '<span class="muted">(this dwell only — not stable across captures)</span><br>'+
+      'Hop interval '+specEsc(r.hop_interval_ms)+' ms · '+specEsc(r.n_positions)+'/'+specEsc(r.seq_len)+
+      ' sequence positions · '+(r.absolute?'absolute':'relative')+' phase<br>';
+    if(sy.channel!=null){
+      body+='Sync channel '+specEsc(sy.channel)+' (recurs every '+specEsc(sy.mean_gap_hops)+' hops) · '+
+        specEsc(sy.elrs_generation||"generation unknown")+'<br>';}
+    if(r.net_id){
+      body+='<b>Net ID <code>'+specEsc(r.net_id)+'</code></b> — the UID-seeded hop-sequence seed, '+
+        'confirmed against this dwell. This one IS stable across captures of the same link.<br>';}
+    else{
+      body+='<span class="muted">No stable link ID: that needs the hop-sequence seed. '+
+        'Recover it offline with fhss_seed_scan.py, then pass it as <code>seed=</code> to confirm '+
+        'it live.</span><br>';}
+    body+='<span class="muted">This is an identifier for a radio LINK, not an aircraft, and not a '+
+      'hardware serial. Evidence: '+specEsc(r.evidence||"n/a")+'.</span>';
+    el.innerHTML='<div class="rdy ok">'+head+body+'</div>';
+  }catch(e){
+    if(specCurrent(mount)&&device===specDevice&&el===document.getElementById("spAnalysis"))
+      el.innerHTML='<div class="rdy">📡 ELRS hop fingerprint failed. '+specEsc(e.message)+'</div>';}
 }
 function specAccum(d){
   const key=d.start_hz+"-"+d.stop_hz+"-"+d.points.length;
