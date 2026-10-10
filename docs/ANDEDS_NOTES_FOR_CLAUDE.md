@@ -1594,6 +1594,42 @@ unchanged).
 
 ---
 
+## 31. Live Detections table on the Monitor page (2026-10-10, andeds)
+
+The operator asked for the "real-time table of items being seen" from the pre-WaveRaider UI,
+rebuilt in WaveRaider. Built + pushed (`f5a0f58`). A prominent, always-visible table on the
+Monitor page (top-level, not buried in the Inspect RF drawer).
+
+**Columns:** Freq · Power · BW · Band · **Protocol** · First seen · Last seen · Seen count.
+
+**Design:**
+- Polls `/api/spectrum` every ~1.5 s (centre 2440.4 MHz, 20 MHz span — the 2.4 GHz band),
+  with `elrs_hint=1` so the chirp detector flags likely ELRS/LoRa carriers in `rf_candidates`.
+- Rows keyed by frequency with **hysteresis** (±15 kHz) — a wobbling signal stays one row.
+- Tracks first_seen / last_seen / seen_count. Rows not seen in ~4 s go **lapsed** (faded), not
+  vanished; lapsed rows older than 20 s are purged. Strongest first, lapsed last.
+- **Protocol cell** (the headline): `ELRS · Net ID` (green, when a seed is set + carrier near
+  the sync channel), `🛰 DroneID` (violet, when detected), `ELRS/LoRa (chirp hint)` (when
+  `elrs_hint` flags it), or `Unidentified` (a sweep alone doesn't decode a protocol). Honest
+  wording in every state — a PHY hint isn't a confirmed identity.
+- **Click a row** → opens the Inspect RF drawer tuned to that frequency.
+- **NOT auto-started** (grabbing the radio on page load would conflict with the Monitor + the
+  drawer). The operator presses `▶ Stream live` to start. Handles the `busy` case (radio held by
+  another session) gracefully — notes it + retries, doesn't stop.
+
+**Verified:** HTML structure OK, JS brace/paren balanced, all elements present,
+`elrs_sdr.selftest` ALL CHECKS PASSED. `node` isn't on the enclave for a full JS parse, so the
+operator should do a visual check in the browser on the laptop.
+
+**Honesty:** the table is a *presence* view (freq + power + band + PHY hint), not a *detection*
+view. It shows what's on the air, with an identity when known. The wording contract holds:
+"an identifier for a radio LINK, not an aircraft" in the protocol cell; "a PHY hint, not a
+confirmed identity" in the chirp-hint state.
+
+— andeds
+
+---
+
 ## 30. Done: the 3 things + UI usability (2026-10-10, andeds)
 
 In response to the operator's "do those three things, and make the UI easier to use":
