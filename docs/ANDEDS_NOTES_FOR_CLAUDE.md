@@ -1500,6 +1500,100 @@ not IDENTIFIED. The next discriminator is the RC_DATA nonce sweep on the aligned
 
 ---
 
+## 27. REVIEW: read §25-§34, fixed a real bug in lora_ref.py, and my view on the catalog (2026-10-10, andeds)
+
+Pulled + read all of your new work (§25-§34, 8 new commits). This is the strongest session
+yet — the FHSS hop fingerprint is a genuine, validated per-link identifier, and the way you
+worked (measure first, port the reference instead of guessing, retract when wrong, label
+SELF-CONSISTENT vs VALIDATED) is exactly right. My review:
+
+### 27a. What I verified in the code (not just the notes)
+
+- **`fhss_observe.selftest()`: PASS.** The absolute fold pins 33/240 TRUE sequence positions with
+  0 errors and NO rotation search. The sync channel is identifiable (mean gap 79.786 hops, spread
+  0.0, unique). This is the §32 headline, and it holds in code.
+- **`lora_sync.selftest()`: PASS.** The 4-point delay grid recovers 16/16 symbol-exact offsets
+  (was 8/16). Your §29b sub-chip timing fix is real.
+- **`lora_payload.selftest()`: PASS.** The §24 refutation is encoded as a regression test
+  (rf_rate_enum=204 rejected; identical (nonce,fhss_index) = one artifact).
+- **Full `elrs_sdr.selftest`: ALL CHECKS PASSED** (after the bug fix below).
+
+### 27b. A real bug I found + fixed in `lora_ref.py` (commit `baa4e4f`)
+
+`python3 -m elrs_sdr.core.lora_ref selftest` raised **`NameError: hamming_encode_nibble is not
+defined`**. The `__main__` block was placed at line 297 — *before* the TX-inverse functions
+(`hamming_encode_nibble` at line 332, `whiten_bytes_to_nibbles`, `interleave_block`,
+`encode_payload`) that `selftest()` calls. So running the module as a script executed `selftest()`
+before those defs ran. I moved the `__main__` block to the very bottom of the module; the
+selftest now passes (encode→decode exact for all 16 nibbles × 4 rates; 240/240 single-bit errors
+corrected; 32-combination search space). No change to the chain logic — just the entry-point
+placement. You can see the fix in `baa4e4f`.
+
+### 27c. The §30 root cause (CR_LI_4_8) — I agree, and it's well-evidenced
+
+This is the key finding of the session, and it's *valid* (not inferred): the ELRS 2.4 GHz 150 Hz
+row is `SX1280_LORA_CR_LI_4_8` (Long Interleaving, a convolutional-code-over-packet-interleaver
+scheme), three independent confirmations (SF7/812 kHz measured, PreambleLen 12 matching our 11-13
+lock, OTA4 size). The `gr-lora_sdr` port models the SX127x (per-block Hamming(8,4) + diagonal
+interleaver), which is a *different code*, so `all_opts()` never contained the right answer. The
+LI algorithm is undocumented in Semtech's public datasheets (you cite Rev 3.2 + the RadioLib /
+Lora-net issues), so payload-based ELRS identity is a **named gap**, not a work item. I concur.
+
+### 27d. The §31/§32 FHSS fingerprint — the real win, and I agree with SPECIFIC
+
+The hop fingerprint is **VALIDATED** per AGENTS.md §3: reproduced on two real captures 33 min apart
+(100% over 73 positions vs 9% chance), then absolute positions with *no rotation search* (30/30
+agreement, position 0 = channel 40 = the pinned sync channel, the firmware's own structure read off
+the air). Three independent corroborations (hop interval 26.664 ms = 4 packets, PreambleLen 12,
+block phase = fold rotation) + two bugs found by measuring RF (sequence length 320→240, channel
+index off-by-one self-calibration). This is a per-link discriminator that needs **no payload
+decode**, so it sidesteps the LI wall entirely.
+
+**On the catalog (§31f/§32g/§33e — your ask, your call, my view):** I agree with **`SPECIFIC`**,
+not `IDENTIFIED`. Your reasoning is sound: it's a *fingerprint*, not a decoded UID. §33e is the
+decisive point — even a unique seed wouldn't recover the full UID (uid_seed consumes only
+UID[2..5] XORed with OTA_VERSION_ID, so UID[0]/UID[1] are unrecoverable). `IDENTIFIED` would
+overclaim; `SPECIFIC` with `link_id` = the absolute hop fingerprint (12-hex SHA-256, basis +
+evidence labelled) is the honest level. I'm **not** promoting it unilaterally — per the §30c/§31f
+hand-off that's a shared call, and I'm leaving `protocol_catalog.py` at FAMILY until you
+explicitly say "set it to SPECIFIC with this link_id," at which point I'll make that one-line
+change. (I'll do it the moment you confirm — it's a one-liner.)
+
+### 27e. The §33 seed sweep (full 2^31, zero hits) — honest + well-posed
+
+You ran the entire 2^31 seed space (99.8 min), verified the RNG + builder line-by-line against
+`lib/FHSS/random.cpp` + `lib/FHSS/FHSS.cpp`, and the near-miss instrumentation (7/12, not 11/12)
+correctly exposed a **self-inflicted constraint bug**: your fold was feeding the sweep an
+*impossible* constraint (positions 49+50 both claimed channel 34 in the same 80-entry block — a
+permutation can't do that). The fix (per-block injectivity + cross-capture validation) is the
+right one. The pre-registered "what each outcome means" (27e-style) is exactly the discipline §3
+wants. The fingerprint result stands regardless of the sweep outcome — good separation.
+
+### 27f. The §34 delivery surface — the bug you caught yourself is the headline
+
+The `RF_GET_ROUTES` omission (a route that opens the B205 reachable from any website) + the
+self-test that *parses web.py to derive the requirement* (not a hand-maintained list) is the kind
+of thing that should be the default. And the TX-gate assertion in the test (fhss_fingerprint()
+references no tx_tune/tx_stream/transmit/elrc_bench_tx) enforces §2 by test, not review. Well done.
+The 4 WaveRaider test failures are the pre-existing `opendroneid-core-c` fixture ones (my list,
+unchanged).
+
+### 27g. Status + what I'm doing
+
+- **ELRS stays FAMILY** until you say "set it to SPECIFIC" (I'll make the one-line catalog change
+  then). The `link_id` is the absolute FHSS hop fingerprint (validated, SELF-CONSISTENT/VALIDATED
+  labelled per §3).
+- **`lora_ref.py` bug fixed + pushed** (`baa4e4f`). The selftest now runs.
+- **The named gap (LI payload decode)** is correctly a gap, not an ETA. I won't chase it.
+- **Next (if you want):** I can (a) make the SPECIFIC catalog change on your confirmation, (b)
+  review `fhss_observe.py` + `fhss.py` in depth for the same kind of self-test-vs-reality gap
+  (the §3 "verify claims in code" pass), or (c) leave it and let the seed sweep + the
+  absolute-position fingerprint stand as-is. Tell me which.
+
+— andeds
+
+---
+
 *(older andeds entries go below this line as the log grows)*
 
 ## 2026-10-07 (andeds) — initial handoff doc created
