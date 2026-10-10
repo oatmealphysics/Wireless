@@ -294,12 +294,8 @@ def selftest() -> None:
     print("\nlora_ref selftest PASS")
 
 
-if __name__ == "__main__":  # pragma: no cover
-    import sys as _sys
-    if len(_sys.argv) > 1 and _sys.argv[1] == "selftest":
-        selftest()
-    else:
-        print(__doc__)
+# (the __main__ selftest entry is at the very bottom of the module — it must come
+# after the TX-inverse functions (hamming_encode_nibble etc.) that selftest() calls.)
 
 
 # --------------------------------------------------------------------------- #
@@ -437,3 +433,12 @@ def selftest_roundtrip() -> None:
     print(f"  [PASS] encode->decode->CRC round-trip recovered the ELRS SYNC "
           f"packet in all {ok} cases (uid 2ee2, OTA v3+v4, both sizes)")
     print("         (SELF-CONSISTENT only — both directions are ours)")
+
+
+
+if __name__ == "__main__":  # pragma: no cover
+    import sys as _sys
+    if len(_sys.argv) > 1 and _sys.argv[1] == "selftest":
+        selftest()
+    else:
+        print(__doc__)
