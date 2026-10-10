@@ -1208,3 +1208,59 @@ def test_the_detail_panel_describes_the_latest_sequence_and_what_gaps_do_not_sho
     plain = {k: v for k, v in ROW.items() if k not in ("lifecycle", "update_gaps", "sequence_started")}
     out = js(f"renderDetail({json.dumps(plain)}, 131)")
     assert "Latest recorded sequence" not in out and "31 s ago · stale" in out   # an older row renders as before
+
+
+# --------------------------------------------------------------------------- #
+# "Drones nearby" table: the drones-only filter, the protocol cell, and the
+# confirmed-link detail line. These are pure (node-executed); the DOM-coupled
+# streaming loop is exercised in the browser.
+#
+# Regression context: protoCell previously read row.seed_set / row.elrs_net_id /
+# row.droneid that the sweep loop NEVER set, so the identity headline could never
+# fire — every row was "chirp hint" or "Unidentified". isDroneRow is the new
+# drones-only filter the operator asked for ("just the drones nearby").
+# --------------------------------------------------------------------------- #
+def _drone_row(js, row, seed="null"):
+    return js(f"isDroneRow({json.dumps(row)}, {seed})").strip()
+
+
+def test_drones_only_filter_keeps_links_and_candidates_hides_wifi(js):
+    # a confirmed ELRS link (seed-confirmed, net_id set)
+    assert _drone_row(js, {"freq_hz": 2.4404e9, "elrs_net_id": "00111858"}) == "true"
+    # a hopping link found by a seedless dwell (present, net_id unconfirmed)
+    assert _drone_row(js, {"freq_hz": 2.4404e9, "elrs_link": True}) == "true"
+    # a DroneID candidate — kept for the future DJI integration
+    assert _drone_row(js, {"freq_hz": 2.4404e9, "droneid": True}) == "true"
+    # a chirp-hint carrier
+    assert _drone_row(js, {"freq_hz": 2.4414e9, "rf_candidates": ["ELRS/LoRa?"]}) == "true"
+    # a sync-band carrier becomes a candidate once a seed is set
+    assert _drone_row(js, {"freq_hz": 2.4404e9, "rf_candidates": []}, seed="true") == "true"
+    # a plain Wi-Fi carrier with no drone evidence is hidden in drones-only
+    assert _drone_row(js, {"freq_hz": 2.412e9, "rf_candidates": []}) == "false"
+    # ...and does NOT become a drone just because a seed is set (it's out of band)
+    assert _drone_row(js, {"freq_hz": 2.412e9, "rf_candidates": []}, seed="true") == "false"
+
+
+def test_proto_cell_fires_the_identity_headline_and_stays_honest(js):
+    def pc(row, seed="null"):
+        return js(f"protoCell({json.dumps(row)}, {seed})")
+    ident = pc({"freq_hz": 2.4404e9, "elrs_net_id": "00111858"})
+    assert "Net ID 00111858" in ident
+    assert "not an aircraft" in ident                       # the honesty tooltip is preserved
+    present = pc({"freq_hz": 2.4404e9, "elrs_link": True})   # link found, net_id not confirmed
+    assert "link" in present.lower() and "Net ID" not in present
+    assert "DroneID" in pc({"freq_hz": 2.4404e9, "droneid": True})
+    cand = pc({"freq_hz": 2.4404e9}, seed="true")
+    assert "candidate" in cand.lower() and "unconfirmed" in cand.lower()
+    assert "chirp hint" in pc({"freq_hz": 2.4414e9, "rf_candidates": ["lora"]}).lower()
+    assert "Unidentified" in pc({"freq_hz": 2.45e9, "rf_candidates": []})
+
+
+def test_confirmed_link_detail_shows_corroboration_or_admits_it_is_unconfirmed(js):
+    confirmed = js("elrsLinkDetail(" + json.dumps({
+        "net_id": "00111858", "elrs_generation": "elrs<=3.x",
+        "hop_interval_ms": 26.6663, "evidence": "VALIDATED"}) + ")")
+    assert "elrs&lt;=3.x" in confirmed and "26.7" in confirmed and "VALIDATED" in confirmed  # esc() escapes the <
+    present = js("elrsLinkDetail(" + json.dumps({
+        "net_id": None, "evidence": "SELF-CONSISTENT", "hop_interval_ms": 26.6}) + ")")
+    assert "unconfirmed" in present.lower()

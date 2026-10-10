@@ -172,6 +172,10 @@ tr.group th{padding-top:20px;color:var(--dim)}
 .ld-proto .id.unknown{color:var(--muted);font-weight:400}
 .ld-dur{color:var(--soft)}
 .ld-seen{color:var(--dim)}
+.ld-protocell{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ld-detail{font-size:11px}
+.ld-row.pinned{background:var(--raise)}
+#liveDet .in{padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:inherit;font:inherit;font-size:12px;min-width:0}
 @media(max-width:1100px){.ld-row{grid-template-columns:7em 6em 5.5em 8em minmax(0,1fr) 6em 6em 5em;gap:8px;padding:10px 12px;font-size:12px}}
 @media(max-width:760px){.ld-row{grid-template-columns:1fr 1fr;gap:4px 12px}.ld-row.head{display:none}}
 </style>
@@ -197,19 +201,25 @@ tr.group th{padding-top:20px;color:var(--dim)}
 <main class="workspace">
 <div class="page-heading"><div><div class="eyebrow">RECORDED EVIDENCE</div><h1>Monitor</h1><p>Explore Remote ID reports from a bundled sample. Not live reception.</p></div><a href="/settings#data">Session history &amp; exports ↗</a></div>
 <div id="banner" class="banner" hidden></div>
-<!-- Live Detections: a prominent, always-visible, real-time table of every carrier
-     currently seen. Keyed by frequency (with hysteresis so a wobbling signal stays
-     one row). Tracks first-seen / last-seen / seen-count so you watch items appear
-     and disappear. Protocol ID is shown when known (ELRS Net ID / DroneID); a
-     sweep alone doesn't decode a protocol, so most rows start "Unidentified" until
-     the operator confirms a seed or runs a protocol check on the row. -->
-<section class="list" aria-label="Live detections" id="liveDet">
+<!-- Drones nearby: a prominent, always-visible, real-time table that shows only
+     likely-drone radio links by default (ELRS/LoRa chirp carriers, DroneID
+     candidates, and anything identified). The full carrier list (Wi-Fi, BT,
+     noise) is one toggle away. Keyed by frequency with hysteresis so a wobbling
+     signal stays one row; tracks first/last-seen + count. A sweep alone can't
+     decode a protocol, so a row is only an identified LINK after a seed-confirmed
+     hop fingerprint (Identify). None of this names an aircraft, and an empty
+     table does not establish that nothing is present. -->
+<section class="list" aria-label="Drones nearby" id="liveDet">
   <div class="lh">
-    <b>Live Detections</b>
+    <b>Drones nearby</b>
     <span class="muted" id="liveDetCount"></span>
     <span class="grow"></span>
-    <button id="liveDetToggle" class="btn" type="button" data-action="stop" title="Stream the spectrum every ~1.5 s and update this table. Uses the same radio as the Inspect RF drawer; closing the drawer or toggling this off releases it.">⏸ Stop streaming</button>
-    <button id="liveDetClear" class="btn" type="button" title="Forget every row (reset first-seen / seen-count)">Clear</button>
+    <input id="liveDetSeed" class="in" type="text" inputmode="numeric" size="10" placeholder="FHSS seed"
+           title="A recovered ELRS FHSS seed (decimal, e.g. 1120344). Entering one lights sync-band carriers as candidates, and Identify confirms it live against the hop sequence. Discovery of an unknown seed is a separate offline sweep.">
+    <button id="liveDetIdentify" class="btn" type="button" title="Pause the stream and run the validated hop fingerprint on the sync channel (~20 s warm, up to ~90 s on a session's first dwell). Confirms a seed into a Net ID, or reports a present-but-unconfirmed ELRS link. Discards the IQ (keep=0).">📡 Identify ELRS link</button>
+    <button id="liveDetShowAll" class="btn" type="button" data-on="0" title="Toggle between likely-drone links only (default) and every carrier above the noise floor (Wi-Fi, Bluetooth, noise included).">Show all carriers</button>
+    <button id="liveDetToggle" class="btn" type="button" data-action="stop" title="Stream the spectrum every ~1.5 s and update this table. Uses the same radio as the Inspect RF drawer and Identify; closing the drawer or toggling this off releases it.">⏸ Stop streaming</button>
+    <button id="liveDetClear" class="btn" type="button" title="Forget every row (reset first-seen / seen-count) and the identified link">Clear</button>
   </div>
   <div id="liveDetNote" class="diagpanel" hidden></div>
   <div id="liveDetList" class="scroll"></div>
@@ -417,6 +427,57 @@ function renderNodeRecordings(data){
     ' · '+esc(r.sample_count)+' samples · overruns '+esc(r.overruns)+' · discontinuities '+esc(r.discontinuities)+
     '<br><span class="sub">Capture '+esc(r.capture_id)+' · '+esc(r.created_at)+' · IQ remains on sensor</span></div>');
   return '<b>Recent recording summaries</b>'+ (rows.join('')||'<span>No retained recording summaries.</span>');
+}
+// ---- "Drones nearby" table: filter + protocol cell + confirmed-link detail ----
+// A spectrum sweep gives freq + bandwidth + band, not a decoded protocol, so a
+// row is only shown in the drones-only view when there is real drone evidence.
+// `seedSet` is whether the operator has entered a known FHSS seed (it lights the
+// sync-band "candidate" state); it is NOT per-row — one seed for the session.
+function isDroneRow(row, seedSet){
+  // confirmed/present ELRS link, or a DroneID candidate (kept for future DJI)
+  if(row.elrs_net_id || row.elrs_link || row.droneid) return true;
+  // the chirp detector flagged a likely ELRS/LoRa carrier (a PHY hint)
+  const cands=row.rf_candidates||[];
+  if(cands.some(c=>/ELRS|LoRa/i.test(c))) return true;
+  // a carrier in the ELRS 2.4 GHz sync band, once a seed is set, is a candidate
+  const mhz=row.freq_hz/1e6;
+  if(seedSet && mhz>=2435 && mhz<=2445) return true;
+  return false;
+}
+// The protocol cell — the row's headline. Honest in every state: an identifier
+// for a radio LINK (never an aircraft), and a PHY hint is never a confirmed ID.
+function protoCell(row, seedSet){
+  const mhz=row.freq_hz/1e6;
+  if(row.elrs_net_id){
+    return '<span class="ld-proto"><span class="id elrs" title="ELRS FHSS LCG seed, confirmed against this link. An identifier for a radio LINK — not an aircraft, not a hardware serial.">\u{1F4E1} ELRS · Net ID '+esc(row.elrs_net_id)+'</span></span>';
+  }
+  if(row.elrs_link){
+    return '<span class="ld-proto"><span class="id elrs" title="A hopping ELRS link read off the air by the hop fingerprint. Present and SELF-CONSISTENT, but unconfirmed — no seed has matched it yet. A radio link, not an aircraft.">\u{1F4E1} ELRS link (present)</span></span>';
+  }
+  if(row.droneid){
+    return '<span class="ld-proto"><span class="id drone" title="DJI DroneID candidate (pilot pair). A pilot-pair candidate, not a confirmed identity.">\u{1F6F0} DroneID</span></span>';
+  }
+  if(seedSet && mhz>=2435 && mhz<=2445){
+    return '<span class="ld-proto"><span class="id unknown" title="In the ELRS 2.4 GHz band near the sync channel, with a seed set. Likely the ELRS link; press Identify to confirm it with the hop fingerprint.">ELRS candidate (unconfirmed)</span></span>';
+  }
+  const cands=row.rf_candidates||[];
+  if(cands.some(c=>/ELRS|LoRa|lora/i.test(c))){
+    return '<span class="ld-proto"><span class="id unknown" title="Chirp detector flagged this carrier as a likely ELRS/LoRa signal (elrs_hint). A PHY hint, not a confirmed identity. Press Identify to read the hop sequence.">ELRS/LoRa (chirp hint)</span></span>';
+  }
+  const candsStr=cands.length?'<span class="muted" title="'+esc(row.identification_note||"")+'">~ '+esc(cands.slice(0,2).join(', '))+'</span>':'';
+  return '<span class="ld-proto"><span class="id unknown" title="'+esc(row.identification_note||"Frequency and bandwidth only; no drone-specific evidence.")+'">Unidentified</span>'+candsStr+'</span>';
+}
+// The second line under an identified/present ELRS link: the corroboration the
+// hop dwell produced. The Net ID itself lives in the protocol cell above, so it
+// is not repeated here; a seedless dwell admits "net_id unconfirmed".
+function elrsLinkDetail(link){
+  if(!link) return "";
+  const bits=[];
+  if(!link.net_id) bits.push("net_id unconfirmed");
+  if(link.elrs_generation) bits.push(esc(link.elrs_generation));
+  if(link.hop_interval_ms) bits.push("~"+Number(link.hop_interval_ms).toFixed(1)+" ms hop");
+  if(link.evidence) bits.push(esc(link.evidence));
+  return '<span class="ld-detail muted" title="An identifier for a radio LINK, not an aircraft, and not a hardware serial.">'+bits.join(" · ")+'</span>';
 }
 /* ---- end pure renderers ---- */
 
@@ -674,9 +735,14 @@ setInterval(()=>refreshReceivers(false),15000);
   const LAPSE_S=4.0;         // a row not seen in this many seconds goes lapsed (faded)
   const PURGE_S=20.0;        // a lapsed row older than this is removed entirely
   const SWEEP_MS=1500;       // poll cadence
-  const det={rows:new Map(),streaming:false,timer:null,lastSweep:0};
-  const elList=$("liveDetList"), elCount=$("liveDetCount"), elNote=$("liveDetNote"), btnToggle=$("liveDetToggle"), btnClear=$("liveDetClear");
+  const det={rows:new Map(),streaming:false,timer:null,lastSweep:0,
+             seed:"",showAll:false,elrsLink:null,identifying:false};
+  const elList=$("liveDetList"), elCount=$("liveDetCount"), elNote=$("liveDetNote"),
+        btnToggle=$("liveDetToggle"), btnClear=$("liveDetClear"),
+        elSeed=$("liveDetSeed"), btnIdentify=$("liveDetIdentify"), btnShowAll=$("liveDetShowAll");
   if(!elList)return;
+  // protoCell / isDroneRow / elrsLinkDetail live in the pure-renderers block above
+  // (node-tested). The seed is per-session, not per-row: `!!det.seed` is passed in.
 
   // A carrier's stable key: the nearest existing row within hysteresis, else its own freq.
   function keyFor(freq_hz){
@@ -684,63 +750,55 @@ setInterval(()=>refreshReceivers(false),15000);
     for(const k of det.rows.keys()){const d=Math.abs(k-freq_hz);if(d<bestD){bestD=d;best=k;}}
     return best!==null?best:Math.round(freq_hz/1000)*1000;
   }
-  // The protocol cell. A sweep gives freq + bandwidth + band, not a decoded protocol,
-  // so most rows are "Unidentified" until the operator confirms an identity.
-  function protoCell(row){
-    const mhz=row.freq_hz/1e6;
-    if(row.elrs_net_id){
-      return '<span class="ld-proto"><span class="id elrs" title="ELRS FHSS LCG seed, confirmed against this link. A per-link identifier — not a hardware serial, not an aircraft.">ELRS · Net ID '+esc(row.elrs_net_id)+'</span></span>';
-    }
-    if(row.droneid){
-      return '<span class="ld-proto"><span class="id drone" title="DJI DroneID candidate (pilot pair). A pilot-pair candidate, not a confirmed identity.">🛰 DroneID</span></span>';
-    }
-    // A carrier in the ELRS 2.4 GHz band near the sync channel, with a seed set,
-    // is very likely the ELRS link — flag it as a candidate (not confirmed).
-    if(row.seed_set&&mhz>=2435&&mhz<=2445){
-      return '<span class="ld-proto"><span class="id unknown" title="In the ELRS 2.4 GHz band near the sync channel, with a seed set. Likely the ELRS link; confirm with the Inspect RF hop fingerprint.">ELRS candidate (unconfirmed)</span></span>';
-    }
-    // The elrs_hint probe tagged this carrier as a likely ELRS/LoRa chirp.
-    const cands=row.rf_candidates||[];
-    if(cands.some(c=>/ELRS|LoRa|lora/i.test(c))){
-      return '<span class="ld-proto"><span class="id unknown" title="Chirp detector flagged this carrier as a likely ELRS/LoRa signal (elrs_hint). A PHY hint, not a confirmed identity. Open Inspect RF to read the hop sequence.">ELRS/LoRa (chirp hint)</span></span>';
-    }
-    const candsStr=cands.length?'<span class="muted" title="'+esc(row.identification_note||"")+'">~ '+esc(cands.slice(0,2).join(', '))+'</span>':'';
-    return '<span class="ld-proto"><span class="id unknown" title="'+esc(row.identification_note||"Frequency and bandwidth only; no drone-specific evidence.")+'">Unidentified</span>'+candsStr+'</span>';
-  }
   function durStr(row){
     const s=(det.lastSweep-row.first_seen)/1000;
     if(s<60)return s.toFixed(0)+" s";
     const m=Math.floor(s/60);return m+" m "+Math.round(s%60)+" s";
   }
+  // One rendered row (the pinned ELRS link uses the same shape, freq -> sync channel).
+  function rowHtml(r){
+    const lapsed=!r.pinned&&(det.lastSweep-r.last_seen)>LAPSE_S*1000;
+    const seedSet=!!det.seed;
+    const detail=(r.elrs_net_id||r.elrs_link)?elrsLinkDetail(r):"";
+    return '<div class="ld-row'+(lapsed?' lapsed':'')+(r.pinned?' pinned':'')+'" data-freq="'+r.freq_hz+'" title="Click to open Inspect RF tuned to '+ (r.freq_hz/1e6).toFixed(3) +' MHz">'+
+      '<span class="ld-f">'+(r.freq_hz/1e6).toFixed(3)+' MHz</span>'+
+      '<span class="ld-p">'+(r.db==null?'—':r.db+' dB')+'</span>'+
+      '<span class="ld-p">'+(r.bw_khz?r.bw_khz+' kHz':'—')+'</span>'+
+      '<span class="ld-band">'+esc(r.band)+'</span>'+
+      '<span class="ld-protocell">'+protoCell(r,seedSet)+detail+'</span>'+
+      '<span class="ld-dur" title="First seen">'+ago(det.lastSweep/1000-r.first_seen/1000)+'</span>'+
+      '<span class="ld-dur" title="Last seen">'+ago(det.lastSweep/1000-r.last_seen/1000)+'</span>'+
+      '<span class="ld-seen">'+(r.pinned?'link':r.seen_count)+'</span>'+
+      '</div>';
+  }
   function render(){
-    if(!det.rows.size){
-      elList.innerHTML='<div class="empty"><b>No carriers above the noise floor.</b><br>Streaming '+ (det.streaming?'live':'stopped') +'. A signal that appears will get a row here with its frequency, power, band, and (when known) protocol ID.</div>';
-      elCount.textContent="";
-      return;
-    }
-    // Sort: strongest first (like the drawer's signal list), lapsed last.
-    const arr=[...det.rows.values()].sort((a,b)=>{
+    const seedSet=!!det.seed;
+    // Carrier rows, strongest first, lapsed last; filtered to likely-drone unless "show all".
+    let carriers=[...det.rows.values()];
+    if(!det.showAll) carriers=carriers.filter(r=>isDroneRow(r,seedSet));
+    carriers.sort((a,b)=>{
       const la=(det.lastSweep-a.last_seen)>LAPSE_S*1000, lb=(det.lastSweep-b.last_seen)>LAPSE_S*1000;
       if(la!==lb)return la?1:-1;
       return b.db-a.db;
     });
-    let h='<div class="ld-row head"><span>Freq</span><span>Power</span><span>BW</span><span>Band</span><span>Protocol</span><span>First seen</span><span>Last seen</span><span>Seen</span></div>';
-    for(const r of arr){
-      const lapsed=(det.lastSweep-r.last_seen)>LAPSE_S*1000;
-      h+='<div class="ld-row'+(lapsed?' lapsed':'')+'" data-f="'+r.freq_hz+'" title="Click to open Inspect RF tuned to '+ (r.freq_hz/1e6).toFixed(3) +' MHz">'+
-        '<span class="ld-f">'+(r.freq_hz/1e6).toFixed(3)+' MHz</span>'+
-        '<span class="ld-p">'+r.db+' dB</span>'+
-        '<span class="ld-p">'+(r.bw_khz?r.bw_khz+' kHz':'—')+'</span>'+
-        '<span class="ld-band">'+esc(r.band)+'</span>'+
-        protoCell(r)+
-        '<span class="ld-dur" title="First seen">'+ago(det.lastSweep/1000-r.first_seen/1000)+'</span>'+
-        '<span class="ld-dur" title="Last seen">'+ago(det.lastSweep/1000-r.last_seen/1000)+'</span>'+
-        '<span class="ld-seen">'+r.seen_count+'</span>'+
-        '</div>';
+    // The identified/present ELRS link is pinned on top (it hops, so it is not a carrier row).
+    const arr=det.elrsLink?[det.elrsLink,...carriers]:carriers;
+    if(!arr.length){
+      const what=det.showAll?'carriers above the noise floor':'drone links';
+      const hint=det.showAll
+        ? 'Every carrier appears here with its frequency, power and band.'
+        : 'A likely-drone carrier (ELRS/LoRa chirp) will appear here; enter a seed and press Identify to confirm a known link. Use “Show all carriers” to see Wi-Fi/BT/noise too.';
+      elList.innerHTML='<div class="empty"><b>No '+what+' '+(det.streaming?'right now':'(streaming stopped)')+'.</b><br>'+
+        'This does not establish that nothing is present. '+hint+'</div>';
+      elCount.textContent="";
+      return;
     }
+    let h='<div class="ld-row head"><span>Freq</span><span>Power</span><span>BW</span><span>Band</span><span>Protocol</span><span>First seen</span><span>Last seen</span><span>Seen</span></div>';
+    for(const r of arr) h+=rowHtml(r);
     elList.innerHTML=h;
-    const active=arr.filter(r=>(det.lastSweep-r.last_seen)<=LAPSE_S*1000).length;
-    elCount.textContent=active+" active · "+arr.length+" total";
+    const active=carriers.filter(r=>(det.lastSweep-r.last_seen)<=LAPSE_S*1000).length;
+    const mode=det.showAll?'all carriers':'drones only';
+    elCount.textContent=(det.elrsLink?'1 link · ':'')+active+' active · '+arr.length+' shown ('+mode+')';
   }
   async function sweep(){
     if(!det.streaming)return;
@@ -757,14 +815,14 @@ setInterval(()=>refreshReceivers(false),15000);
       // Don't stop streaming — just note it + retry on the next tick.
       if(d.error==="busy"){
         elNote.hidden=false;
-        elNote.textContent="Live Detections: the radio is held by "+esc(d.held_by||"another session")+". Waiting for it to be released (close the Inspect RF drawer or stop the other session).";
+        elNote.textContent="Drones nearby: the radio is held by "+esc(d.held_by||"another session")+". Waiting for it to be released (close the Inspect RF drawer or stop the other session).";
         if(det.streaming)det.timer=setTimeout(sweep,SWEEP_MS);
         return;
       }
       if(d.error)throw new Error(d.error);
     }catch(e){
       det.streaming=false;updateBtn();
-      elNote.hidden=false;elNote.textContent="Live Detections: "+e.message+" — streaming stopped.";
+      elNote.hidden=false;elNote.textContent="Drones nearby: "+e.message+" — streaming stopped.";
       return;
     }
     det.lastSweep=Date.now();
@@ -812,12 +870,72 @@ setInterval(()=>refreshReceivers(false),15000);
     if(det.timer){clearTimeout(det.timer);det.timer=null;}
     updateBtn();
   }
+  // Build the pinned ELRS-link row from an /api/elrs/fhss result. `confirmed`
+  // means a seed matched, so a Net ID is honest; otherwise the link is only
+  // "present" and its net_id stays null (never shown).
+  function linkFromResult(d,confirmed){
+    const sync=d.sync||{};
+    const fhz=(sync.channel!=null)?2400400000+1000000*sync.channel
+             :(d.center_freq_hz||2440400000);
+    const now=Date.now();
+    return {freq_hz:fhz,band:"2.4 GHz ELRS",pinned:true,elrs_link:true,
+      elrs_net_id:confirmed?d.net_id:null, net_id:confirmed?d.net_id:null,
+      elrs_generation:sync.elrs_generation||null,
+      hop_interval_ms:(d.hop_interval_ms!=null)?d.hop_interval_ms:null,
+      evidence:d.evidence||null, db:null,
+      first_seen:now,last_seen:now,seen_count:d.n_positions||0};
+  }
+  // Identify: pause the stream (the dwell needs the radio), run the validated
+  // hop fingerprint on the sync channel, then resume. keep=0 so a press doesn't
+  // leave ~480 MB in git. A seed confirms into a Net ID; without one, or with a
+  // seed that doesn't match, the link is reported present-but-unconfirmed.
+  async function identify(){
+    if(det.identifying)return;
+    det.identifying=true; btnIdentify.disabled=true;
+    const wasStreaming=det.streaming;
+    if(wasStreaming)stop();
+    const seed=(det.seed||"").trim();
+    elNote.hidden=false;
+    elNote.textContent="Identifying ELRS link — dwelling on the sync channel (~20 s once the radio is warm, up to ~90 s on a session's first dwell)…";
+    try{
+      let url="/api/elrs/fhss?dwell_s=18&keep=0";
+      if(seed)url+="&seed="+encodeURIComponent(seed);
+      const r=await fetch(url,{headers:{"X-WaveRaider-Request":"1"}});
+      if(!r.ok)throw new Error("HTTP "+r.status+" "+(await r.text()).slice(0,160));
+      const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      if(!d.n_bursts){
+        elNote.textContent="No ELRS hopping link found in this dwell. This does not establish that nothing is present — try a longer dwell, or check the antenna and gain.";
+      }else if(seed && !d.net_id){
+        det.elrsLink=linkFromResult(d,false);
+        elNote.textContent="Seed "+esc(seed)+" did NOT confirm against this link (evidence "+esc(d.evidence||"?")+"). Wrong seed, wrong link, or a noisier dwell — the link is present but unconfirmed.";
+      }else{
+        det.elrsLink=linkFromResult(d,!!d.net_id);
+        elNote.textContent=d.net_id
+          ? "ELRS link identified — Net ID "+esc(d.net_id)+" (evidence "+esc(d.evidence||"?")+"). An identifier for a radio link, not an aircraft."
+          : "ELRS hopping link present (evidence "+esc(d.evidence||"?")+"); no seed confirmed its Net ID. Enter the recovered seed and Identify again to confirm it.";
+      }
+    }catch(e){
+      elNote.textContent="Identify failed: "+e.message;
+    }finally{
+      btnIdentify.disabled=false; det.identifying=false;
+      if(wasStreaming){start();} else {det.lastSweep=Date.now();render();}
+    }
+  }
   btnToggle.addEventListener("click",()=>{det.streaming?stop():start();});
-  btnClear.addEventListener("click",()=>{det.rows.clear();render();});
+  btnClear.addEventListener("click",()=>{det.rows.clear();det.elrsLink=null;render();});
+  btnShowAll.addEventListener("click",()=>{
+    det.showAll=!det.showAll;
+    btnShowAll.dataset.on=det.showAll?"1":"0";
+    btnShowAll.textContent=det.showAll?"Show drones only":"Show all carriers";
+    render();
+  });
+  btnIdentify.addEventListener("click",identify);
+  elSeed.addEventListener("input",()=>{det.seed=elSeed.value.trim();render();});
   // Click a row -> open the Inspect RF drawer tuned to that frequency.
   elList.addEventListener("click",e=>{
-    const row=e.target.closest(".ld-row[data-f]");if(!row)return;
-    const freq=parseFloat(row.dataset.f);
+    const row=e.target.closest(".ld-row[data-freq]");if(!row)return;
+    const freq=parseFloat(row.dataset.freq);
     // Reuse the drawer's specPreset if available (it's loaded from inspect-rf.js).
     if(typeof specPreset==="function"){
       const mhz=freq/1e6;

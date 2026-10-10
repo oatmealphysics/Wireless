@@ -2399,3 +2399,57 @@ recovery, so it is the artifact that evidences cross-day stability — I have le
 flagging the size since `.git` is ~6 GB and the hook auto-commits `captures/`.
 
 — Claude
+
+---
+
+## §40. "Drones nearby" — the Live Detections table, reworked with the operator (2026-10-10, Claude)
+
+Picks up your `f5a0f58` Live Detections table. The operator's direction (confirmed in two
+rounds): **show only drones by default, with a "show all carriers" toggle**; Wi-Fi/BT come later
+"once we move onto decoding wifi management frames." DroneID cell **kept** for the future DJI work.
+Bounded change, `monitor.html` only, brainstormed + TDD'd first.
+
+### 40a. The gap this closes
+Your `protoCell` read `row.elrs_net_id`, `row.seed_set` and `row.droneid`, but the sweep loop never
+set any of them (`elrs_net_id:null, droneid:false`, and `seed_set` was never assigned). So the
+`ELRS · Net ID` headline could **never fire** — every row could only reach "chirp hint" or
+"Unidentified". A spectrum poll genuinely can't recover a net_id; that needs the hop dwell.
+
+### 40b. What I changed
+- **Drones-only filter** (`isDroneRow`, new, node-tested): shows a row only with real drone
+  evidence — identified/present ELRS link, DroneID candidate, an ELRS/LoRa chirp hint, or a
+  sync-band carrier once a seed is entered. A **"Show all carriers"** toggle restores your full
+  list unchanged. Title is now **"Drones nearby"**; empty state stays honest ("does not establish
+  that nothing is present").
+- **Real identity, via the validated route.** A seed box + **📡 Identify ELRS link** button in the
+  header. Identify pauses the poll, runs `/api/elrs/fhss?dwell_s=18&keep=0[&seed=]` (your route),
+  and pins an ELRS-link row with Net ID (when a seed confirms) or "ELRS link (present)" + evidence
+  (seedless/unconfirmed), then resumes. The net_id is never shown unless a seed actually matched.
+- **Pure functions extracted** into the node-tested block: `isDroneRow`, `protoCell` (now takes
+  `seedSet`, not the dead `row.seed_set`), `elrsLinkDetail`. 3 new tests in `test_monitor.py`.
+- Identity shows as a **detail line under the protocol cell**, not new columns — the operator's
+  original complaint was an unreadably wide table, so I didn't widen it.
+
+### 40c. A regression in f5a0f58 I had to fix (heads-up)
+Your row used `data-f="…"`, which collides with `test_observations_have_no_collection_filter_controls`
+(it asserts `'data-f=' not in html` — `data-f` was the retired evidence-filter attribute). That test
+was **already failing at HEAD** before I touched anything. It didn't show up for you because your
+enclave has no `scapy`, so `test_monitor.py` never *collects* there — which also hides ~90 other
+Monitor tests. I renamed the attribute to `data-freq` (row + click handler). **Please run the suite
+on the laptop (scapy present), not only the enclave** — the enclave silently skips this whole file.
+
+### 40d. The opendroneid "4 failures" — it's NOT just deps (your §30b is partly stale)
+With scapy+pytest present on the laptop, the 4 `test_remote_id_reference` failures are a
+**`FileNotFoundError` on `tests/fixtures/opendroneid/odid_wifi_sample.expected.jsonl`** — a missing
+fixture file, not (only) a missing dependency. §30b said the fixtures are tracked and the blocker is
+deps; at least one `.expected.jsonl` is not resolving on disk here. Worth a look — may be gitignored
+or never committed.
+
+### 40e. Verification
+`test_monitor.py` 87/87, full GUI set (monitor/styles/navigation/inspect_rf) 144/144, whole suite
+**624 passed, 3 skipped, 4 failed** (the opendroneid ones above, pre-existing + unrelated).
+`elrs_sdr.selftest` ALL CHECKS PASSED. Page script `node --check` clean.
+**Pending (operator, in a browser):** the streaming poll, the Identify dwell against the live radio,
+and row-click-to-Inspect — the DOM glue can't be unit-tested from here, same boundary as your note.
+
+— Claude
