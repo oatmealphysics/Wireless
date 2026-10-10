@@ -2059,3 +2059,115 @@ tool identifies aircraft), so the front-end panel is a deliberate separate chang
 phrasing for it is "RF link fingerprint", never "drone identified".
 
 — Claude
+
+---
+
+## §35. 🎯 NET_ID RECOVERED — the FHSS LCG seed, confirmed on four captures
+*(Claude, 2026-10-09)*
+
+**`seed = 1120344 = 0x00111858`**, with `sync_channel = 41` and channel offset **0**.
+ELRS reaches a real per-link identity, recovered **passively, with no payload decode** — which
+matters because §30 showed the payload route is walled off by undocumented `CR_LI_4_8`.
+
+### 35a. The evidence
+Verified against every capture we have, using `fhss_seed.verify_seed` / `best_rotation`:
+
+| capture | channels | absolute? | match | rotation | chance |
+|---|---|---|---|---|---|
+| `sync_ch40_161112` | 35–45 | yes | **31/31 = 100%** | 80 | 10⁻⁵⁹ |
+| `sync_ch40b_162100` | 35–45 | yes | 29/30 = 96.7% | 80 | 10⁻⁵⁵ |
+| `ctrlon_155306` | **0–10** | no | 28/30 = 93.3% | 137 | 10⁻⁵³ |
+| `sync30_152002` | **0–10** | no | 30/31 = 96.8% | 91 | 10⁻⁵⁷ |
+
+The last two are **held-out**: they see channels 0–10, a set **completely disjoint** from the 35–45
+used to find the seed, and were never part of the search. One seed predicts all four.
+
+### 35b. What finally cracked it, and the assumption that had been hiding
+The clean 2^31 sweep came back at chance (best 6/10, 7/10), so the fault was upstream of the sweep.
+Then the **offset-free** search — solve for the channel offset instead of assuming it — found a seed
+at **8/9** in only 2^22 seeds. At offset 0 that is a ~80⁻⁸ coincidence, so it was real, and its
+single outlier was diagnostic: position 31 held channel **40** where the sequence had value **0**.
+
+Under `sync_channel = 40`, value 40 is pinned at position 0 and **can never move** (the swap loop
+skips `i % freqCount == 0` as a source, and its target is `offset + rand` with `rand ≥ 1`, so a
+block start is never a target either). So that constraint was *structurally impossible* — 8/9 was a
+hard ceiling, not a near miss. With `sync_channel = 41` the same seed scores **29/29**.
+
+An independent sweep of candidate sync channels confirms it with no ambiguity:
+
+```
+ sync_ch   best consistent (rot 0 / 80 / 160)
+      40            5/9   8/9   6/9
+      41            5/9   9/9   6/9      <-- only 41 reaches 9/9
+      42            5/9   8/9   6/9
+```
+
+**So two of my own earlier conclusions were wrong, and the seed recovery is what proved it:**
+
+1. **§32c's "channel index is off by one" is REFUTED.** I read the pinned channel measuring at
+   2441.4 MHz (index 41) against ELRS's `sync_channel = freq_count/2 = 40` as a ~1 MHz tuning
+   offset, and "corrected" it by shifting every channel by −1. The seed only reproduces the hops
+   when the measured channels are used **verbatim**. Our frequency grid was right all along.
+2. **The link's sync channel is 41, not `freq_count/2`.** That formula is what `master`'s
+   `FHSSrandomiseFHSSsequence` uses, and it disagrees with the air. `find_sync_channel()` now
+   returns the **measured** index and reports `sync_channel_formula` + `formula_disagrees` beside
+   it, so the discrepancy stays visible instead of being absorbed into a fudge factor. @andeds —
+   worth checking against the ELRS version the Tinyhawk actually runs; I compared to `master`.
+
+This is exactly why the measured-vs-assumed rule in AGENTS.md §5 exists. My −1 "calibration" looked
+like applying that rule (the centre frequency is measured, not requested) but was really *another
+assumption* wearing its clothes — and it silently cost two 90-minute sweeps.
+
+### 35c. What the seed does and does not reveal about the UID
+`uid_seed(uid) = (uid[2]<<24) + (uid[3]<<16) + (uid[4]<<8) + (uid[5] ^ OTA_VERSION_ID)`, and the
+last term is a byte XOR so no carries are possible — it decomposes cleanly. With
+`OTA_VERSION_ID = 4`:
+
+```
+uid[2] = 0x00 or 0x80      (the 31-bit LCG mask loses the top bit — both are consistent)
+uid[3] = 0x11
+uid[4] = 0x18
+uid[5] = 0x5c              (= 0x58 ^ OTA_VERSION_ID, so version-dependent)
+uid[0], uid[1]             NOT recoverable — they never reach the seed
+```
+
+So it is a **partial** UID: 3 bytes solid, one to a single bit, two unreachable. Notably `uid[4]`
+and `uid[5]` are precisely the bytes that seed `OtaCrcInitializer`, though that is of no immediate
+use while the payload stays LI-coded.
+
+### 35d. Discovery is expensive, verification is not — and that is the useful part
+Discovery: a ~90-minute 2^31 sweep. Confirming a seed already in hand: **one sequence build, ~1 ms.**
+`verify_seed()` and `best_rotation()` expose that, and `GET /api/elrs/fhss?seed=<n>` now reports
+`net_id` when the seed confirms against a live capture. So the seed is found once offline and then
+matched live on every later capture — an actual identity, not a one-off result.
+
+Two bugs I hit wiring that up, both worth recording:
+- **I assumed rotation 0 for an absolute fold.** All three blocks start with the sync channel, so an
+  absolute fold still carries a **3-fold** ambiguity — the real captures match at rotation **80**,
+  and checking only rotation 0 scored 4/31 and looked like a clean failure. `best_rotation(step=...)`
+  now tries the 3 block rotations for an absolute fold and all 240 for a relative one.
+- **`match` required 100%.** Real captures taken with the SNR gate at its floor carry marginal
+  bursts whose centroid is mis-measured (§32e), so a *correct* seed scores 93–97%, not 100%.
+  Demanding exactness rejects the right answer on precisely the noisier captures this is for.
+  `match` is now a significance judgement — ≥85% of positions agreeing **and** the agreeing
+  positions alone being ≤10⁻⁸ by chance — with `match_exact` reported separately. (An earlier
+  `n >= 10` guard was also wrong: it rejected a 9/9 exact match that is already 1-in-10¹⁷.)
+
+### 35e. The seed is NOT in the code, deliberately
+`1120344` appears in these notes and nowhere in the source. AGENTS.md's #1 goal is that this stay a
+**general** detector; baking in one airframe's seed, UID or sync word would be a regression, not a
+feature. `verify_seed()` takes the seed as a parameter and the API takes it as a query arg.
+
+### 35f. Status
+Per AGENTS.md §3 this is **VALIDATED**: one seed, recovered from two captures, predicting two more
+on a disjoint channel set at 10⁻⁵³ or better, with the structural reason for the earlier failures
+understood rather than worked around.
+
+On `protocol_catalog.py` my view has changed with the evidence. In §31f/§32g I proposed `SPECIFIC`
+because a fingerprint is not a decoded identity. It is no longer a fingerprint: we recover the
+**UID-derived LCG seed**, which is exactly the "Copy Net ID" quantity the reference C-UAS SDR
+surfaces, plus 3½ bytes of the actual bind UID. I now think ELRS has earned **`IDENTIFIED`** with
+`link_id` = the seed. I am **still not making that edit unilaterally** — it is the project's
+headline claim and it should carry both our names. Your call, @andeds.
+
+— Claude

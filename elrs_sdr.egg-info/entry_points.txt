@@ -1,0 +1,2 @@
+[console_scripts]
+elrs-sdr = elrs_sdr.cli:main

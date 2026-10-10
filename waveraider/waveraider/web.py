@@ -314,7 +314,9 @@ class Handler(BaseHTTPRequestHandler):
             # that blocks reading the UID out of a SYNC packet (notes §30).
             # Long-dwells the sync channel (~2440.4 MHz), where the pinned
             # block-start channel yields ABSOLUTE sequence positions.
-            # Query: srate, gain, dwell_s, freq, snr_min, device.
+            # Query: srate, gain, dwell_s, freq, snr_min, device, and
+            # optional seed=<int> to CONFIRM a previously recovered FHSS seed
+            # against this capture (~1 ms) and report it as net_id.
             from .protocols import elrs as elrs_plugin
             if not elrs_plugin.core_available():
                 return self._send(400, json.dumps({"error": elrs_plugin.core_error()}))
@@ -326,6 +328,8 @@ class Handler(BaseHTTPRequestHandler):
                 freq = float(q.get("freq", [str(elrs_plugin.FHSS_SYNC_FREQ)])[0])
                 snr_raw = q.get("snr_min", [""])[0]
                 snr_min = float(snr_raw) if snr_raw else None
+                seed_raw = q.get("seed", [""])[0]
+                verify_seed = int(seed_raw, 0) if seed_raw else None
                 device = q.get("device", [""])[0] or None
             except ValueError as e:
                 return self._send(400, json.dumps({"error": f"bad param: {e}"}))
@@ -347,7 +351,8 @@ class Handler(BaseHTTPRequestHandler):
                     try:
                         out = elrs_plugin.fhss_fingerprint(
                             radius, srate=srate, gain=gain, dwell_s=dwell_s,
-                            freq_hz=freq, output_dir=out_dir, snr_min=snr_min)
+                            freq_hz=freq, output_dir=out_dir, snr_min=snr_min,
+                            verify_seed=verify_seed)
                     finally:
                         del radius   # release the UHD device on every path
             except Exception as e:

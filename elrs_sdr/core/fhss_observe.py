@@ -381,14 +381,22 @@ def find_sync_channel(pat: HopPattern, freq_count: int = 80,
 
     Two things come out of it, neither of which has to be assumed:
 
-    1. **Absolute channel calibration.** ELRS computes
-       `sync_channel = freq_count / 2` = 40, i.e. 2440.4 MHz. We measured the
-       pinned channel one index higher (2441.4 MHz), so this capture's absolute
-       indices are offset by one -- a tuning/labelling offset, exactly the
-       "measured, not requested" trap AGENTS.md §5 flags for the sample rate,
-       applied to the centre frequency. `index_offset` is that correction.
-       Relative structure is unaffected, which is why the hop fingerprint
-       cross-checked at 100% before this was understood.
+    1. **The link's actual sync-channel index.** ELRS's documented formula is
+       `sync_channel = freq_count / 2` = 40 (2440.4 MHz), but the pinned channel
+       measures one index higher, at 2441.4 MHz = index **41**, on every capture.
+
+       This was first read as a ~1 MHz tuning offset and "corrected" by shifting
+       every channel index by -1. **That reading was wrong, and recovering the
+       LCG seed proved it** (notes §35): the seed only reproduces the observed
+       hops when the measured channels are used VERBATIM (offset 0) and
+       `sync_channel` is taken as the measured **41**, not the formula's 40.
+       With 40 it fails on exactly the constraints involving channels 40/41 --
+       necessarily, because `build_sequence` pins `sync_channel` at position 0
+       where it can never move, and swaps channel 0 into its place.
+
+       So this returns the MEASURED index and does not adjust the channels.
+       `sync_channel_formula` is reported alongside so the disagreement with
+       `freq_count / 2` stays visible rather than being silently absorbed.
 
     2. **Absolute sequence phase.** The sync channel's slots ARE the block
        starts, so sequence position 0 is pinned instead of being anchored on
@@ -427,7 +435,12 @@ def find_sync_channel(pat: HopPattern, freq_count: int = 80,
         "mean_gap_hops": round(mean_gap, 3),
         "spread_hops": round(spread, 3),
         "n_sightings": len(times),
-        "index_offset": freq_count // 2 - ch,
+        # The measured index IS the sequence value -- see note 1 above. No
+        # channel adjustment is applied; `index_offset` is kept at 0 only so
+        # existing readers do not silently re-apply the refuted -1 shift.
+        "index_offset": 0,
+        "sync_channel_formula": freq_count // 2,
+        "formula_disagrees": ch != freq_count // 2,
         "block_start_slots": block_slots,
         "hop_interval_refined_s": hop_refined,
         "unique": len(cands) == 1,
@@ -439,9 +452,10 @@ def absolute_fold(pat: HopPattern, freq_count: int = 80,
     """Fold onto the sequence with position 0 pinned by the sync channel.
 
     Unlike `folded()`, whose position 0 is just the first hop we happened to
-    see, this returns true sequence positions (and true channel indices, via
-    `index_offset`), so two captures of the same link fold onto the SAME
-    positions with no rotation search.
+    see, this returns true sequence positions, so two captures of the same link
+    fold onto the SAME positions with no rotation search. Channel values are
+    reported exactly as measured -- see `find_sync_channel()` note 1 for why no
+    index shift is applied.
     """
     sync = find_sync_channel(pat, freq_count)
     if sync.get("channel") is None:
@@ -661,6 +675,9 @@ def selftest(verbose: bool = True) -> None:
     assert sync["channel"] == ISM.sync_channel, sync
     assert abs(sync["mean_gap_hops"] - ISM.freq_count) < 1.0, sync
     assert sync["index_offset"] == 0, sync
+    assert not sync["formula_disagrees"], (
+        "the synthetic frame is built with sync_channel = freq_count//2, so the "
+        "measured index must agree with the formula here")
     assert sync["unique"], "the pinned channel must be unambiguous"
     starts = sync["block_start_slots"]
     # allow one slot of quantisation slack; real captures measured a spread of

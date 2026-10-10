@@ -808,7 +808,8 @@ class ElrsPlugin(ProtocolPlugin):
 def fhss_fingerprint(radius, srate: float = 10e6, gain: float = 40.0,
                      dwell_s: float = 12.0, freq_hz: float = FHSS_SYNC_FREQ,
                      output_dir: str | None = None,
-                     snr_min: float | None = None) -> dict:
+                     snr_min: float | None = None,
+                     verify_seed: int | None = None) -> dict:
     """Long-dwell the sync channel and recover the link's FHSS hop fingerprint.
 
     This is the identity path that is NOT blocked by the SX1280 `CR_LI_4_8`
@@ -885,4 +886,34 @@ def fhss_fingerprint(radius, srate: float = 10e6, gain: float = 40.0,
         out["evidence"] = "NONE"
         out.setdefault("note", "No hop pattern recovered — no link detected, or "
                                "the dwell was too short.")
+
+    # Optional: confirm a seed recovered earlier, which costs one sequence build
+    # (~1 ms) against the ~90-minute sweep that discovery needs. That asymmetry
+    # is what makes the seed a usable net_id: find it once offline with
+    # fhss_seed_scan.py, then match every later capture against it live.
+    #
+    # The seed is a PARAMETER, never a constant in this file. AGENTS.md's #1
+    # goal is that the detector stay general; baking in one airframe's seed
+    # would be a regression, not a feature.
+    if verify_seed is not None and fp:
+        from elrs_sdr.core import fhss_seed as _fs
+        cons = {int(p): c for p, c in fp.items()}
+        sync_ch = (out.get("sync") or {}).get("channel")
+        # An absolute fold still has a 3-fold ambiguity -- position 0 is a
+        # block start, but all blocks start with the sync channel, so it may be
+        # block 0, 1 or 2. Step by freq_count to try just those three. A
+        # relative fold has no phase at all, so step by 1.
+        v = _fs.best_rotation(int(verify_seed), cons, _fo.ISM.freq_count,
+                              sync_ch,
+                              step=(_fo.ISM.freq_count if out.get("absolute") else 1))
+        out["seed_check"] = v
+        if v.get("match"):
+            out["net_id"] = f"{int(verify_seed):08x}"
+            out["net_id_basis"] = (
+                "ELRS FHSS LCG seed, confirmed against this capture's hop "
+                "sequence. fhss.uid_seed() derives it from the bind UID, so it "
+                "is a per-link identity — but only UID[2..5] reach the seed, "
+                "the 31-bit LCG mask loses UID[2]'s top bit, and UID[5] is "
+                "known only up to the XOR with OTA_VERSION_ID.")
+            out["evidence"] = "VALIDATED"
     return out

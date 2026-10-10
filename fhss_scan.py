@@ -64,8 +64,10 @@ def run(path: str):
         print(f"  PINNED SYNC CHANNEL: raw ch{sync['channel']} recurs every "
               f"{sync['mean_gap_hops']} hops (spread {sync['spread_hops']}, "
               f"{sync['n_sightings']} sightings, unique={sync['unique']})")
-        print(f"    => absolute channel calibration offset {sync['index_offset']:+d} "
-              f"(ELRS sync channel is {F.ISM.freq_count//2})")
+        print(f"    => MEASURED sync-channel index {sync['channel']}; the "
+              f"ELRS formula freq_count/2 gives {sync['sync_channel_formula']}"
+              f"{'  <-- they DISAGREE; the measured one is correct (notes §35)' if sync['formula_disagrees'] else ''}")
+        print(f"    => channels are used verbatim (no index shift)")
         print(f"    => hop interval refined to {sync['hop_interval_refined_s']*1000:.5f} ms")
         print(f"    => ABSOLUTE fold: {len(af['positions'])}/{F.SEQ_LEN} TRUE "
               f"sequence positions ({af['n_dropped']} dropped), no rotation needed")

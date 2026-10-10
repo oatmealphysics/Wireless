@@ -58,9 +58,11 @@ def main() -> int:
         af = F.absolute_fold(pat)
         folds.append((p, sync, af))
         print(f"{Path(p).name}")
-        print(f"  pinned sync channel raw ch{sync['channel']} "
-              f"(offset {sync['index_offset']:+d}), {sync['n_sightings']} "
-              f"sightings, spread {sync['spread_hops']} hops")
+        print(f"  pinned sync channel ch{sync['channel']} "
+              f"(the freq_count/2 formula says {sync['sync_channel_formula']}"
+              f"{' — DISAGREES, measured wins' if sync['formula_disagrees'] else ''}), "
+              f"{sync['n_sightings']} sightings, "
+              f"spread {sync['spread_hops']} hops")
         print(f"  absolute fold: {len(af['positions'])}/{F.SEQ_LEN} positions "
               f"({af['n_dropped']} vote-conflicts, {af['n_collided']} dropped "
               f"for per-block channel collision {af['collided_positions']})")
@@ -91,19 +93,31 @@ def main() -> int:
         print(f"    chunk {ci}/{nc}  {el/60:.1f} min elapsed, "
               f"~{eta/60:.1f} min left, survivors {surv}", flush=True)
 
-    res = S.search_multi(cons, F.ISM.freq_count, sync_channel=None,
-                         seed_space=2 ** log2, progress=prog)
+    # Solve for the channel offset rather than assuming it. find_sync_channel()
+    # calibrates by asserting the pinned channel IS freq_count//2 (giving -1 on
+    # these captures). That is an unverified assumption, and a constant channel
+    # shift preserves every structural invariant we confirmed while making seed
+    # recovery impossible -- which is exactly what two chance-level sweeps look
+    # like. So hand the search RAW channels and let it find the offset.
+    # Channels are used verbatim, and the sync-channel index is the MEASURED
+    # one, not freq_count/2 -- that is what made the seed recoverable (§35).
+    sync_ch = folds[0][1]["channel"]
+    print(f"  using measured sync_channel={sync_ch} and channels verbatim; "
+          f"the offset is still SOLVED FOR as a cross-check")
+    res = S.search_offset_free(cons, F.ISM.freq_count, sync_channel=sync_ch,
+                               seed_space=2 ** log2, progress=prog)
     print(f"\n--- result  [{(time.time()-t0)/60:.1f} min] ---")
     for r, d in res.get("rotations", {}).items():
-        print(f"  rotation {r}: {d['block0_constraints']} block-0 constraints, "
-              f"{d['survivors_block0']} survivors -> "
+        print(f"  rotation {r}: {d['informative_constraints']} informative "
+              f"constraints, {d['candidates']} candidates -> "
               f"{d['n_confirmed']} confirmed {d['confirmed']}; "
-              f"best partial match {d.get('best_partial_match')} "
-              f"(seed {d.get('best_partial_seed')})")
-    sd = res.get("unique_seed")
-    if sd is not None:
+              f"best consistent {d.get('best_consistent')}")
+    uniq = res.get("unique")
+    if uniq is not None:
+        rot, c = uniq
+        sd = c["seed"]
         print(f"\n  ** UNIQUE SEED RECOVERED: {sd} (0x{sd:08x}) at rotation "
-              f"{res['unique_rotation']} **")
+              f"{rot}, channel offset {c['channel_offset']:+d} **")
         print(f"  This is a per-link identity: fhss.uid_seed() derives it from "
               f"the bind UID.")
         print(f"  NOTE it does NOT reveal the full 6-byte UID — uid_seed() only "
@@ -121,7 +135,7 @@ def main() -> int:
                   "statement about our build_sequence port, NOT about the "
                   "link: the observed hops are real and reproducible (§32), so "
                   "some detail of the port still differs from the firmware.")
-            bests = [d.get("best_partial_match")
+            bests = [d.get("best_consistent")
                      for d in res["rotations"].values()]
             print(f"  Best partial matches per rotation: {bests}. A best of "
                   f"N-1/N would point at one wrong constraint or a near-miss "

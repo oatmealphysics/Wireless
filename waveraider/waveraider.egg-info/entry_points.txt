@@ -1,0 +1,2 @@
+[console_scripts]
+wr = waveraider.cli:main
