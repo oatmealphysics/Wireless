@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .fhss import DOMAINS, FHSS_SEQUENCE_LEN, build_sequence
+from .fhss import sync_channel_candidates as _sync_candidates
 
 ISM = DOMAINS["ISM2G4"]
 #: Sequence period: the whole multiple of `freq_count` that FITS in the
@@ -381,9 +382,16 @@ def find_sync_channel(pat: HopPattern, freq_count: int = 80,
 
     Two things come out of it, neither of which has to be assumed:
 
-    1. **The link's actual sync-channel index.** ELRS's documented formula is
+    1. **The link's actual sync-channel index.** ELRS *master*'s formula is
        `sync_channel = freq_count / 2` = 40 (2440.4 MHz), but the pinned channel
        measures one index higher, at 2441.4 MHz = index **41**, on every capture.
+
+       **That is now explained** (notes §37): ELRS **3.0.0** computes
+       `sync_channel = (freq_count / 2) + 1`, and `master` later dropped the
+       `+1`. So 41 is exactly right for a 3.x-era link, our `ISM2G4` domain
+       (2400.4 / 2479.4 / 80 channels) is correct verbatim, and the measured
+       index doubles as an ELRS **generation discriminator**
+       (`elrs_generation`).
 
        This was first read as a ~1 MHz tuning offset and "corrected" by shifting
        every channel index by -1. **That reading was wrong, and recovering the
@@ -441,6 +449,13 @@ def find_sync_channel(pat: HopPattern, freq_count: int = 80,
         "index_offset": 0,
         "sync_channel_formula": freq_count // 2,
         "formula_disagrees": ch != freq_count // 2,
+        # The formula CHANGED between ELRS generations, so the measured index
+        # identifies which one the link runs (notes §37):
+        #   (freq_count/2)+1 -> ELRS 3.0.0 and earlier   (41 @ 2.4 GHz)
+        #    freq_count/2    -> ELRS master              (40 @ 2.4 GHz)
+        # Reported as a measurement, never assumed.
+        "elrs_generation": _sync_candidates(freq_count).get(
+            ch, "unknown - matches neither known formula"),
         "block_start_slots": block_slots,
         "hop_interval_refined_s": hop_refined,
         "unique": len(cands) == 1,
@@ -724,6 +739,16 @@ def selftest(verbose: bool = True) -> None:
         f"index {ISM.sync_channel + 1} (the formula's {ISM.sync_channel} would "
         f"be wrong here -- this is the real-air branch the first check never "
         f"exercises)")
+    # Both generation branches must be covered, not just one -- a single-branch
+    # check is the tautology andeds caught in the original sync-channel test.
+    cands = _sync_candidates(ISM.freq_count)
+    assert sync41["elrs_generation"] == cands[ISM.sync_channel + 1], sync41
+    assert sync["elrs_generation"] == cands[ISM.sync_channel], sync
+    if verbose:
+        print(f"  [PASS] the sync-channel index identifies the ELRS generation "
+              f"in BOTH directions: ch{ISM.sync_channel + 1} -> "
+              f"{cands[ISM.sync_channel + 1]}, ch{ISM.sync_channel} -> "
+              f"{cands[ISM.sync_channel]}")
     assert sync41["formula_disagrees"], (
         "the measured index disagrees with the formula; this MUST be flagged so "
         "the discrepancy stays visible (notes §35: the formula is freq_count/2 "

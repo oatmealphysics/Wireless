@@ -78,7 +78,48 @@ class FhssDomain:
 
     @property
     def sync_channel(self) -> int:
+        """The sync channel per CURRENT ExpressLRS master: `freq_count / 2`.
+
+        ⚠️ This is **version-dependent** — see `sync_channel_candidates()`. Do
+        not treat it as the answer for an arbitrary link; it is only the value
+        the latest firmware would use. The detector measures the real one off
+        the air (`core.fhss_observe.find_sync_channel`), because a link running
+        an older ELRS pins a different channel and assuming this value makes the
+        FHSS sequence unreproducible (notes §35/§37).
+        """
         return self.freq_count // 2
+
+
+#: The sync-channel formula CHANGED between ExpressLRS generations, and the
+#: difference is directly observable, so it doubles as a version discriminator.
+#:
+#:   ELRS 3.0.0 (and earlier):  sync_channel = (freq_count / 2) + 1   -> 41 @ 2.4G
+#:   ELRS master:               sync_channel =  freq_count / 2        -> 40 @ 2.4G
+#:
+#: Measured on the operator's link: **41**, i.e. the `+1` form. That was not a
+#: guess — assuming `freq_count / 2` made the hop sequence irreproducible across
+#: an entire 2^31 seed sweep, and the seed only fell out once the measured 41 was
+#: used (notes §35). Keyed by channel index so a measurement maps straight to a
+#: generation.
+SYNC_CHANNEL_FORMULAS: tuple[tuple[str, str], ...] = (
+    ("elrs<=3.x", "(freq_count / 2) + 1"),
+    ("elrs-master", "freq_count / 2"),
+)
+
+
+def sync_channel_candidates(freq_count: int) -> dict[int, str]:
+    """Candidate sync-channel indices -> which ELRS generation implies them.
+
+    Both known formulas, so a measured index identifies the generation. Kept as
+    a table rather than one hardcoded value because AGENTS.md's #1 goal is that
+    this work against ALL ELRS versions, not one airframe's.
+    """
+    return {
+        freq_count // 2 + 1: f"{SYNC_CHANNEL_FORMULAS[0][0]} "
+                             f"({SYNC_CHANNEL_FORMULAS[0][1]})",
+        freq_count // 2: f"{SYNC_CHANNEL_FORMULAS[1][0]} "
+                         f"({SYNC_CHANNEL_FORMULAS[1][1]})",
+    }
 
 
 DOMAINS: dict[str, FhssDomain] = {
