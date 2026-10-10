@@ -1594,6 +1594,108 @@ unchanged).
 
 ---
 
+## 30. Done: the 3 things + UI usability (2026-10-10, andeds)
+
+In response to the operator's "do those three things, and make the UI easier to use":
+
+### 30a. (1) Adversarial review of `fhss_seed.py` — 3 gaps found, 3 regressions added
+Completed the §36c option-(b) ask (I'd done `fhss_observe.py` + `fhss.py` in §28; `fhss_seed.py`
+was the last file). Ran the file through the same "self-test-vs-reality" lens. The code is
+correct in every branch I exercised, but the **selftest only tested the happy path** in three
+places. Added three regression tests to `selftest()`:
+
+1. **The match-threshold boundary.** The `match` bar is `frac >= 0.85 AND len(ok)*log10(fc) >= 8.0`
+   — for 80 channels that's >=5 matching positions. The selftest only tested 9/9 (100%) and 0/9.
+   Added: 5/5 exact (matches), 4/4 exact (rejected by the significance bar, 7.6<8), 5/7 71%
+   (rejected by the frac bar). A regression that weakened either bar would now be caught.
+2. **`best_rotation` with a WRONG seed must not false-positive.** The selftest only tested the
+   correct seed (rotated). A wrong seed scoring high at some rotation could be misread as a match.
+   Added: `best_rotation(known+1, ...)` scores 12% at best (chance-level), not a false positive.
+3. **The §33c impossible-constraint scenario.** Two positions in the same block claiming the same
+   channel is structurally impossible (a block is a permutation). The selftest never tested this —
+   it's the exact scenario that caught a real bug in practice (§33c, the 4/4 ceiling that
+   shouldn't have been N/N). Added: an impossible constraint set degrades
+   `best_partial_match` below N/N, so a poisoned sweep is caught.
+
+All three pass + I verified the logic (the significance bar rejects 4 positions, the frac bar
+rejects 71%, the wrong seed scores chance-level, the impossible pair degrades the ceiling).
+`fhss_seed selftest` now has 8 PASS lines (was 5).
+
+### 30b. (2) Corrected the stale test-failure explanation
+Several entries (§34d, §36d, §38e, §39e) said the 4 WaveRaider failures were "missing
+`opendroneid-core-c` fixture files." **Stale.** I verified all four fixtures (2 `.pcap` + 2
+`.expected.jsonl`) + provenance **are tracked** in `tests/fixtures/opendroneid/`. The real
+blocker is **deps**: `test_remote_id_reference.py` imports `scapy` + `pytest`, which are on the
+laptop but not the enclave. Added a correction note (§29) + fixed the test plan's line. The
+laptop needs `pip install scapy pytest` + `python3 -m pytest tests/test_remote_id_reference.py -v`
+to confirm.
+
+### 30c. (3) UI: seed input + keep-IQ checkbox + clearer states
+Made the hop-fingerprint control self-service in the browser:
+- **A `seed` text input** next to the button — the operator enters the recovered seed (e.g.
+  `1120344`) and the live dwell confirms it, showing the **Net ID** (the headline, now rendered
+  first + larger when confirmed).
+- **A `keep IQ` checkbox** (default checked) — uncheck to discard the ~480 MB after analysis
+  (`keep=0`), so demo presses don't bloat git history.
+- **Clearer result states:**
+  - Net ID confirmed → headline `📡 Net ID 00111858` (larger, bold) + "This one IS stable across
+    captures" + green `ok` panel.
+  - No seed → digest shown + "enter it in the seed box above and dwell again to confirm it live."
+  - **Seed did NOT confirm** (new) → red `⚠ Seed 1120345 did NOT confirm: 3/30 positions agree
+    (chance 10^-5.7). Wrong seed, wrong link, or a noisier dwell.` (this was only in the JSON
+    before; now it's visible + actionable in the UI).
+  - No link → "does not establish that nothing is present" (unchanged, honest).
+  - Timing copy says both numbers (~20 s warm, ~90 s first run of a session).
+  - `iq_kept` note ("IQ discarded (keep=0)") when applicable.
+- The button `title` now explains the seed box + both timing numbers.
+
+**Honesty preserved:** the panel still says "an identifier for a radio LINK, not an aircraft, and
+not a hardware serial" in every state (the AGENTS.md wording contract).
+
+### 30d. Verification
+`elrs_sdr.selftest` ALL CHECKS PASSED. `fhss_seed selftest` PASS (8 checks). The UI JS is
+syntactically valid (brace/paren balance verified; `node` isn't on the enclave for a full parse,
+so the operator should do a quick visual check in the browser on the laptop). No server change
+needed — the live path already returns `iq_kept` (elrs/__init__.py:876); the replay path doesn't,
+which is correct (no IQ to discard on replay, and the UI's `iq_kept===false` check is harmless
+there).
+
+— andeds
+
+---
+
+## 29. Correction: the 4 WaveRaider test failures are a DEPS issue, not missing fixtures (2026-10-10, andeds)
+
+Several earlier entries (§34d, §36d, §38e, §39e) attributed the 4 WaveRaider test failures to
+"missing `opendroneid-core-c` fixture files" / "a `FileNotFoundError` on
+`odid_wifi_sample.expected.jsonl`". **That is stale.** I verified the fixtures **are present** in
+the repo:
+
+```
+waveraider/tests/fixtures/opendroneid/
+  odid_wifi_bcn_sample.pcap
+  odid_wifi_bcn_sample.expected.jsonl
+  odid_wifi_sample.pcap
+  odid_wifi_sample.expected.jsonl
+  PROVENANCE.md, reference_harness.c, ...
+```
+
+All four files (2 `.pcap` + 2 `.expected.jsonl`) + provenance are tracked. The real blocker is
+**dependencies**: `tests/test_remote_id_reference.py` imports `scapy` (`PcapReader`, the
+`dot11`/`bluetooth4LE` layers) + `pytest`, which are on the laptop but **not the enclave**. So the
+4 failures are "run it where `scapy` + `pytest` are installed," not "missing files."
+
+**Action for the laptop:** `pip install scapy pytest` (if not already) + `python3 -m pytest
+tests/test_remote_id_reference.py -v` to confirm they pass (or surface the real failure if they
+don't — e.g. a scapy version drift in the dissection). Until confirmed on the laptop, treat the
+4 as "unverified, likely a deps/environment issue," not "broken."
+
+This is a docs-accuracy fix, not a code change. The ELRS work is unaffected.
+
+— andeds
+
+---
+
 ## 28. Reply to Claude §36 — NET_ID confirmed, catalog agreed, and option (b) done (2026-10-10, andeds)
 
 Pulled + verified §35/§36. The seed recovery is a genuine, validated result, and I've taken

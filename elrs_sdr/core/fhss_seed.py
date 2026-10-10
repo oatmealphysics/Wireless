@@ -452,6 +452,88 @@ def selftest(verbose: bool = True) -> None:
         print(f"  [PASS] verify_seed confirms a known seed ({v['n_match']}/"
               f"{v['n_checked']} positions, chance 10^{v['log10_chance']}), "
               f"rejects a wrong one, and best_rotation finds the phase ({rot})")
+
+    # --- REGRESSION (andeds §29, 2026-10-10): the match-threshold boundary ---
+    # The check above only tests 9/9 (100%) and 0/9 (0%). The `match` bar is
+    # `frac >= 0.85 AND len(ok)*log10(freq_count) >= 8.0`. For 80 channels,
+    # log10(80)≈1.903, so the significance bar needs >=5 matching positions.
+    # This boundary is load-bearing (it's what rejects a 4-position exact match
+    # and a 71% match), so it must be tested. A regression that weakened either
+    # bar would otherwise pass the 9-position test above.
+    #
+    # (a) 5/5 exact (100%, only 5 positions): significance 5*1.903=9.5>=8,
+    #     frac 1.0>=0.85 -> match TRUE.
+    cons_5 = {p: seq[p] for p in (1, 5, 17, 33, 48)}
+    v5 = verify_seed(known, cons_5, 0, fc, sc)
+    assert v5["match"] and v5["match_exact"], v5
+    # (b) 4/4 exact (100%, only 4 positions): significance 4*1.903=7.6<8 ->
+    #     match FALSE (the significance bar rejects it, not the frac bar).
+    cons_4 = {p: seq[p] for p in (1, 5, 17, 33)}
+    v4 = verify_seed(known, cons_4, 0, fc, sc)
+    assert v4["match"] is False, (
+        f"4/4 exact should NOT match (significance {4*np.log10(fc):.1f} < 8.0); "
+        f"a regression that weakened the significance bar would let this through")
+    # (c) 5/7 (71.4%, 2 wrong): significance 5*1.903=9.5>=8 (passes) but
+    #     frac 0.714<0.85 -> match FALSE (the frac bar rejects it).
+    cons_mixed = {1: seq[1], 5: seq[5], 17: seq[17], 33: seq[33], 48: seq[48],
+                  61: (seq[61] + 1) % fc, 77: (seq[77] + 1) % fc}
+    vm = verify_seed(known, cons_mixed, 0, fc, sc)
+    assert vm["match"] is False, (
+        f"5/7 (71.4%) should NOT match (frac < 0.85); a regression that "
+        f"weakened the frac bar would let this through")
+    if verbose:
+        print(f"  [PASS] the match-threshold boundary is exercised: 5/5 exact "
+              f"matches, 4/4 exact is rejected (significance {4*np.log10(fc):.1f}<8), "
+              f"5/7 (71%) is rejected (frac<0.85)")
+
+    # --- REGRESSION (andeds §29): best_rotation with a WRONG seed must not false-positive ---
+    # The check above only tests best_rotation with the CORRECT seed (rotated).
+    # If a wrong seed accidentally scores high at some rotation, best_rotation
+    # would return a high fraction that could be misread as a match. This must
+    # stay low (chance-level) for a wrong seed.
+    cons_all2 = {p: seq[p] for p in (3, 11, 29, 44, 57, 73, 95, 140, 201)}
+    br_wrong = best_rotation(known + 1, cons_all2, fc, sc, step=1)
+    assert br_wrong["fraction"] < 0.3, (
+        f"best_rotation with a WRONG seed scores {br_wrong['fraction']*100:.0f}% "
+        f"at rotation {br_wrong['rotation']} — this is a false positive; a "
+        f"regression that inflated the fraction for wrong seeds would show here")
+    assert br_wrong["match"] is False, br_wrong
+    if verbose:
+        print(f"  [PASS] best_rotation with a WRONG seed scores "
+              f"{br_wrong['fraction']*100:.0f}% at best (chance-level), "
+              f"not a false positive")
+
+    # --- REGRESSION (andeds §29): the §33c impossible-constraint scenario ---
+    # §33c: two positions in the same block claiming the same channel is
+    # structurally impossible (each block is a permutation, so a channel occurs
+    # exactly once). A constraint set with such a pair has a DEGRADED
+    # best_partial_match (the ceiling is never N/N). The selftest never tested
+    # this — it only tested the happy path (all constraints satisfiable). This
+    # is the scenario that caught a real bug in practice (§33c), so it needs a
+    # regression test: if the impossible pair were silently dropped or the
+    # ceiling not degraded, a 90-minute sweep would be poisoned.
+    impossible = {1: 45, 5: 45, 17: seq[17], 33: seq[33], 48: seq[48]}  # pos 1 and 5 both claim ch 45
+    # A small slice is enough: the point is to check the best_partial_match
+    # degradation (the ceiling is never N/N for an impossible pair), not to find
+    # a seed. A full 2^31 sweep here would take ~90 minutes for no extra signal.
+    res_imp = search_multi(impossible, fc, sc, chunk=1 << 19, seed_space=1 << 20)
+    degraded = False
+    for r, d in res_imp.get("rotations", {}).items():
+        bpm = d.get("best_partial_match", "")
+        if "/" in bpm:
+            num, den = bpm.split("/")
+            if int(num) < int(den) and int(den) >= 4:
+                degraded = True
+                break
+    assert degraded, (
+        "the impossible-constraint set (two positions, same channel, same block) "
+        "should degrade the best_partial_match below N/N; a regression that "
+        "silently dropped the duplicate or failed to degrade the ceiling would "
+        "poison a full sweep (the §33c bug)")
+    if verbose:
+        print(f"  [PASS] the §33c impossible-constraint scenario degrades the "
+              f"best_partial_match (no N/N ceiling) — a poisoned sweep is caught")
+
     print("fhss_seed selftest PASS")
 
 

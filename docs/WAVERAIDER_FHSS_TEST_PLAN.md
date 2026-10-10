@@ -168,9 +168,11 @@ Both captures must contain the pinned sync channel, i.e. be centred near 2440.4 
 
 ## 7. Test status
 
-- WaveRaider suite: **621 passed, 4 failed, 3 skipped.** The 4 are pre-existing
-  `test_remote_id_reference` failures from missing `opendroneid-core-c` fixture files, unrelated to
-  this work.
+- WaveRaider suite: **621 passed, 4 failed, 3 skipped.** The 4 are `test_remote_id_reference` —
+  **not** missing fixtures (those are tracked in `tests/fixtures/opendroneid/`), but a deps
+  issue: the test imports `scapy` + `pytest`, which are on the laptop but not the enclave.
+  Run `pip install scapy pytest` + `python3 -m pytest tests/test_remote_id_reference.py -v` on
+  the laptop to confirm. Unrelated to the ELRS hop-fingerprint work.
 - `tests/test_elrs_fhss_route.py` (10 tests) covers: the route is gated against cross-site use
   (derived by parsing `web.py`, not a hand-maintained list), no stale gate entries, the TX gate,
   the UI control is wired through `specApi`, the wording discipline, the evidence label, and the
