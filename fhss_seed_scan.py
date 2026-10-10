@@ -36,25 +36,49 @@ def main() -> int:
         return 2
     log2 = int(next((a for a in args if not a.endswith(".complex8")), 31))
 
-    mm, sr, fc, n = A.open_capture(paths[0])
-    thr = A.auto_snr_threshold(mm, sr, n)
-    pat = F.observe(A.find_bursts(mm, sr, n, snr_min=thr), sr, fc)
-    sync = F.find_sync_channel(pat)
-    if sync.get("channel") is None:
-        print(f"{Path(paths[0]).name}: the pinned sync channel is not in this "
-              f"window ({sync.get('reason')}).")
-        print("Re-capture centred on the sync channel "
-              f"(~{F.ISM.channel_freq(F.ISM.freq_count//2)/1e9:.4f} GHz).")
-        return 1
-    af = F.absolute_fold(pat)
-    cons = af["positions"]
-    print(f"{Path(paths[0]).name}")
-    print(f"  pinned sync channel raw ch{sync['channel']} "
-          f"(offset {sync['index_offset']:+d}), "
-          f"{sync['n_sightings']} sightings, spread {sync['spread_hops']} hops")
-    print(f"  absolute fold: {len(cons)}/{F.SEQ_LEN} positions")
+    # Fold every capture given, then keep only the positions ALL of them agree
+    # on. A 100-minute sweep is worthless if one constraint is wrong, and a
+    # single capture can be wrong: the first 2^31 sweep was poisoned by a fold
+    # that claimed positions 49 AND 50 were both channel 34, which is
+    # impossible inside a block (slot misassignment). Cross-validating across
+    # captures catches the drifted ones that per-block injectivity alone does
+    # not, so pass two or more captures of the same link whenever possible.
+    folds = []
+    for p in paths:
+        mm, sr, fc, n = A.open_capture(p)
+        thr = A.auto_snr_threshold(mm, sr, n)
+        pat = F.observe(A.find_bursts(mm, sr, n, snr_min=thr), sr, fc)
+        sync = F.find_sync_channel(pat)
+        if sync.get("channel") is None:
+            print(f"{Path(p).name}: the pinned sync channel is not in this "
+                  f"window ({sync.get('reason')}).")
+            print("Re-capture centred on the sync channel "
+                  f"(~{F.ISM.channel_freq(F.ISM.freq_count//2)/1e9:.4f} GHz).")
+            return 1
+        af = F.absolute_fold(pat)
+        folds.append((p, sync, af))
+        print(f"{Path(p).name}")
+        print(f"  pinned sync channel raw ch{sync['channel']} "
+              f"(offset {sync['index_offset']:+d}), {sync['n_sightings']} "
+              f"sightings, spread {sync['spread_hops']} hops")
+        print(f"  absolute fold: {len(af['positions'])}/{F.SEQ_LEN} positions "
+              f"({af['n_dropped']} vote-conflicts, {af['n_collided']} dropped "
+              f"for per-block channel collision {af['collided_positions']})")
+
+    cons = dict(folds[0][2]["positions"])
+    for _, _, af in folds[1:]:
+        other = af["positions"]
+        cons = {p: c for p, c in cons.items() if other.get(p) == c}
+    if len(folds) > 1:
+        print(f"\ncross-validated across {len(folds)} captures: {len(cons)} "
+              f"positions all captures agree on")
     nb0 = sum(1 for p in cons if p < F.ISM.freq_count)
     print(f"  constraints in block 0: {nb0}  (>=4 needed per rotation)")
+    if nb0 < 6:
+        print(f"  WARNING: {nb0} block-0 constraints is thin. Position 0 is "
+              f"always the sync channel and carries no information, so this is "
+              f"effectively {max(0, nb0-1)} informative ones against a 2^31 "
+              f"space (~5 needed).")
     print(f"  sweeping {2**log2:,} seeds across "
           f"{F.SEQ_LEN // F.ISM.freq_count} block rotations in ONE pass ...",
           flush=True)

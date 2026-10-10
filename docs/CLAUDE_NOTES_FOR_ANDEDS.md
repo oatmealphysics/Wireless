@@ -1901,3 +1901,102 @@ it sees the pinned sync channel, which gives absolute positions, self-calibrates
 and lands bursts ~20 dB above the noise gate. Recommend it as the default for ELRS 2.4 FHSS work.
 
 — Claude
+
+---
+
+## §33. The seed sweep ran the full 2^31 — zero hits, and the near-miss tracking paid for itself
+*(Claude, 2026-10-09)*
+
+### 33a. Result of the first full sweep
+99.8 minutes, the entire 2^31 seed space, all 3 block rotations in one pass:
+
+```
+rotation   0: 12 block-0 constraints, 0 survivors -> 0 confirmed; best partial match 7/12
+rotation  80: 11 block-0 constraints, 0 survivors -> 0 confirmed; best partial match 7/11
+rotation 160: 11 block-0 constraints, 0 survivors -> 0 confirmed; best partial match 7/11
+```
+
+**Zero.** And because the sweep covered *every* seed, no seed-derivation or UID question can explain
+it — a wrong `uid_seed()` would be irrelevant when all seeds are tried. (Also worth recording: our
+`Lcg` masks the seed to 31 bits while the firmware keeps a full `uint32_t`, and that is provably
+harmless — `(a·s + c) mod 2^31` is unchanged by clearing the top bit, since `a·2^31 mod 2^31 = 0`.
+So 2^31 really is the whole space.)
+
+### 33b. The RNG and the builder are both exact — I checked them against source
+Before blaming the generator I verified it line by line against `lib/FHSS/random.cpp` and
+`lib/FHSS/FHSS.cpp`:
+
+- `rng()`: `seed = (214013·seed + 2531011) % 2147483648; return seed >> 16` — matches our `Lcg`.
+- `rngN(max)`: `rng() % max` — matches.
+- `FHSSrandomiseFHSSsequenceBuild`: the init array, the `i % freqCount != 0` guard, the
+  `offset = (i/freqCount)*freqCount` block base, `rand = rngN(freqCount-1)+1`, the intra-block swap,
+  and `sequenceCount = (FHSS_SEQUENCE_LEN / freqCount) * freqCount` — all match (the last one only
+  after the §32b fix).
+
+And the *structure* we measure off the air matches that algorithm on every testable invariant:
+period 240, 3 blocks of 80, each block a zero-repeat permutation, sync channel pinned at block
+starts, position 0 == channel 40. So the generator is this algorithm. Only the permutation detail
+disagreed.
+
+### 33c. The cause: my own fold was feeding the sweep an IMPOSSIBLE constraint
+The `best_partial_match` instrumentation (added precisely because two port bugs had already turned
+up that day) is what cracked it. A best of 11/12 would mean one bad observation. **7/12 means five
+are wrong**, which is a systematic fault, not a near-miss — so I went looking at the constraints
+rather than the algorithm.
+
+Testing each observed (position, channel) pair individually against 2^21 seeds:
+
+```
+  pos  chan   frac of seeds reproducing it
+    0    40        100.000%     (trivial — position 0 is always the sync channel)
+    4    44          1.213%     normal, ~1/80
+   49    34          1.132%     normal
+   50    34          1.126%     normal      <-- but see below
+```
+
+Every pair was individually satisfiable at the normal ~1/80 rate, so nothing looked wrong. But
+**positions 49 and 50 both claimed channel 34**, and inside one 80-entry block that is *impossible*
+— each block is a permutation, so a channel occurs exactly once. No seed can ever satisfy both, so
+the sweep's ceiling was never 12; it was at most 11, and the extra wrong constraints dragged the
+achievable best down to chance level.
+
+`folded()` and `absolute_fold()` checked that a single *position* didn't receive conflicting votes.
+Neither checked that a single *channel* didn't appear at two positions in the same block. Adjacent
+duplicates like 49/50 are the signature of **slot misassignment** — one dwell quantised into a
+neighbouring slot.
+
+### 33d. Two fixes
+1. **Per-block injectivity, in `absolute_fold()`.** Positions whose channel collides with another
+   position in the same block are dropped — *both* of them, since either could be the drifted one.
+2. **Cross-validation across captures, in `fhss_seed_scan.py`.** It now takes several captures,
+   folds each, and keeps only positions **all** of them agree on. Injectivity alone would not have
+   caught a dwell that drifted into an *empty* neighbouring slot; agreement between independent
+   captures does.
+
+On the two 2440.4 MHz captures: 32 and 31 positions individually (the first dropping [49, 50] for
+collision, the second dropping 4 for vote conflicts) → **30 cross-validated positions, zero
+disagreements, no duplicates in any of the 3 blocks**, 10 of them in block 0.
+
+Position 0 is always the sync channel and carries no information, so that is **9 informative
+constraints**. Expected false survivors over the whole space ≈ 2^31 × (1/80)^9 ≈ **1.6e-8**, and the
+chance-level best is ~6/10. So a 10/10 hit would be real, and the runner now warns when the block-0
+count is too thin to discriminate.
+
+### 33e. Status
+A clean full sweep is running on the cross-validated set. Honest statement of what each outcome
+means, written down **before** seeing it:
+
+- **A unique seed** → a genuine `net_id`, and ELRS reaches a real per-link identity. Note even then
+  it is not the full UID: `uid_seed()` consumes only UID[2..5] and XORs the low byte with
+  `OTA_VERSION_ID`, so UID[0] and UID[1] are unrecoverable from the hop sequence and UID[5] is known
+  only up to that XOR.
+- **Zero again, with best ~6/10** → chance level, so the constraints are consistent but the
+  generator still differs somewhere; next suspect is the ELRS *version* on the drone, since
+  `master` is what I compared against.
+- **Zero with best 9/10** → one remaining bad constraint; drop it and re-run.
+
+The §31/§32 fingerprint result is unaffected either way — it is validated empirically (30/30
+absolute positions across two captures, nothing fitted) and does not depend on reproducing the
+sequence from a seed.
+
+— Claude

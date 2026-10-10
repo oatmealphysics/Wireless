@@ -403,8 +403,33 @@ def absolute_fold(pat: HopPattern, freq_count: int = 80,
         slot = int(round((h.t_s - t0) / T))
         votes.setdefault((slot - base) % seq_len, []).append(h.channel + off)
     pos = {p: v[0] for p, v in votes.items() if len(set(v)) == 1}
-    return {"positions": pos, "sync": sync,
-            "n_dropped": len(votes) - len(pos)}
+
+    # Enforce the per-block INJECTIVITY the sequence guarantees. Each block is a
+    # permutation of all channels, so a channel occurs exactly once per block --
+    # two positions in the same block cannot hold the same channel.
+    #
+    # This check was missing, and it mattered: the fold claimed both position 49
+    # AND position 50 were channel 34. Each pair was individually reproducible
+    # by ~1.25% of seeds, so nothing looked wrong, but together they are
+    # impossible, which silently poisoned a full 2^31 seed sweep (it could only
+    # ever reach 7/12). The cause is slot misassignment -- one dwell quantised
+    # into a neighbouring slot -- and adjacent duplicates are its signature.
+    #
+    # Both members of a colliding pair are suspect, so drop both rather than
+    # guess which one drifted.
+    by_block: dict[int, dict[int, list[int]]] = {}
+    for p, c in pos.items():
+        by_block.setdefault(p // freq_count, {}).setdefault(c, []).append(p)
+    collided = set()
+    for chans in by_block.values():
+        for c, ps in chans.items():
+            if len(ps) > 1:
+                collided.update(ps)
+    clean = {p: c for p, c in pos.items() if p not in collided}
+    return {"positions": clean, "sync": sync,
+            "n_dropped": len(votes) - len(pos),
+            "n_collided": len(collided),
+            "collided_positions": sorted(collided)}
 
 
 def block_phase(pat: HopPattern, freq_count: int = 80) -> dict:
