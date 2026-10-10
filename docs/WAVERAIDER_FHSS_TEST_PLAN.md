@@ -111,6 +111,21 @@ In order of likelihood:
 Every live dwell is written to `captures/fhss_<timestamp>/`, so a disappointing live run can be
 re-analysed offline with `file=` without re-flying anything.
 
+### Disk and git cost — read this before pressing the button repeatedly
+
+A 12 s dwell at 10 MS/s is **~480 MB**, and this repo's **pre-push hook auto-commits `captures/`**,
+so every dwell otherwise lands in git history permanently (`.git` is already ~6 GB). Pass **`keep=0`**
+to analyse the dwell and then discard the IQ:
+
+```sh
+curl -s $H "http://127.0.0.1:8913/api/elrs/fhss?dwell_s=12&seed=1120344&keep=0"
+#   -> iq_kept: false, iq_file: null
+```
+
+Keeping it is still the default, because offline re-analysis via `file=` is the main way to debug a
+dwell that found nothing. Use `keep=0` for demo presses where you only want the answer, and the
+default when the dwell is worth keeping.
+
 ---
 
 ## 5. Recovering a net_id for a *new* link

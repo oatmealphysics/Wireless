@@ -809,7 +809,8 @@ def fhss_fingerprint(radius, srate: float = 10e6, gain: float = 40.0,
                      dwell_s: float = 12.0, freq_hz: float = FHSS_SYNC_FREQ,
                      output_dir: str | None = None,
                      snr_min: float | None = None,
-                     verify_seed: int | None = None) -> dict:
+                     verify_seed: int | None = None,
+                     keep_iq: bool = True) -> dict:
     """Long-dwell the sync channel and recover the link's FHSS hop fingerprint.
 
     This is the identity path that is NOT blocked by the SX1280 `CR_LI_4_8`
@@ -865,6 +866,29 @@ def fhss_fingerprint(radius, srate: float = 10e6, gain: float = 40.0,
     out["n_samples"] = n
     out["requested_freq_hz"] = float(freq_hz)
     out["source"] = "live"
+
+    # A 12 s dwell at 10 MS/s is ~480 MB, and the repo's pre-push hook
+    # auto-commits captures/ on every push, so each dwell otherwise lands in git
+    # history permanently (.git is already ~6 GB). Keeping the IQ is the default
+    # because it lets a disappointing dwell be re-analysed offline via `file=`,
+    # which the test plan recommends -- but a demo that presses the button
+    # repeatedly only wants the answer, so `keep_iq=False` discards it.
+    out["iq_kept"] = bool(keep_iq)
+    if not keep_iq:
+        try:
+            os.remove(path)
+            meta = os.path.splitext(path)[0] + ".meta.txt"
+            if os.path.exists(meta):
+                os.remove(meta)
+            try:
+                os.rmdir(os.path.dirname(path))      # only if now empty
+            except OSError:
+                pass
+            out["iq_file"] = None
+            out["iq_note"] = ("IQ discarded at your request (keep=0); this dwell "
+                              "cannot be re-analysed offline.")
+        except OSError as e:
+            out["iq_note"] = f"could not discard the IQ: {e}"
     return out
 
 
