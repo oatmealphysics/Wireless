@@ -688,6 +688,51 @@ def selftest(verbose: bool = True) -> None:
         print(f"  [PASS] the pinned sync channel is identifiable and its "
               f"sightings are exactly {ISM.freq_count} hops apart")
 
+    # --- REGRESSION (andeds §27, 2026-10-10): the formula-disagreement branch ---
+    # The check above is a tautology: it builds the synthetic with
+    # sync_channel = freq_count//2 (the formula), then asserts the measured
+    # index equals the formula. It therefore NEVER exercises the real-air
+    # branch where the measured index disagrees with the formula (which is
+    # exactly what happens on the operator's link: measured 41, formula 40 --
+    # notes §35). If someone "fixed" find_sync_channel to force
+    # channel = freq_count//2, the check above would STILL pass (its synthetic
+    # agrees with the formula), silently breaking real-air recovery.
+    #
+    # So build a SECOND synthetic with sync_channel = formula+1 (the real-air
+    # value) and assert find_sync_channel returns the MEASURED index, with
+    # formula_disagrees=True. This branch is now tested.
+    seed41 = 0x12345678 & 0x7FFFFFFF
+    seq41 = build_sequence(seed41, ISM.freq_count, sync_channel=ISM.sync_channel + 1)
+    center41 = ISM.channel_freq(ISM.sync_channel + 1)
+    vis41 = set(range(ISM.sync_channel - 4, ISM.sync_channel + 6))
+    b41 = []
+    for slot in range(900):
+        ch = seq41[slot % SEQ_LEN]
+        if ch not in vis41:
+            continue
+        f_off = ISM.channel_freq(ch) - center41
+        for k in range(4):
+            b41.append((int((slot * hop_s + k * 0.0066) * srate), f_off))
+    p41 = observe(b41, srate, center41)
+    sync41 = find_sync_channel(p41)
+    if verbose:
+        print(f"  sync channel (real-air case): ch={sync41['channel']} "
+              f"formula={sync41['sync_channel_formula']} "
+              f"disagrees={sync41['formula_disagrees']}")
+    assert sync41["channel"] == ISM.sync_channel + 1, (
+        f"find_sync_channel returned {sync41['channel']}, expected the measured "
+        f"index {ISM.sync_channel + 1} (the formula's {ISM.sync_channel} would "
+        f"be wrong here -- this is the real-air branch the first check never "
+        f"exercises)")
+    assert sync41["formula_disagrees"], (
+        "the measured index disagrees with the formula; this MUST be flagged so "
+        "the discrepancy stays visible (notes §35: the formula is freq_count/2 "
+        "but the air says +1)")
+    if verbose:
+        print(f"  [PASS] the formula-disagreement branch is exercised: the "
+              f"measured index ({ISM.sync_channel + 1}) is returned, not the "
+              f"formula's ({ISM.sync_channel}), and formula_disagrees=True")
+
     af = absolute_fold(p40)
     wrong = [(p, c) for p, c in af["positions"].items() if seq[p] != c]
     assert not wrong, f"absolute fold disagrees with the sequence at {wrong[:5]}"
