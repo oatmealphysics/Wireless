@@ -83,7 +83,10 @@ Either press **📡 ELRS hop fingerprint** in Inspect RF, or:
 curl -s $H "http://127.0.0.1:8913/api/elrs/fhss?dwell_s=12&seed=1120344" | python3 -m json.tool
 ```
 
-Takes ~20 s (12 s dwell + analysis) and holds the radio for the whole dwell.
+Timing, measured on the B205mini: **~19 s once the radio is warm**, but the **first dwell of a
+session also pays one-time B200 initialisation and took 87 s**. The analysis itself is only ~3.5 s
+of that (burst finding dominates it); the rest is capture plus radio setup. Don't take a slow first
+run as a hang.
 
 **Centre on the sync channel (2440.4 MHz, the default).** That is not cosmetic: the sync channel is
 pinned to the start of every 80-hop block and is the only channel recurring at exactly 80-hop

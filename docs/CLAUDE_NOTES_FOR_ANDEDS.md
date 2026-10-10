@@ -2331,3 +2331,71 @@ Nothing blocking. Two things if you want them:
   enclave against any capture the laptop uploads, which you could not do before.
 
 — Claude
+
+---
+
+## §39. LIVE VALIDATION — the net_id holds across days, sessions and dwells
+*(Claude, 2026-10-10 morning, controller ON, operator present)*
+
+The WaveRaider integration is now validated against live RF, and the result is the strongest
+evidence yet that the seed is a real per-link identity rather than an artifact of one capture.
+
+### 39a. A seed recovered YESTERDAY confirms on a dwell taken TODAY
+First live dwell through `GET /api/elrs/fhss?dwell_s=12&seed=1120344`:
+
+```
+456 bursts, 63 dwells, hop interval 26.6663 ms (37.5 hops/s)
+sync ch 41, gap 79.992, spread 0.15, elrs<=3.x ((freq_count/2)+1)
+absolute, 33/240 positions
+net_id = 00111858   link_id = 00111858   evidence = VALIDATED
+seed_check 32/32 exact at rotation 80, chance 10^-60.9
+```
+
+The seed was recovered on 2026-10-09 from two captures taken minutes apart. This dwell is a
+different day, a different session, a fresh power cycle of the controller — and it verifies
+**32/32 exact**. Combined with §35's four captures that is six independent captures, two days, one
+seed.
+
+The measured hop interval also reproduces to four decimals across days (26.6663 ms today vs
+26.6642 / 26.6618 yesterday), as does the pinned sync channel (41, spread 0.15 hops).
+
+### 39b. Three consecutive live dwells — the stable/unstable split behaves exactly as designed
+```
+run 1: 18.4s  442 bursts  32 pos  digest beef87639766  net_id 00111858  seed 31/31
+run 2: 18.3s  346 bursts  28 pos  digest 42ea8d5b1cbb  net_id 00111858  seed 27/27
+run 3: 18.3s  398 bursts  31 pos  digest a094bf3ef115  net_id 00111858  seed 30/30
+```
+
+`net_id` identical three times; `fingerprint_digest` different three times, because the recovered
+position count varies with the dwell (32 / 28 / 31). **This is §38d's bug playing out live:** had
+the digest shipped as `link_id`, the operator would have seen three different identifiers for one
+aircraft inside a minute. The split is now vindicated by measurement, not just by argument.
+
+### 39c. The UI render path, checked against real responses
+Ran the actual `specElrsFhss()` handler in node against three real API responses (DOM + `specApi`
+stubbed). All three states render correctly:
+
+- **net_id confirmed** → `rdy ok` panel, Net ID shown, and the text states it *is* stable across
+  captures of the same link.
+- **no seed** → `rdy ok`, digest shown as "this dwell only", and "No stable link ID: that needs the
+  hop-sequence seed", pointing at `fhss_seed_scan.py`.
+- **no link** → `rdy` (warning) panel, "does not establish that nothing is present".
+
+### 39d. One UX bug found and fixed: the first dwell of a session is slow
+Measured: **86.8 s for the first dwell, 18.3–18.4 s for every one after.** The analysis is only
+~3.5 s of that (burst finding dominates it at 2.9 s); the rest is the 12 s capture plus **one-time
+B200 initialisation**. My UI copy promised "~20 s", which would have made a perfectly good first
+run look hung. Both the button copy and the test plan now state both numbers and say not to read a
+slow first run as a hang.
+
+### 39e. Status
+Everything in `docs/WAVERAIDER_FHSS_TEST_PLAN.md` has now been executed live except nothing — the
+live dwell was the last outstanding item. WaveRaider suite 621 passed / 4 failed (the pre-existing
+`opendroneid-core-c` fixture ones) / 3 skipped.
+
+Note on captures: of five live dwells today only the first kept its IQ (480 MB); the rest used
+`keep=0` and left no file. That first one is the only capture from a *different day* than the seed
+recovery, so it is the artifact that evidences cross-day stability — I have left it tracked, but
+flagging the size since `.git` is ~6 GB and the hook auto-commits `captures/`.
+
+— Claude

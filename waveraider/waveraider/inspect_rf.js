@@ -236,8 +236,12 @@ async function specElrsFhss(){
   if(!el)return;
   const sync=2440.4e6;   // the ELRS 2.4 GHz sync channel, pinned to every block start
   if(!specCurrent(mount))return;
+  // Timing measured on a B205mini: ~19 s once the radio is warm, but the FIRST
+  // dwell of a session also pays one-time B200 initialisation and took ~87 s.
+  // Saying "~20 s" there makes a working run look hung, so say both.
   el.innerHTML='<div class="rdy">📡 Dwelling '+(sync/1e6).toFixed(1)+' MHz for 12 s to read the hop sequence. '+
-    'The radio is held for the whole dwell; this takes ~20 s.</div>';
+    'The radio is held for the whole dwell: about 20 s once warm, but the first run of a session '+
+    'also initialises the radio and can take up to 90 s. Leave it running.</div>';
   try{
     const r=await specApi("/api/elrs/fhss?dwell_s=12&freq="+Math.round(sync)+"&device="+encodeURIComponent(device));
     // a retune, radio change, close or re-render while it ran makes this obsolete
