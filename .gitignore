@@ -44,6 +44,12 @@ dist/
 !captures/**/*.json
 !captures/**/manifest.json
 
+# Untracked by request (2026-10-10): this one live dwell's raw IQ (458 MB) was
+# pushed once as the cross-day stability artifact, then untracked to stop it
+# weighing down .git. The file stays on disk; the single pushed copy stays in
+# history (no rewrite). Last-match-wins, so this re-ignore beats !captures/**.
+captures/fhss_20261010_113103/
+
 # C++ build artifacts (cpp/build.sh produces these)
 cpp/elrs_intercept
 cpp/tests/test_elrs_decode
