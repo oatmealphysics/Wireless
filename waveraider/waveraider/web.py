@@ -40,7 +40,7 @@ CHANGING_ROUTES = frozenset({
 
 # GET routes that start RF work or touch the radio lease (a sweep with an owner takes or renews it).
 # They are reads in form only, so they get their own check: Handler._refuse_foreign_rf_request.
-RF_GET_ROUTES = frozenset({"/api/spectrum", "/api/analyze", "/api/audio", "/api/droneid", "/api/elrs", "/api/elrs/progress"})
+RF_GET_ROUTES = frozenset({"/api/spectrum", "/api/analyze", "/api/audio", "/api/droneid", "/api/elrs", "/api/elrs/progress", "/api/elrs/fhss"})
 OWN_REQUEST_HEADER = "X-WaveRaider-Request"
 
 
@@ -308,6 +308,52 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 _sse({"type": "error", "error": str(e)})
             return None
+        if u.path == "/api/elrs/fhss":
+            # Per-link IDENTIFIER from the FHSS hop pattern — no payload decode,
+            # so it is unaffected by the SX1280 CR_LI_4_8 long-interleaving wall
+            # that blocks reading the UID out of a SYNC packet (notes §30).
+            # Long-dwells the sync channel (~2440.4 MHz), where the pinned
+            # block-start channel yields ABSOLUTE sequence positions.
+            # Query: srate, gain, dwell_s, freq, snr_min, device.
+            from .protocols import elrs as elrs_plugin
+            if not elrs_plugin.core_available():
+                return self._send(400, json.dumps({"error": elrs_plugin.core_error()}))
+            q = parse_qs(u.query, keep_blank_values=True)
+            try:
+                srate = float(q.get("srate", ["10000000"])[0])
+                gain = float(q.get("gain", ["40"])[0])
+                dwell_s = float(q.get("dwell_s", ["12"])[0])
+                freq = float(q.get("freq", [str(elrs_plugin.FHSS_SYNC_FREQ)])[0])
+                snr_raw = q.get("snr_min", [""])[0]
+                snr_min = float(snr_raw) if snr_raw else None
+                device = q.get("device", [""])[0] or None
+            except ValueError as e:
+                return self._send(400, json.dumps({"error": f"bad param: {e}"}))
+            if not (1.0 <= dwell_s <= 60.0):
+                return self._send(400, json.dumps(
+                    {"error": "dwell_s must be 1-60; the 240-hop sequence needs "
+                              "~6.4 s to cover one period at 26.66 ms/hop"}))
+            import time as _time
+            cap_root = Path(__file__).resolve().parents[2] / "captures"
+            out_dir = str(cap_root / f"fhss_{_time.strftime('%Y%m%d_%H%M%S')}")
+            try:
+                from elrs_sdr.radio import RadioDevice
+                from . import spectrum as _spectrum, uhd_backend as _uhdb
+                # Same single-device serialization as ELRS Find: the B205 is not
+                # thread-safe and Inspect RF holds it open via uhd_backend._DEV.
+                with _spectrum._DEVICE_LOCK:
+                    _uhdb.close()
+                    radius = RadioDevice(device or "type=b200")
+                    try:
+                        out = elrs_plugin.fhss_fingerprint(
+                            radius, srate=srate, gain=gain, dwell_s=dwell_s,
+                            freq_hz=freq, output_dir=out_dir, snr_min=snr_min)
+                    finally:
+                        del radius   # release the UHD device on every path
+            except Exception as e:
+                return self._send(500, json.dumps({"error": f"{type(e).__name__}: {e}"}))
+            return self._send(200, json.dumps(out, default=str))
+
         if u.path == "/api/elrs":
             # Modulation-agnostic ELRS "what's there" sweep: classifies each ISM2400
             # channel's PHY (LoRa vs GFSK/FLRC vs unknown) WITHOUT assuming the rate.

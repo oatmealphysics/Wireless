@@ -308,6 +308,59 @@ def crosscheck(a: HopPattern, b: HopPattern, seq_len: int = SEQ_LEN
     return best
 
 
+def observe_capture(path: str, snr_min: float | None = None,
+                    domain=ISM) -> dict:
+    """Whole pipeline for one capture file: bursts -> hops -> fingerprint.
+
+    The packaged entry point, so a caller (the WaveRaider surface, the CLI, a
+    notebook) gets the fingerprint from a path without re-deriving any of the
+    burst finding or slot alignment. Streams from a memmap, so a 20 s 10 MS/s
+    capture (1.6 GB as complex64) is never held in memory.
+    """
+    from .bursts import auto_snr_threshold, find_bursts, open_capture
+
+    mm, sr, fc, n = open_capture(path)
+    thr = snr_min if snr_min is not None else auto_snr_threshold(mm, sr, n)
+    bursts = find_bursts(mm, sr, n, snr_min=thr)
+    pat = observe(bursts, sr, fc, domain)
+    sync = find_sync_channel(pat, domain.freq_count)
+    out = {
+        "path": path,
+        "duration_s": round(n / sr, 2),
+        "sample_rate_hz": sr,
+        "center_freq_hz": fc,
+        "snr_gate_db": round(float(thr), 1),
+        "n_bursts": pat.n_bursts,
+        "n_offgrid": pat.n_offgrid,
+        "n_dwells": len(pat.hops),
+        "channels_seen": list(pat.channels_seen),
+        "hop_interval_ms": round(pat.hop_interval_s * 1000, 4),
+        "hops_per_s": round(1 / pat.hop_interval_s, 2) if pat.hop_interval_s else None,
+        "sync": sync,
+        "seq_len": SEQ_LEN,
+    }
+    if sync.get("channel") is not None:
+        af = absolute_fold(pat, domain.freq_count)
+        out["absolute"] = True
+        out["fingerprint"] = {str(p): c for p, c in sorted(af["positions"].items())}
+        out["n_positions"] = len(af["positions"])
+        out["n_collided"] = af.get("n_collided", 0)
+        out["hop_interval_refined_ms"] = round(
+            sync["hop_interval_refined_s"] * 1000, 5)
+    else:
+        fold = pat.folded()
+        out["absolute"] = False
+        out["fingerprint"] = {str(p): c for p, c in sorted(fold.items())}
+        out["n_positions"] = len(fold)
+        out["note"] = (
+            "The pinned sync channel is not in this capture's window, so these "
+            "positions are relative to the first observed hop, not absolute. "
+            f"Re-capture centred near "
+            f"{domain.channel_freq(domain.freq_count // 2) / 1e9:.4f} GHz to "
+            "get absolute positions.")
+    return out
+
+
 def find_sync_channel(pat: HopPattern, freq_count: int = 80,
                       tol: float = 3.0) -> dict:
     """Find the PINNED sync channel, which calibrates both axes at once.

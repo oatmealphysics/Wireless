@@ -2000,3 +2000,62 @@ absolute positions across two captures, nothing fitted) and does not depend on r
 sequence from a seed.
 
 — Claude
+
+---
+
+## §34. The fingerprint is now ON THE DELIVERY SURFACE — `/api/elrs/fhss` in WaveRaider
+*(Claude, 2026-10-09)*
+
+AGENTS.md §1 is explicit that "a detector improvement that can't be surfaced in that UI isn't
+finished," so the §31/§32 hop fingerprint is now reachable from WaveRaider.
+
+### 34a. What was added
+| piece | what it does |
+|---|---|
+| `elrs_sdr/core/bursts.py` | **moved** `open_capture`, `grab`, `auto_snr_threshold`, `find_bursts` out of the root-level `aligned_scan.py` and into the package, because AGENTS.md §5 makes `core/` the single source of truth and the surface must not import a top-level script. `aligned_scan.py` re-exports them, so every existing caller and every `A.find_bursts(...)` reference is unchanged — verified by re-running `fhss_scan.py` and getting byte-identical results. |
+| `core/fhss_observe.observe_capture(path)` | the packaged one-call entry point: path → bursts → hops → fingerprint, as a JSON-ready dict. Streams from a memmap, so a 20 s 10 MS/s capture (1.6 GB as complex64) is never held. |
+| `protocols/elrs/fhss_fingerprint()` | long-dwells the sync channel, captures to a file, then analyses from disk (and `del`s the ~1 GB buffer first). Returns the dict plus `link_id`. |
+| `GET /api/elrs/fhss` | the route. Params `srate, gain, dwell_s, freq, snr_min, device`. Serialised on `_spectrum._DEVICE_LOCK` and releases the UHD device in a `finally`, same as ELRS Find. |
+
+`dwell_s` is validated to 1–60 s with the reason in the error text: one 240-hop sequence period is
+~6.4 s at 26.66 ms/hop, so a short dwell cannot fill the fold. Default 12 s (~450 hops, ~1.9
+periods). It defaults to the **sync channel** because that is what gives absolute positions —
+`observe_capture` says so in its own `note` field when the pinned channel is not in the window,
+rather than silently returning a weaker rotation-relative answer.
+
+### 34b. `link_id` is labelled honestly
+`link_id` is a 12-hex-char SHA-256 of the canonicalised fingerprint, and it ships with
+`link_id_basis` ("absolute FHSS sequence positions" vs "relative to first hop") and `evidence`
+(`VALIDATED` when absolute, `SELF-CONSISTENT` when only relative) per AGENTS.md §3. The docstring
+states plainly that it is a **fingerprint, not a decoded UID** — the ELRS air protocol carries no
+hardware ID, and §33 shows the bind UID is not recoverable from the hop sequence.
+
+### 34c. A real bug I introduced, and the guard that now prevents it
+`RF_GET_ROUTES` is what makes `web.py` demand the `X-WaveRaider-Request: 1` header — a cross-site
+page can make a browser GET anything but cannot add a custom header without a preflight this server
+never grants. **I added `/api/elrs/fhss` and forgot to register it**, leaving a route that opens the
+B205 reachable from any website. `waveraider/CLAUDE.md` names this convention and that is what
+caught it.
+
+Rather than just fix the one line, I checked whether the convention was tested: `RF_GETS` in
+`tests/test_monitor.py` is a hand-maintained list that **never covered any `/api/elrs*` route**, so
+nothing would have caught it. New `tests/test_elrs_fhss_route.py` derives the requirement from the
+source instead — it parses every `if u.path == "..."` handler in `web.py` and asserts that any whose
+body opens a `RadioDevice` is in `RF_GET_ROUTES`. It parses 34 routes, finds the 3 radio-driving
+ones (`/api/elrs`, `/api/elrs/progress`, `/api/elrs/fhss`), and I verified it actually fires when
+the registration is removed, so it is not a vacuous test. It also checks for stale entries, and
+asserts `fhss_fingerprint()` references none of `tx_tune` / `tx_stream` / `transmit(` /
+`elrc_bench_tx` — the AGENTS.md §2 TX gate, enforced by test rather than by review.
+
+### 34d. Test status
+WaveRaider suite: **611 passed, 4 failed, 3 skipped**. The 4 failures are the pre-existing
+`test_remote_id_reference` ones from the missing `opendroneid-core-c` fixture files
+(`FileNotFoundError` on `odid_wifi_sample.expected.jsonl`), unrelated to this change and still on
+andeds's list. `elrs_sdr.selftest` ALL PASS; `core.fhss_observe` selftest PASS.
+
+**Not done:** no UI element yet — this is the API surface only. The Monitor page is governed by
+`waveraider/CLAUDE.md`'s GUI scope rules and its wording discipline (UI text must not claim the
+tool identifies aircraft), so the front-end panel is a deliberate separate change, and the honest
+phrasing for it is "RF link fingerprint", never "drone identified".
+
+— Claude

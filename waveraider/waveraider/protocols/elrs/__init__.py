@@ -800,3 +800,89 @@ class ElrsPlugin(ProtocolPlugin):
         fs = [f for f in survey.findings if f.evidence.get("entity") == e.id]
         lines += [f"  {f.summary}" for f in fs] or ["  none"]
         return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------- #
+# FHSS hop fingerprint — the per-link identifier that needs NO payload decode
+# ---------------------------------------------------------------------------- #
+def fhss_fingerprint(radius, srate: float = 10e6, gain: float = 40.0,
+                     dwell_s: float = 12.0, freq_hz: float = FHSS_SYNC_FREQ,
+                     output_dir: str | None = None,
+                     snr_min: float | None = None) -> dict:
+    """Long-dwell the sync channel and recover the link's FHSS hop fingerprint.
+
+    This is the identity path that is NOT blocked by the SX1280 `CR_LI_4_8`
+    long-interleaving wall (Claude notes §30): ELRS 2.4 GHz payloads use a
+    convolutional code over a packet-spanning interleaver that Semtech does not
+    document, so no payload decode can read the UID out of a SYNC packet. The
+    FHSS sequence is UID-seeded and carried entirely in *which channels the link
+    visits, in what order* — burst centre frequencies over time, which costs
+    nothing extra to measure.
+
+    Validated on real captures (notes §31/§32): two captures of the operator's
+    link taken 10 minutes apart, each independently calibrated to absolute
+    sequence positions, agreed on 30/30 shared positions with no rotation search
+    and nothing fitted between them, and position 0 came out as the sync channel
+    exactly as the ELRS sequence builder specifies.
+
+    WHY A LONG DWELL AND WHY THIS CHANNEL
+    -------------------------------------
+    `sweep_phy` visits each channel once for ~50 ms, which cannot see a hop
+    *sequence*. The fingerprint needs a continuous dwell long enough to catch
+    many hops: at 26.66 ms/hop, 12 s is ~450 hops, i.e. ~1.9 of the 240-hop
+    sequence period.
+
+    And it must be centred on the **sync channel** (~2440.4 MHz). That channel is
+    pinned to the start of every 80-hop block and is the only channel recurring
+    at exactly 80-hop spacing, which is what yields ABSOLUTE sequence positions
+    and self-calibrates the channel index. A capture elsewhere in the band still
+    gives a usable fingerprint, but only up to an unknown rotation.
+
+    Returns the `core.fhss_observe.observe_capture()` dict plus `link_id`.
+    PASSIVE: receive only; nothing here touches the gated TX path.
+    """
+    import os
+    import time as _t
+
+    if not core_available():
+        return {"error": core_error()}
+    from elrs_sdr.core import fhss_observe as _fo
+
+    # Capture to a FILE and analyse from a memmap. A 12 s dwell at 10 MS/s is
+    # 120 M samples (~960 MB as complex64), so the analysis must not re-hold it.
+    os.makedirs(output_dir or ".", exist_ok=True)
+    name = f"fhss_{freq_hz/1e6:.1f}MHz_{dwell_s:g}s_{_t.strftime('%Y%m%d_%H%M%S')}.complex8"
+    path = os.path.join(output_dir, name) if output_dir else name
+
+    radius.tune(float(freq_hz), float(srate), float(gain))
+    samples = radius.capture(int(float(srate) * float(dwell_s)), path=path,
+                             log_every=1 << 30)
+    n = int(len(samples)) if samples is not None else 0
+    del samples                     # release ~1 GB before the analysis pass
+
+    out = _fo.observe_capture(path, snr_min=snr_min)
+    out["iq_file"] = os.path.basename(path)
+    out["n_samples"] = n
+    out["requested_freq_hz"] = float(freq_hz)
+
+    # The link_id is the fingerprint rendered as a short stable string. It is a
+    # FINGERPRINT, not a decoded UID — labelled that way deliberately, since the
+    # ELRS air protocol carries no hardware ID and the bind UID is not
+    # recoverable from the hop sequence alone (AGENTS.md §1, §3).
+    fp = out.get("fingerprint") or {}
+    if fp:
+        import hashlib
+        canon = ";".join(f"{int(p)}:{c}" for p, c in
+                         sorted(fp.items(), key=lambda kv: int(kv[0])))
+        out["link_id"] = hashlib.sha256(canon.encode()).hexdigest()[:12]
+        out["link_id_basis"] = ("absolute FHSS sequence positions"
+                                if out.get("absolute")
+                                else "FHSS positions relative to first hop")
+        out["evidence"] = "VALIDATED" if out.get("absolute") else "SELF-CONSISTENT"
+    else:
+        out["link_id"] = None
+        out["link_id_basis"] = None
+        out["evidence"] = "NONE"
+        out.setdefault("note", "No hop pattern recovered — no link detected, or "
+                               "the dwell was too short.")
+    return out
