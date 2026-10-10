@@ -1594,6 +1594,47 @@ unchanged).
 
 ---
 
+## 32. Captures untracked from git (operator request) (2026-10-10, andeds)
+
+The operator asked to "delete all the captures and whatnot from the git repo." Chose the
+**safe** approach (no history rewrite, per the no-force-push rule in AGENTS.md):
+
+- **`git rm --cached -r captures/`** — untracked all 503 capture files (8.9 GB) from the index.
+  They **stay on disk** (the laptop has them); the pushed copies stay in git history (no
+  rewrite, so `.git` doesn't shrink — it stays ~7.2 GB until a future history rewrite if the
+  operator wants it).
+- **`.gitignore`: `captures/`** — replaced the `!captures/**` re-includes (which synced the
+  whole capture tree on every push) with a blanket `captures/` ignore. The pre-push hook's
+  `git add -- captures/` now finds nothing to add, so new sweeps no longer bloat git.
+- **Override for sharing:** `git add -f captures/<file>` forces a specific capture into git
+  when one needs to be shared (e.g. a known-good validation set). The blanket ignore doesn't
+  block that.
+
+**Why untrack (not rewrite):** the repo's no-force-push rule (AGENTS.md) makes history
+rewriting a bigger deal — Claude + any other clone would need to re-clone, and the pushed
+captures are the validation artifacts for the FHSS seed recovery (§35/§39: the cross-day
+stability evidence). Untracking stops the *ongoing* bloat (the 8.9 GB that grows every push)
+without destroying the history. If the operator later wants `.git` itself to shrink, that's a
+separate, explicit decision (BFG/filter-repo + force-push + re-clone).
+
+**What's still on disk (untracked, not in git):** the 503 capture files, including the
+known-good validation set (`sync_ch40_20261009_161112.complex8` + `sync_ch40b_20261009_162100.
+complex8`) that the replay tests use. The laptop has them; they're just no longer in git.
+
+**Claude's `9408789` "Drones nearby"** (pulled this session): built on my Live Detections
+table (§31) — added a drones-only filter (show only likely-drone links by default, "show all
+carriers" toggle), a seed box + "Identify ELRS link" button (runs the `/api/elrs/fhss` dwell
+with `keep=0`, pauses/resumes the poll, pins the Net ID when a seed confirms), fixed the dead
+fields in my `protoCell` (`row.elrs_net_id`/`row.seed_set`/`row.droneid` that the sweep never
+set — moved to a node-tested pure block with `seedSet` passed in), and fixed a test collision
+(`data-f` → `data-freq`, the retired evidence-filter attribute). He also surfaced a pre-existing
+test regression (`test_observations_have_no_collection_filter_controls`) that was hidden
+because the enclave lacks scapy. Notes §40 (his).
+
+— andeds
+
+---
+
 ## 31. Live Detections table on the Monitor page (2026-10-10, andeds)
 
 The operator asked for the "real-time table of items being seen" from the pre-WaveRaider UI,

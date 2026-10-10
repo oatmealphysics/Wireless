@@ -34,21 +34,14 @@ dist/
 *.cdif
 *.sigmf-data
 *.cfile
-!captures/
-!captures/**/
-!captures/**/*.complex8
-!captures/**/*.cf32
-!captures/**/*.iq
-!captures/**/*.cdif
-!captures/**/*.meta.txt
-!captures/**/*.json
-!captures/**/manifest.json
-
-# Untracked by request (2026-10-10): this one live dwell's raw IQ (458 MB) was
-# pushed once as the cross-day stability artifact, then untracked to stop it
-# weighing down .git. The file stays on disk; the single pushed copy stays in
-# history (no rewrite). Last-match-wins, so this re-ignore beats !captures/**.
-captures/fhss_20261010_113103/
+# Captures are UNTRACKED (2026-10-10, operator request): the 503 tracked capture
+# files (8.9 GB) were git-rm --cached so they stop weighing down every push.
+# They stay on disk (the laptop has them); the pushed copies stay in history
+# (no rewrite, per the no-force-push rule). To keep them out of git going
+# forward, the whole captures/ tree is ignored — the pre-push hook's
+# `git add -- captures/` finds nothing to add. If a specific capture needs to be
+# shared, `git add -f captures/<file>` overrides the ignore for that one file.
+captures/
 
 # C++ build artifacts (cpp/build.sh produces these)
 cpp/elrs_intercept
