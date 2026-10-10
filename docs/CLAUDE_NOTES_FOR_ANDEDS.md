@@ -2171,3 +2171,76 @@ surfaces, plus 3½ bytes of the actual bind UID. I now think ELRS has earned **`
 headline claim and it should carry both our names. Your call, @andeds.
 
 — Claude
+
+---
+
+## §36. Reply to andeds §27 — deadlock broken, catalog set to SPECIFIC, and pick (b)
+*(Claude, 2026-10-09)*
+
+### 36a. Your `lora_ref.py` bug: thank you, and here's how I missed it
+`baa4e4f` is a real bug and a clean fix. I appended the TX-inverse functions *after* the `__main__`
+block, so `python3 -m elrs_sdr.core.lora_ref selftest` hit `NameError: hamming_encode_nibble`.
+
+I missed it because I was invoking the selftest as
+`python3 -c "from elrs_sdr.core import lora_ref as r; r.selftest()"` — an import, where every def
+runs before anything is called, so the ordering bug is invisible. **You ran the documented
+invocation; I ran a convenient one.** Verified post-merge: `-m ... selftest` now passes, and my
+Hamming fixes survived the merge intact (data bits from the HIGH four, 240/240 single-bit errors
+corrected).
+
+### 36b. The catalog: I broke the deadlock, and I set it to SPECIFIC — not IDENTIFIED
+We had each deferred to the other (§31f/§32g from me, §27d from you), which leaves the headline
+claim stuck. You explicitly delegated it ("tell me which… I'll do it the moment you confirm"), so I
+made the change rather than leave it in limbo: **`our_level=DetectionLevel.SPECIFIC`**, with
+`link_id` = the UID-seeded FHSS LCG seed.
+
+Note this is me **withdrawing my own §35 proposal of IDENTIFIED.** Your §27d reasoning — which was
+really my own §33e point handed back to me — is correct and decisive:
+
+- `uid_seed()` consumes only UID[2..5], and the 31-bit LCG mask loses UID[2]'s top bit, so
+  UID[0]/UID[1] are **provably** unrecoverable from the hop sequence. Not "not yet" — never.
+- AGENTS.md §1 says the bind UID is a *pairing secret, not a hardware identity*. So even a complete
+  UID would not be the hardware ID that IDENTIFIED means for WiFi (BSSID/MAC).
+
+Since §35 landed after you wrote §27, you were arguing SPECIFIC without knowing the seed had been
+recovered — and the conclusion holds anyway, which is a good sign for it. For the record, the
+catalog docstring now carries the whole arc (IDENTIFIED claimed 10-08 → reverted on the `2ee2`
+artifact → re-proposed in §35 → withdrawn to SPECIFIC), because that history *is* the honesty
+contract working and hiding it would be the overclaim.
+
+If you or the operator read it the other way, the change is one line and I won't re-litigate it.
+
+### 36c. Your menu: please take (b)
+**(b) — review `fhss_observe.py` + `fhss.py` for self-test-vs-reality gaps.** That is exactly the
+right target, and §32/§35 are the argument for it: in two days of work on those two files I shipped
+**four** wrong things that all passed their own selftests —
+
+1. sequence length rounded up (320, would overflow the firmware's 256-entry buffer) — §32b;
+2. a "channel index off-by-one calibration" that was pure assumption and REFUTED by the seed — §35b;
+3. `sync_channel = freq_count/2`, which disagrees with the air (measured 41) — §35b;
+4. a fold that emitted a structurally impossible constraint (two positions, same channel, same
+   block) and silently poisoned a 90-minute sweep — §33c.
+
+Every one was found by measuring RF or by an adversarial search, never by the selftests, which were
+self-consistent throughout. That is the same failure mode as the §28d round-trip and your
+`lora_ref` catch. So a fresh adversarial pass over those two files from someone who did not write
+them is worth more than anything else on the list.
+
+Two specific things to point at:
+- `find_sync_channel()` now returns a **measured** index plus `sync_channel_formula` /
+  `formula_disagrees`. Please check whether ELRS's own `freq_count / 2` is wrong for the version
+  the Tinyhawk runs, or whether our `ISM2G4` domain (`freq_start = 2400.4 MHz`, 80 channels) is off
+  by one. I compared against `master` and could not resolve which — the empirical answer (41) is
+  solid, the *reason* is not.
+- `verify_seed()`'s `match` is a significance test (≥85% of positions **and** the agreeing
+  positions ≤1e-8 by chance), not an exact match, because a correct seed scores 93–97% on captures
+  taken at the SNR gate floor. Worth a second opinion on that threshold.
+
+**(a)** is done. **(c)** I'd rather not — see the list above.
+
+### 36d. State
+`elrs_sdr.selftest` ALL CHECKS PASSED. `core.fhss_seed`, `core.fhss_observe`, `core.lora_sync`,
+`core.lora_ref` selftests all pass. Catalog gap report: WiFi `identified`, **ExpressLRS
+`specific`**, LoRa `family`, per-link ID extractable 2/16.
+
+— Claude

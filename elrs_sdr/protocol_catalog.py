@@ -33,11 +33,26 @@ The point is the GAP, tracked honestly. Two findings from the reference drive it
 HONESTY CONTRACT (AGENTS.md §3)
 -------------------------------
 `our_level` is what we can do on a REAL capture, not what a code path exists for.
-Specifically: ELRS stays at FAMILY (not SPECIFIC/IDENTIFIED) because on real
-wideband IQ every burst still comes back `fsk_unidentified` with no CRC-valid
-lock — the sync is UID-seeded and the UID is not obtainable, so identification
-waits on sync-word air-recovery. A detector that is synthetic-only is marked
-`validated=False`.
+A detector that is synthetic-only is marked `validated=False`.
+
+ELRS is now **SPECIFIC** (2026-10-09, was FAMILY): we recover a per-link
+identifier from real captures — the UID-seeded FHSS LCG seed, read out of the
+hop sequence with no payload decode and confirmed on two HELD-OUT captures.
+
+It is deliberately **not IDENTIFIED**, and the reason is structural rather than
+a matter of more work: `uid_seed()` consumes only UID[2..5], and the 31-bit LCG
+mask loses UID[2]'s top bit, so UID[0]/UID[1] can never be recovered from the
+hop sequence. And per AGENTS.md §1 the ELRS bind UID is a *pairing secret, not a
+hardware identity*, so even a complete UID would not be the hardware ID that
+IDENTIFIED means for WiFi (BSSID/MAC). The earlier route to identity — reading a
+CRC-valid SYNC payload — is a named gap: the 150 Hz rate uses SX1280
+`CR_LI_4_8`, whose interleaver Semtech does not document.
+
+Note the history here, because it is the honesty contract doing its job: an
+IDENTIFIED claim for ELRS was made in 2026-10-08, REVERTED when the `2ee2`
+recovery turned out to be a self-seeded-CRC artifact (notes §24), proposed again
+in notes §35 once the seed was recovered, and withdrawn again in favour of
+SPECIFIC. Two agents reached SPECIFIC independently.
 """
 
 from __future__ import annotations
@@ -96,24 +111,35 @@ CATALOG: tuple[TargetProtocol, ...] = (
         phy="LoRa chirp (SF5-9, long range) + FLRC/GFSK (520/650, high rate); 2.4/868/915; sync = UID-seeded (FLRC) / 0x12 stock (LoRa)",
         bands=("2.4", "868", "915"),
         reference_default_on=True,
-        our_level=DetectionLevel.FAMILY,
+        our_level=DetectionLevel.SPECIFIC,
         our_detector="detect.py (the engine: hysteresis burst detect -> per-protocol demod -> "
                      "Net ID extraction -> specific-protocol fingerprint); "
-                     "positivedet.lora_chirp + core.identify (GFSK/FLRC + LoRa paths); "
-                     "core.lora_payload (the LoRa payload chain + CRC-gated SYNC air-recovery)",
-        validated=True,     # the LoRa chirp detector is capture-validated
-        link_id=None,       # REVERTED: the "2ee2" recovery was refuted — see notes §24
-        notes="PRIMARY TARGET. Level is FAMILY, and the earlier IDENTIFIED claim was "
-              "REVERTED (2026-10-08). We positively detect + measure the burst physics on "
-              "real B205 IQ, and the PHY is pinned: LoRa SF7 @ BW 812 kHz (the ELRS 2.4 GHz "
-              "150 Hz rate), validated 17/20 bursts across two independent captures. The "
-              "demod is frame-locked: preamble lock (10-13 identical symbols) plus LoRa sync "
-              "word 0x12 read off the air across 12 bursts. BUT no per-link ID: the `2ee2` "
-              "recovery was a self-seeded-CRC artifact (decoded rf_rate_enum=204, impossible "
-              "for a 6-rate radio, and the two corroborating hits were byte-identical, which "
-              "real advancing SYNC packets cannot be). Gated out in core.lora_payload. "
-              "Reaching IDENTIFIED needs a CRC-valid ELRS SYNC payload whose fields are "
-              "plausible AND which advances across bursts. See notes §24.",
+                     "positivedet.scan_lora_modes + core.identify (discovers SF/BW, does not "
+                     "assume them); core.fhss_observe (hop pattern -> absolute sequence "
+                     "positions) + core.fhss_seed (recovers/verifies the UID-seeded LCG seed)",
+        validated=True,     # PHY and the per-link seed are both capture-validated
+        link_id="FHSS LCG seed, UID-seeded, recovered from the hop sequence "
+                "(core.fhss_seed.search_offset_free to discover, verify_seed to confirm)",
+        notes="PRIMARY TARGET. Promoted FAMILY -> SPECIFIC on 2026-10-09 on the strength of a "
+              "per-link identifier recovered from REAL captures. PHY is pinned and measured "
+              "(not assumed): LoRa SF7 @ BW 812 kHz, 78/80 bursts at score 1.000, the ELRS "
+              "2.4 GHz 150 Hz rate; corroborated by PreambleLen 12 matching the measured "
+              "11-13 preamble lock and by a measured 26.664 ms hop interval = exactly 4 "
+              "packets/hop. The per-link ID is the UID-seeded FHSS LCG seed, recovered from "
+              "the hop sequence alone with NO payload decode, and confirmed on four captures "
+              "(100%/96.7% on the two it was found from; 93.3%/96.8% on two HELD-OUT captures "
+              "seeing a disjoint channel set, at <=1e-53 by chance). See notes §31/§32/§35. "
+              "NOT IDENTIFIED, deliberately: uid_seed() consumes only UID[2..5] and the "
+              "31-bit LCG mask loses UID[2]'s top bit, so UID[0]/UID[1] are PROVABLY "
+              "unrecoverable from the hop sequence -- and per AGENTS.md §1 the bind UID is a "
+              "pairing secret, not a hardware identity, so even a full UID would not be the "
+              "hardware ID that IDENTIFIED means for WiFi (BSSID/MAC). Claude initially "
+              "proposed IDENTIFIED in notes §35 and withdrew it; andeds independently argued "
+              "SPECIFIC in §27d. Payload-based identity is a NAMED GAP, not a work item: the "
+              "150 Hz rate uses SX1280 CR_LI_4_8 (Long Interleaving -- a convolutional code "
+              "over a packet-spanning interleaver) whose geometry Semtech does not publish, "
+              "so the gr-lora_sdr-derived chain cannot decode it (0 hits in 401,920 trials on "
+              "a confirmed-live link). See notes §30.",
         aliases=("ELRS",),
     ),
     TargetProtocol(
