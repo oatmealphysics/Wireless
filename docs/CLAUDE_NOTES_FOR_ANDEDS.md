@@ -2739,3 +2739,63 @@ The Wine run of the inner exe produced a `/proc/<pid>/maps` with 80 readable map
 - UID handling per AGENTS.md §1 + §41f — ground truth for validation only, not in code/fixtures/logs.
 
 — Claude
+
+## §45. Static decode of the serial config — baud 115200, 8N1, no flow (2026-10-13, Claude)
+
+Followup static work on §44. Properly parsed the IAT (correct offset = PE optional header + 136 for data-directory base; `objdump -p`'s "vma:" column shows ILT/hint-name RVAs, not IAT slots) and located all 17 serial-API call sites. The port-config sequence sits at `0x40636e-0x4063a4` in one contiguous block:
+
+```
+@ 0x40636e  mov rcx, [rdi+0x50]           ; rcx = QSerialPort*
+             mov r8d, 3                   ; 3rd arg = QFlags<Direction>::AllDirections (3)
+             mov edx, 0x1c200             ; edx = BAUD = 115200
+             call QSerialPort::setBaudRate
+
+@ 0x40637d  mov rcx, [rdi+0x50]
+             mov edx, 8                   ; 8 data bits
+             call QSerialPort::setDataBits
+
+@ 0x40638c  mov rcx, [rdi+0x50]
+             mov edx, 1                   ; 1 stop bit (OneStop)
+             call QSerialPort::setStopBits
+
+@ 0x406398  mov rcx, [rdi+0x50]
+             xor edx, edx                 ; 0 = NoParity
+             call QSerialPort::setParity
+
+@ 0x4063a4  mov rcx, [rdi+0x50]
+             xor edx, edx                 ; 0 = NoFlowControl
+             call QSerialPort::setFlowControl
+```
+
+**Serial config: 115200 bps, 8N1, no flow control.** Confidence HIGH (immediate values in `.text` right before each API call). This upgrades the "baud rate: unknown" row in `references/e8_protocol_reconstruction.md` §1 to confirmed. Note this matches what `tools/e8_serial.py` already assumes (`BAUD = 115200`), so the earlier `OSError: Errno 5` + 0-byte reruns in §42 weren't a baud mismatch — they were port exclusivity (your §37 diagnosis).
+
+### 45a. Where to look next in the exe (for Andeds's Ghidra pass)
+IAT addresses properly resolved (image base 0x400000):
+```
+0x419b04  QSerialPort::setBaudRate
+0x419b0c  QSerialPort::setDataBits
+0x419b14  QSerialPort::setPortName
+0x419b1c  QSerialPort::setStopBits
+0x419b24  QSerialPort::setFlowControl
+0x419b2c  QSerialPort::setParity
+0x419b34  QSerialPort constructor
+0x419b3c  QSerialPortInfo::availablePorts
+
+0x419a1c  QIODevice::write      (7 call sites: 0x40203b, 0x402d24, 0x4030b0, ...)
+0x419a14  QIODevice::read       (5 call sites: 0x40201b, 0x402339, 0x402508, ...)
+0x41993c  QFile::QFile          (1 call site at 0x4062a9 — likely in the Update handler)
+0x419a04  QFileInfo::QFileInfo  (1 call site at 0x4020f9 — probably reads .bin size)
+0x41995c  QTimer::start         (6 call sites — the 4 timeout slots)
+0x419954  QTimer::stop          (10 call sites)
+0x419b7c  QFileDialog::getOpenFileName  (1 call site at 0x407a34 — openFile handler)
+```
+
+The 7 `QIODevice::write` sites are the TX byte-send locations. The pattern around `0x4030b0` initialises a 5-byte buffer at a struct offset `[rbx+0xb4]` with a placeholder `18 18 18 18 18`, then calls into another function that overwrites the buffer before the `write` fires — so static-only decoding of the TX bytes needs backward data-flow analysis, which is slow by hand. A Ghidra pass with auto-rename on the IAT symbols will label the call-site clusters by their Qt function and make the backward flow trivial.
+
+### 45b. One correction from in-session: §44b's "the Enigma stub validates MZ at 0x414270"
+That instruction sequence (`mov rax,[rip+disp] → 0x414270; cmp WORD [rax], 0x5a4d; je ...`) at entry 0x40104a is PRESENT in the exe but — given the rest of `.text` is plaintext code and no decryption occurs — it's probably **MinGW/libstdc++ CRT init boilerplate** (checking if a loaded module header is valid) rather than an actual Enigma anti-tamper. The exe runs fine on WineHQ 11.0 without any patching, which is consistent with this being inert normal init, not a packer check. So §40's Path A (winegdb unpack) and Path B (/proc/mem dump) are both unnecessary for this file.
+
+### 45c. On the dynamic-capture approach (§44c option 2)
+The strace+GUI-click approach is still viable and would give the exact TX bytes for one command cycle. The port-exclusivity blocker only applied to a SECOND reader TAPing `/dev/ttyACM0`; `strace -f -e trace=write` on the Wine process itself sees the host-side `write()` calls BEFORE they go to the kernel, with no port contention. The one blocker here is driving the GUI click without a human — `xdotool`/`wmctrl` aren't installed and this is a Wayland session (where cross-app input injection is restricted anyway). If/when the operator can do one Connect+Read click under strace, that gives the TX commands directly.
+
+— Claude
