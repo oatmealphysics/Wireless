@@ -1594,6 +1594,168 @@ unchanged).
 
 ---
 
+## 40. The Enigma unpack — two paths to the handler code (2026-10-13, andeds)
+
+Follow-on to §39. The protocol is reconstructed from the plaintext evidence,
+but the **exact TX byte framing** (the Read-command layout, the Update chunk
+header/length/CRC, the baud/data/stop/parity config) is in the Enigma-packed
+handler code. To get it, we dump the **unpacked original PE from the running
+Wine process's memory** (the Enigma stub validates it at `0x414270` — see §39).
+Two paths, neither needs the Enigma key:
+
+### Path A — Winegdb (the standard debugger unpack)
+`winegdb` isn't installed by default. Install + use:
+```sh
+sudo apt install wine-tools        # pulls winegdb + the gdb integration
+winegdb ~/Downloads/EMAX_E8_unpacked/EMAX\ E8\ ELRS\ Configurator.exe
+# In winegdb:
+#   break *0x4010f0                (the handoff: lea rcx,[0x4089e0]; call 0x4089d0)
+#   run
+#   (when it hits the break, the original PE is unpacked in memory)
+#   # Read the pointer at 0x414270 -> the in-memory original PE base:
+#   x/gx 0x414270
+#   # Dump the original PE (size ~23 MB) from that base:
+#   dump memory <base> <base+0x15e8000> /tmp/unpacked.bin
+#   quit
+```
+Then upload `/tmp/unpacked.bin` to the enclave; load it in Ghidra/objdump;
+disassemble `on_sendFilepushButton_clicked` + `on_readConfigButton_clicked`.
+**Downside:** the winegdb address-translation (the PE's image base vs Wine's
+actual map base) can be fiddly; the `0x414270` pointer is in the PE's VA space,
+which Wine may have rebased.
+
+### Path B — Python `/proc/<PID>/mem` dumper (no debugger, recommended)
+No install, no debugger. The Enigma-unpacked original PE is a large anonymous
+mapping in the Wine process; scan `/proc/<PID>/maps` for big readable mappings
++ find the `MZ`+`PE\0\0` signature. The script (save as `/tmp/dump_enigma.py`):
+
+```python
+#!/usr/bin/env python3
+"""Dump the Enigma-unpacked original PE from the running Wine process."""
+import sys, os, struct, glob
+
+# Find the main Wine process (the one running our exe) — the largest-VSZ
+# wine/EMAX process.
+pids = []
+for d in glob.glob('/proc/[0-9]*'):
+    try:
+        pid = int(os.path.basename(d))
+        with open(f'{d}/cmdline','rb') as f:
+            cmd = f.read().decode(errors='replace')
+        if 'EMAX' in cmd or 'wine' in cmd.lower():
+            with open(f'{d}/status') as f:
+                for line in f:
+                    if line.startswith('VmSize'):
+                        vsize_kb = int(line.split()[1])
+                        pids.append((vsize_kb, pid, cmd[:80]))
+            break
+    except: pass
+
+pids.sort(reverse=True)
+if not pids:
+    print("No Wine/EMAX process found. Is the tool running?"); sys.exit(1)
+
+vsize_kb, pid, cmd = pids[0]
+print(f"Target PID: {pid} (VSZ {vsize_kb/1024:.0f} MB): {cmd}")
+
+# Scan the process's large readable mappings for the MZ+PE signature.
+with open(f'/proc/{pid}/maps') as f:
+    maps = f.readlines()
+
+candidates = []
+for line in maps:
+    parts = line.split()
+    if len(parts) < 2: continue
+    addr_range, perms = parts[0], parts[1]
+    if 'r' not in perms: continue
+    start_s, end_s = addr_range.split('-')
+    start, end = int(start_s,16), int(end_s,16)
+    size = end - start
+    if size > 5*1024*1024:
+        candidates.append((start, end, size, perms, parts[5] if len(parts)>5 else ''))
+
+candidates.sort(key=lambda x: -x[2])
+print(f"  {len(candidates)} large mappings (>5MB). Checking top 10 for MZ...")
+
+mem_fd = open(f'/proc/{pid}/mem', 'rb')
+for start, end, size, perms, path in candidates[:10]:
+    try:
+        off = start
+        found = []
+        while off < end and len(found) < 3:
+            mem_fd.seek(off)
+            chunk = mem_fd.read(4096)
+            if not chunk: break
+            i = 0
+            while i < len(chunk)-2:
+                if chunk[i:i+2] == b'MZ':
+                    abs_off = off + i + 0x3c
+                    if abs_off + 4 < end:
+                        mem_fd.seek(abs_off)
+                        e_lfanew = struct.unpack('<I', mem_fd.read(4))[0]
+                        if 0x40 <= e_lfanew < 0x2000:
+                            pe_off = off + i + e_lfanew
+                            if pe_off + 4 < end:
+                                mem_fd.seek(pe_off)
+                                if mem_fd.read(4) == b'PE\x00\x00':
+                                    found.append((off+i, e_lfanew))
+                                    print(f"    MZ+PE at VA {off+i:#x} (e_lfanew={e_lfanew:#x}) "
+                                          f"in {start:#x}-{end:#x} ({size/1e6:.1f} MB) {path}")
+                i += 1
+            off += 4096
+    except Exception as e:
+        print(f"  (mapping {start:#x}: {e})")
+mem_fd.close()
+print("\nSend the 'MZ+PE at VA 0x...' line — the exact dd dump command follows.")
+```
+
+**Steps (Path B):**
+1. Launch the tool (it unpacks the original PE at startup):
+   ```sh
+   wine ~/Downloads/EMAX_E8_unpacked/EMAX\ E8\ ELRS\ Configurator.exe
+   ```
+2. Wait for the GUI (~15 s under Wine) — the unpack is done by then.
+3. In a second terminal (tool still open):
+   ```sh
+   python3 /tmp/dump_enigma.py
+   # (if it hits a permission error on /proc/<PID>/mem, re-run as:
+   #  sudo python3 /tmp/dump_enigma.py)
+   ```
+4. Send me the `MZ+PE at VA 0x...` output → I give the exact `dd` dump command
+   → upload `/tmp/unpacked.bin` to the enclave → I disassemble the handlers.
+
+### Why Path B is preferred
+- No install (winegdb needs `sudo apt install wine-tools`).
+- No breakpoint/address-translation fiddliness (the winegdb image-base vs
+  Wine-rebase issue).
+- The signature scan is robust (the unpacked original PE's MZ+PE is a unique
+  ~23 MB mapping; the scan finds it regardless of where Wine mapped it).
+
+### What the dump gives us (the payoff)
+`/tmp/unpacked.bin` = the **clean original PE** (the pre-Enigma executable,
+with the handler code in plaintext `.text`). Load it in Ghidra/objdump:
+- Disassemble `on_sendFilepushButton_clicked` → the **Update (flash) TX framing**
+  (the chunk header, length field, CRC, the `okk`-ACK handling).
+- Disassemble `on_readConfigButton_clicked` → the **Read-params TX command**
+  (the request byte layout that gets §42a's 17-byte response).
+- Read the `QSerialPort::setBaudRate/setDataBits/...` call sites → the
+  **serial config** (baud, data bits, stop, parity, flow).
+
+That closes the last gap in the protocol reconstruction (§39's "blocking
+unknowns") → the byte-exact EMAX serial protocol.
+
+### Scope + hygiene (standing)
+- Owned E8, bench, powered. Isolated network. Reverse-engineering + native
+  tooling on the owned unit. **Reads only** (no flash / no Write-Update) until
+  the parser is understood. The unpack-dump is a *read* of the running tool's
+  memory (no device interaction, no flash).
+- UID `5D 05 00 11 18 5B` stays out of code/fixtures/logs (AGENTS.md §1,
+  §41f) — ground truth for validation only.
+
+— andeds
+
+---
+
 ## 39. Reverse pass on the EMAX exe — protocol reconstructed from plaintext; the handler code is Enigma-packed (2026-10-13, andeds)
 
 Did the Option-C reverse pass (Claude's §43f) on the enclave against the two
