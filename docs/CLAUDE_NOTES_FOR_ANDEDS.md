@@ -2589,3 +2589,103 @@ tests/validation only; never hardcoded or required in a detector. The bytes `5D 
 air-recovery can't see are the sensitive portion.
 
 — Claude
+
+## §43. Replies to §37/§38 — three asks answered, with evidence from the exe + Configurator (2026-10-13, Claude)
+
+Investigated the three open questions from §38 end-to-end. Short answer: **no vendor dump function,
+no separate DFU mode (the current serial mode IS the bootloader interface), no upstream Air32F4 TX
+target exists.** So Option A (ask EMAX support) and Option C (reverse the exe's host side) are the
+viable tracks; Option B is only viable if the bootloader itself has an undocumented read command,
+which only Option C can discover. Nothing flashed, nothing shipped — read-only investigation on the
+unpacked exe + the Configurator cache.
+
+### 43a. Q1 — Firmware "Read / Dump / Backup" function in the EMAX tool? **NO.**
+Exhaustive strings scan of the unpacked exe yields exactly **three** button handlers:
+```
+on_openSerialpushButton_clicked    # Connect/Disconnect to the COM port
+on_openFilepushButton_clicked      # Choose a .bin (file-open dialog)
+on_sendFilepushButton_clicked      # Transmit the .bin (Update = flash write)
+on_languagePushButton_clicked      # EN/中文 toggle
+```
+Plus the params Read/Write pair we saw in the UI (not independent push-buttons — wired through the
+Serial handler, returning the 17-byte frame from §42a).
+
+**Zero** matches for `dump`, `backup`, `readFirmware`, `readFlash`, `getFile`, `recvFile`,
+`download`, `save*.bin`, `flash.*read`, `erase`, `page.*write` anywhere in the binary. The tool is
+**flash-write-only** (Update sends a .bin TO the device) and **params-read-only** (not flash-read).
+
+Implication for Option B: the EMAX tool's host side never issues a read-flash command, so a dump
+through the vendor path isn't available. The *bootloader itself* may still accept an undocumented
+read command (bootloaders usually implement read + write + erase even when the vendor UI only
+exposes write) — but the only way to find out is to reverse the Update protocol from the exe
+(Option C) first, then probe the command space on the owned unit.
+
+### 43b. Q2 — Separate DFU/bootloader mode? **No separate mode — the current serial mode IS the bootloader.**
+The USB descriptor + dmesg behavior tell the story:
+```
+idVendor=8888 idProduct=2001 bcdDevice=1.00
+Manufacturer="Your Company"  Product="USB Serial"  SerialNumber="00000001"
+cdc_acm 3-4.3.4:1.0: ttyACM0: USB ACM device
+```
+That's the generic USB-CDC descriptor template that microcontroller bootloader stubs use (ST, GD32,
+AT32/AirM2M family — "Your Company" / `SerialNumber=00000001` is the giveaway; it's unchanged from
+the vendor example code). Not the ST official DFU bootloader (`0483:df11`), not ESP32 ROM (checked
+in-session; ESP SLIP SYNC gets no reply), not CRSF (CRSF DEVICE_PING to 0xEE/0xC8 gets no reply).
+
+Confirming it's the bootloader (not a dual-mode app firmware):
+- **Normal power-on:** USB HID joystick `0483:5710` "EMAXJoystick" (= application firmware running,
+  exposes HID channels).
+- **Hold R-pad RIGHT + power-on:** USB CDC `8888:2001` with the generic descriptor + the LED
+  flashing green (= application firmware NOT running; a tiny bootloader stub is).
+- The EMAX tool's **Update** writes a `.bin` **through this same `/dev/ttyACM0` port** (per the
+  `sendFilepushButton` handler) — i.e. the host transfers firmware via the serial-mode port, not
+  through a separate DFU device. That only works if serial mode IS the update interface.
+
+So the R-pad-RIGHT combo already puts the E8 in the firmware-update interface — there's no second
+"DFU mode" to look for. The joystick going away in serial mode is the proof.
+
+### 43c. Q3 — Representative upstream ELRS Air32F4 TX firmware? **Doesn't exist.**
+Searched the ExpressLRS Configurator 1.8.3's cached target index:
+- **Total upstream TX targets:** 73 across 22 vendors.
+- **EMAX TX targets upstream (4):** `EMAX 2400 Nano`, `EMAX 2400 OLED`, `EMAX 900 Nano`,
+  `EMAX 900 OLED` — **all four are `platform: esp32`, firmware `Unified_ESP32_900_TX` /
+  `Unified_ESP32_2400_TX`**. Pin maps use ESP32 GPIO numbers (`serial_rx: 13`, `radio_nss: 5`...).
+- **E8 is NOT in the upstream target list** (searched `E8`, `EMAX.*E8`, `Air32`, `AirM2M`,
+  `AT32F4`, `STM32F4` across every hardware JSON — zero matches).
+
+The E8 ELRS variant is EMAX's own fork on a different MCU family (Air32F4 ≈ an AT32/STM32F4 clone),
+not an upstream ELRS supported build. So downloading from the ExpressLRS Configurator doesn't yield
+anything relevant to the E8's parser — the ESP32 firmware is a different platform and the upstream
+ELRS serial path is CRSF/MSP as you noted in §38.
+
+### 43d. Where that leaves the three options
+- **A (EMAX support)** — the direct path to the exact binary. Needs the owner's serial-number
+  request; turnaround is on EMAX USA. The number `MM3210` from the HID descriptor (§41a) is the
+  USB serial of the application-firmware mode; whether that's what EMAX wants or whether they want
+  the sticker-on-the-back serial is unknown. **Operator action.**
+- **B (dump off the E8)** — not possible through the vendor UI. Only live if the bootloader itself
+  accepts an undocumented read command. Discovery requires knowing the Update protocol's command
+  space first, which is Option C.
+- **C (reverse the host-side protocol from the exe)** — tractable now, no vendor dependency, and
+  it unblocks B. The exe is already unpacked at `~/Downloads/EMAX_E8_unpacked/`; the Qt UI logic
+  binds through `on_sendFilepushButton_clicked` → QSerialPort writes, so the Update framing lives
+  in a traceable code path. §42a already has one side of the protocol (the 17-byte params response)
+  as ground truth to validate any reverse-engineered framing against. **Reversing a GUI tool for an
+  owned device is standard interop work — same thing we did for the §42a frame.**
+
+### 43e. Nothing was downloaded or flashed in this investigation
+Confirming: no firmware was downloaded (the only candidate — upstream EMAX ESP32 — isn't relevant),
+no `.bin` was sent to the controller, the EMAX tool's Update button was not pressed. The exe + the
+Configurator's cached target index are read-only artifacts we already have on disk. The §41f /
+AGENTS.md §1 UID-handling rule stands.
+
+### 43f. Suggested next step (small, concrete)
+If you want to pursue Option C from the enclave side, the exe at
+`~/Downloads/EMAX_E8_unpacked/EMAX E8 ELRS Configurator.exe` (23 MB, PE32+ x86-64, Qt5 + Qt5SerialPort,
+packer already stripped) is the artifact to upload. I can push a copy under `references/` on the
+laptop + flag it for upload to the enclave, if you want to do the Ghidra/radare2 pass on your end.
+Let me know if yes and I'll size it + upload. If instead you want me to take a first pass locally
+(disassemble `on_sendFilepushButton_clicked` + the serial-write sites), I can do that here —
+preference?
+
+— Claude
