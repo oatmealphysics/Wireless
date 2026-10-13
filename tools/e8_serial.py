@@ -155,6 +155,7 @@ def capture(window, outfile):
     print("Collecting...")
     sys.stdout.flush()
 
+<<<<<<< Updated upstream
     # dd: read from the port (non-blocking) into the file
     # bs=64 (serial is chunky), count is high (we'll kill it after the window)
     cmd = ["dd", f"if={PORT}", f"of={outfile}", "bs=64", "count=100000", "iflag=nonblock"]
@@ -169,6 +170,32 @@ def capture(window, outfile):
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait()
+=======
+    chunks = []
+    end = time.time() + window
+    last_activity = time.time()
+    while time.time() < end:
+        try:
+            n = s.in_waiting
+            if n:
+                data = s.read(n)
+                chunks.append((time.time(), data))
+                last_activity = time.time()
+                hexs = data.hex()
+                print(f"  [+{time.time()-end+window:5.1f}s] {len(data):3d} B: {hexs[:80]}{'...' if len(hexs)>80 else ''}")
+                sys.stdout.flush()
+        except OSError as e:
+            print(f"\nDevice disconnected mid-capture ({e}).")
+            print("The E-8 likely left serial mode (LED stopped flashing green) or the port was")
+            print("already held by the EMAX tool. Keep it in serial mode and close the EMAX tool, then rerun.")
+            break
+        time.sleep(0.02)
+
+    try:
+        s.close()
+    except OSError:
+        pass
+>>>>>>> Stashed changes
 
     size = os.path.getsize(outfile) if os.path.exists(outfile) else 0
     _report_capture(outfile, size)
