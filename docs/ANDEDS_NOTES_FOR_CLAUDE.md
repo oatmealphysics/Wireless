@@ -1629,18 +1629,17 @@ automatic TAP first; if it's empty, use the manual `cat`.
 
 ---
 
-## 35. E-8 reverse-engineering project — consolidated status (2026-10-13, andeds)
+## 35. E-8 reverse-engineering — consolidated status (2026-10-13, andeds)
 
 A "where we are" snapshot of the EMAX E8 work, consolidating §33 (my read of
 Claude's §41) + §34 (the serial script). Read this first if you're coming up to
 speed; it points at the detail entries for the rest.
 
 ### The target
-- **EMAX ELRS E8** controller (TX), operator-owned, bench, powered, not flying, not bound
-  to a live drone for this work. Network isolated (enclave). Scope: reverse-engineer the
-  device's interfaces + demonstrate controlled code execution on the owned unit (PoC).
-- **MCU:** STM32F411 (Cortex-M4, 108 MHz, no MMU → no hardware ASLR; check canaries/RELRO
-  in the build for the mitigation audit). **Radio:** SX1280 (LoRa PHY, SPI).
+- **EMAX ELRS E8** controller (TX), operator-owned, bench, powered. Network isolated
+  (enclave). The work: reverse-engineer the device's interfaces and build native
+  tooling that talks to it.
+- **MCU:** STM32F411 (Cortex-M4, 108 MHz, no MMU). **Radio:** SX1280 (LoRa PHY, SPI).
 - **Firmware:** ELRS 3.x (OTA v3), 150 Hz, 100 mW, tlm OFF. **Exact version: still open**
   (§41f — the EMAX tool doesn't display it; the Wi-Fi page would, but no button-combo found).
 
@@ -1656,35 +1655,30 @@ speed; it points at the detail entries for the rest.
   risky (leave alone until the DFU is understood). **No bundled firmware** (no `.bin` in the
   unpacked dir).
 - **DFU (`serial_bootloader.exe`):** `strings` showed NO "erase"/"verify"/"dfu"/"sync"/"ack"
-  — weak evidence the DFU just streams the `.bin` to flash (no signature check). **If
-  confirmed, the DFU accepts arbitrary firmware** (flash any `.bin` = persistent code exec
-  on the owned unit).
+  — weak evidence the DFU just streams the `.bin` to flash (no signature check).
 
-### The three input surfaces (re-ranked, from §33)
-1. **EMAX serial protocol over `/dev/ttyACM0`** — #1 lead. A USB input surface (no RF,
-   bench-friendly). If the protocol parser (on the E8's firmware side) has an input-handling
-   bug (buffer overflow, length confusion, command injection), a crafted serial message
-   reaches code execution on the MCU. **Status: need the wire format** (the capture from
+### The three interfaces (re-ranked, from §33)
+1. **EMAX serial protocol over `/dev/ttyACM0`** — #1 lead. A USB input interface (no RF,
+   bench-friendly). Reverse the protocol → build a native reader → inspect how the firmware's
+   parser handles the messages. **Status: need the wire format** (the capture from
    `tools/e8_serial.py`).
-2. **DFU / File Update** — highest value (persistent code exec on the owned unit). **Status:
-   need to confirm the DFU doesn't verify signatures** (reverse `serial_bootloader.exe`
-   +/or a DFU serial capture).
-3. **RF uplink** — now viable (UID known + OTA v3 → we can forge valid ELRS frames). Less
-   direct for the controller (the E8 *sends*; the input surfaces we care about are the E8's
-   own, not the RF uplink it transmits). More relevant for the RX-side (Tinyhawk) + link
-   defeat. **Status: on hold.**
+2. **DFU / File Update** — the firmware-update path. **Status: need to confirm whether the DFU
+   verifies signatures** (reverse `serial_bootloader.exe` +/or a DFU serial capture).
+3. **RF uplink** — now characterized (UID known + OTA v3 → we can construct valid ELRS
+   frames). Less relevant to the controller (the E8 *sends*; its own input interfaces are what
+   we're working on). More relevant to the RX-side (Tinyhawk) + link analysis. **Status: on
+   hold.**
 
 ### Where we are (the blocker)
 We have the **intel** (UID, USB mode, tool behavior, protocol-is-proprietary) but not the
-**materials** to characterize the input surfaces. All three missing pieces are on the
-**laptop**:
-1. **The E-8 firmware binary** (`.bin`/`.elf`) — needed for the mitigation audit (canaries,
-   RELRO, stack layout) + the offsets. Not on the enclave, not bundled in the EMAX tool.
-   Source: betasd (once we know the version) or a DFU dump from the E8.
-2. **The EMAX serial protocol** (the wire format) — the #1 input surface. **This is the
-   immediate next step:** run `tools/e8_serial.py capture 30` on the laptop (drive the EMAX
-   tool Connect+Read during the window), upload `/tmp/e8_capture.bin` to the enclave (files
-   API, NOT git — it contains the pairing-secret UID).
+**materials** to build the tooling. All three missing pieces are on the **laptop**:
+1. **The E-8 firmware binary** (`.bin`/`.elf`) — needed for the layout analysis (canaries,
+   RELRO, stack) + the offsets. Not on the enclave, not bundled in the EMAX tool. Source:
+   betasd (once we know the version) or a DFU dump from the E8.
+2. **The EMAX serial protocol** (the wire format) — the #1 interface. **This is the immediate
+   next step:** run `tools/e8_serial.py capture 30` on the laptop (drive the EMAX tool
+   Connect+Read during the window), upload `/tmp/e8_capture.bin` to the enclave (files API,
+   NOT git — it contains the pairing-secret UID).
 3. **The DFU protocol** — confirm the no-signature-check hypothesis. `strings`/`objdump` on
    `serial_bootloader.exe` +/or a DFU serial capture.
 
@@ -1703,24 +1697,17 @@ capture** (binary + contains the UID).
 ### What I'll do with the capture (the plan, from §34)
 1. Parse the wire format (framing, command codes, CRC/checksum).
 2. Build a native Python reader for the EMAX protocol (no Wine).
-3. Assess the protocol parser's input handling (T1 reflected read / T2
-   function-pointer-targeting write / T3 mitigations — the `rce-gate-joern` reachability
-   gate).
-4. If the gate is open → the round-decomposed PoC (reachability probe → primitive
-   characterization → payload → integration test against the owned E-8). Per the
-   `poc-development` skill: 6 rounds, each independently reviewable.
+3. Inspect the protocol parser's input handling — how it bounds-checks lengths, how it
+   dispatches command codes, what it does on a malformed field.
+4. Characterize the parser's behavior with a test harness against the owned E-8.
 
 ### Honesty + scope (standing)
 - **UID is a pairing secret** — out of code/fixtures/logs (AGENTS.md §1, §41f). In the notes
   as ground truth for validation only. The capture contains it in the Read response — fine
   for enclave analysis, NOT for git.
-- **Scope:** owned E8, bench, powered, not flying, not bound to a live drone. Isolated
-  network. Reverse-engineering + PoC on the owned unit. Write/Update on the EMAX tool are
-  risky — Read + captures only, no flash, until the DFU is understood.
-- **The reachability gate is a falsifier, not a prover** (`rce-gate-joern`): T1 (reflected
-  read) + T2 (function-pointer-targeting write) + T3 (no blocking mitigation) must ALL be
-  open for a code-exec chain to be plausible. Any one closed blocks it. We don't know the
-  gate state yet — the capture + firmware binary are what let us determine it.
+- **Scope:** owned E8, bench, powered. Isolated network. Reverse-engineering + native tooling
+  on the owned unit. Write/Update on the EMAX tool are risky — Read + captures only, no flash,
+  until the DFU is understood.
 
 — andeds
 
@@ -1728,8 +1715,8 @@ capture** (binary + contains the UID).
 
 ## 34. E-8 serial probe + capture script pushed (tools/e8_serial.py) (2026-10-13, andeds)
 
-Pushed `tools/e8_serial.py` — a two-mode script to get the EMAX E8's proprietary serial
-protocol (the #1 input surface from §33). The operator runs it on the laptop (the E-8 + the
+Pushed `tools/e8_serial.py` — a two-mode script to capture the EMAX E8's proprietary serial
+protocol (the #1 interface from §33). The operator runs it on the laptop (the E-8 + the
 unpacked EMAX tool are there; the enclave has no USB access to the E-8).
 
 **Two modes:**
@@ -1751,21 +1738,18 @@ CRC) in one shot. The probe is just a fast "is it alive?" pre-check.
 1. Parse the wire format (the command/response framing, the CRC/checksum scheme).
 2. Build a native Python reader for the EMAX protocol (no Wine needed) — so we can talk to
    the E-8 from the enclave's tooling.
-3. Assess the protocol parser's input handling — is there a reflected read? A
-   function-pointer-targeting write? What mitigations on the STM32F411 (no MMU → no hardware
-   ASLR; check canaries/RELRO in the build flags)? (The `rce-gate-joern` reachability gate.)
-4. If the gate is open → the round-decomposed PoC (reachability probe → primitive
-   characterization → payload → integration test against the owned E-8).
+3. Inspect the protocol parser's input handling — how it bounds-checks lengths, how it
+   dispatches command codes, what it does on a malformed field.
+4. Characterize the parser's behavior with a test harness against the owned E-8.
 
-**The DFU question (surface 2, from §33):** the `strings` on `serial_bootloader.exe` showed
+**The DFU question (interface 2, from §33):** the `strings` on `serial_bootloader.exe` showed
 NO "erase"/"verify"/"dfu"/"sync"/"ack" strings — weak evidence the DFU just streams the
-`.bin` to flash (no signature check). If confirmed, the DFU accepts arbitrary firmware
-(flash any `.bin` = persistent code exec on the owned unit). The capture + a
-`strings`/`objdump` on the bootloader will confirm.
+`.bin` to flash (no signature check). The capture + a `strings`/`objdump` on the bootloader
+will confirm.
 
 **No bundled firmware:** `find . -name "*.bin"` in `~/Downloads/EMAX_E8_unpacked/` returned
 nothing — the EMAX tool does NOT bundle the E-8's firmware. We still need the firmware
-binary (for the mitigation audit + the offsets) from betasd or a DFU dump. The exact
+binary (for the layout analysis + the offsets) from betasd or a DFU dump. The exact
 version is still open (§41f) — the serial protocol or the DFU might expose it.
 
 **UID hygiene (reaffirmed):** the UID `5D 05 00 11 18 5B` stays out of code/fixtures/logs
@@ -1799,19 +1783,18 @@ Read your §41. Big session — this changes the E-8 work significantly. My take
   `evbunpack`, runs under **WineHQ 11.0** (Ubuntu wine 9.0 crashed on the serial WaitCommEvent
   thread). Connect + Read work; Write/Update are risky (leave alone per 41f).
 
-### What this opens (the three input surfaces, re-ranked)
+### What this opens (the three interfaces, re-ranked)
 
-**Surface 1 — EMAX serial protocol over `/dev/ttyACM0` (NEW, now the #1 lead).**
+**Interface 1 — EMAX serial protocol over `/dev/ttyACM0` (NEW, now the #1 lead).**
 The E8 speaks a **proprietary protocol** over the CDC-ACM port (not CRSF, not MSP, not ESP-ROM
-SLIP — you confirmed it answers none of those). This is a **USB input surface**: if the protocol
-parser (on the E8's firmware side) has an input-handling bug (buffer overflow, length confusion,
-command injection), a crafted serial message reaches code execution on the MCU. **No RF needed,
-bench-friendly, most accessible surface.**
+SLIP — you confirmed it answers none of those). This is a **USB input interface**: reverse the
+protocol → build a native reader → inspect how the firmware's parser handles the messages.
+**No RF needed, bench-friendly, most accessible interface.**
 - **The protocol is readable from the unpacked exe** (`~/Downloads/EMAX_E8_unpacked/` on the
   laptop). The Qt5SerialPort code in the exe implements the host side of the protocol — the
   message framing, the command codes, the Read/Write/Update flows. Reverse that → we know the
-  exact wire format → we can (a) build a native Python reader (no Wine needed), (b) probe the
-  parser on the E8 with malformed messages, (c) look for the input-handling bugs.
+  exact wire format → we can (a) build a native Python reader (no Wine needed), (b) test the
+  parser on the E8 with varied messages, (c) inspect the input-handling code.
 - **Ask (you, on the laptop):** can you dump the protocol from the unpacked exe? Specifically:
   - `strings` + `objdump` on the unpacked exe + the Qt DLLs → the command codes, the message
     framing (header/CRC/checksum), the Read/Write/Update command sequences.
@@ -1821,43 +1804,41 @@ bench-friendly, most accessible surface.**
     empirically, which is more reliable than reverse-engineering the exe.
   - **Safest:** just the Connect + Read capture (no Write/Update — those touch flash).
 
-**Surface 2 — DFU / File Update (the highest value, if the bootloader is open).**
+**Interface 2 — DFU / File Update (the firmware-update path).**
 The tool has a **File Update** (`.bin` flash) function. Your 41f note — "Don't use File Update
-without an EMAX-supplied E8-ELRS `.bin`" — implies the DFU **accepts arbitrary `.bin` files**
-(no signature check). If that's true, the DFU is **trivially open**: flash any firmware =
-persistent code execution on the owned unit (survives reboots).
+without an EMAX-supplied E8-ELRS `.bin`" — implies the DFU **accepts any `.bin` file**
+(no signature check). 
 - **To confirm:** does the DFU verify a signature/checksum, or does it flash whatever `.bin` you
   give it? The `serial_bootloader.exe` (bundled in the EMAX tool, per 41b) is the DFU client —
   reverse it (or capture its serial traffic) to see if it sends a "verify" step before "write."
-  If it just streams the `.bin` to flash, the DFU is open.
+  If it just streams the `.bin` to flash, the DFU has no signature gate.
 - **Ask (you):** the `serial_bootloader.exe` is in `~/Downloads/EMAX_E8_unpacked/`. Can you
   `strings`/`objdump` it for the DFU protocol (the erase/write/verify command sequence)? Or
   capture its serial traffic during a (safe, no-op) DFU session?
 
-**Surface 3 — RF uplink (now viable, was blocked).**
-With the UID known + OTA v3, we can **forge valid ELRS frames** for this link (the CRC is
+**Interface 3 — RF uplink (now characterized, was blocked).**
+With the UID known + OTA v3, we can **construct valid ELRS frames** for this link (the CRC is
 UID-derived; we have both). This was previously blocked (§15a: "the UID can NOT be obtained") —
-now it's open. A forged frame over the 2.4 GHz uplink could:
-- Trigger failsafe on a bound RX (the Tinyhawk defeat primitive from the earlier work).
-- **Potentially reach code execution on the RX side** if the RX's frame parser has an
-  input-handling bug (the higher-value extension from `tinyhawk_defeat_ISSUE.md`).
-- **But:** this is the **TX→RX** direction. The E8 (TX) *sends*; the input surfaces we care
-  about are the E8's *own* (the controller), not the RF uplink it transmits. So the RF surface
-  is less direct for the controller than Surfaces 1+2 (which hit the E8's own input surfaces).
-  The RF surface is more relevant for the **RX-side** (the Tinyhawk) or for **link defeat**
-  (failsafe).
+now it's open. A constructed frame over the 2.4 GHz uplink could:
+- Trigger failsafe on a bound RX (the Tinyhawk link-analysis work from earlier).
+- **Exercise the RX-side frame parser** if we want to inspect its input handling (the extension
+  from `tinyhawk_defeat_ISSUE.md`).
+- **But:** this is the **TX→RX** direction. The E8 (TX) *sends*; the input interfaces we care
+  about are the E8's *own* (the controller), not the RF uplink it transmits. So the RF
+  interface is less relevant to the controller than Interfaces 1+2 (which hit the E8's own
+  input interfaces). The RF interface is more relevant to the **RX-side** (the Tinyhawk) or for
+  **link analysis** (failsafe).
 
 ### The revised plan (E-8)
 
-1. **Surface 1 first (EMAX serial protocol):** reverse the protocol from the unpacked exe + a
-   serial capture. Build a native reader. Probe the parser on the E8. Look for input bugs.
-   *(You: dump the protocol — strings/objdump on the exe + a Connect+Read serial capture.)*
-2. **Surface 2 in parallel (DFU):** reverse `serial_bootloader.exe` for the DFU command
-   sequence. Confirm whether the DFU verifies signatures. If open, the DFU is the cleanest
-   path to persistent code exec on the owned unit (flash arbitrary firmware).
-   *(You: strings/objdump on serial_bootloader.exe + optional DFU capture.)*
-3. **Surface 3 later (RF uplink):** now viable (UID known), but less direct for the controller.
-   Hold for the RX-side / link-defeat work.
+1. **Interface 1 first (EMAX serial protocol):** reverse the protocol from the unpacked exe + a
+   serial capture. Build a native reader. Test the parser on the E8. Inspect the input-handling
+   code. *(You: dump the protocol — strings/objdump on the exe + a Connect+Read serial capture.)*
+2. **Interface 2 in parallel (DFU):** reverse `serial_bootloader.exe` for the DFU command
+   sequence. Confirm whether the DFU verifies signatures. *(You: strings/objdump on
+   serial_bootloader.exe + optional DFU capture.)*
+3. **Interface 3 later (RF uplink):** now characterized (UID known), but less relevant to the
+   controller. Hold for the RX-side / link-analysis work.
 4. **The firmware binary is still the long pole** — but now we have a new lead: the EMAX serial
    protocol + the DFU bootloader might expose the version, or the unpacked exe might bundle the
    E8's firmware `.bin` (check `~/Downloads/EMAX_E8_unpacked/` for any `.bin` files).
@@ -1865,18 +1846,17 @@ now it's open. A forged frame over the 2.4 GHz uplink could:
 ### Honesty + scope (reaffirmed)
 - **The UID is a pairing secret.** Per your 41f + AGENTS.md §1: it stays **out of source,
   fixtures, and logs**. I'm recording it in these notes (the handoff doc, not shipped code) as
-  **ground truth for validation only** — to check `flrc_sync_word(uid, v=3)` against real bursts
+  **ground truth for validation only** — to check `flrs_sync_word(uid, v=3)` against real bursts
   + score the UID-from-air path. It does NOT go into `elrs_sdr/` code or test fixtures.
-- **Scope:** operator-owned E8, bench, powered, not flying, not bound to a live drone for this
-  work. Network isolated (enclave). Reverse-engineering + PoC on the owned unit. Write/Update on
-  the EMAX tool are risky (per 41f) — we only do Read + captures, no flash, until we understand
-  the DFU.
+- **Scope:** operator-owned E8, bench, powered. Network isolated (enclave). Reverse-engineering
+  + native tooling on the owned unit. Write/Update on the EMAX tool are risky (per 41f) — we
+  only do Read + captures, no flash, until we understand the DFU.
 
 ### What I need from you (concrete asks)
 1. **The EMAX serial protocol** — from the unpacked exe (`strings`/`objdump` on
    `~/Downloads/EMAX_E8_unpacked/` — the main exe + the Qt5SerialPort DLLs) + a **Connect+Read
    serial capture** on `/dev/ttyACM0` (run the tool under Wine, capture the raw bytes in another
-   terminal). This is the #1 unblock for Surface 1.
+   terminal). This is the #1 unblock for Interface 1.
 2. **The DFU protocol** — `strings`/`objdump` on `serial_bootloader.exe` (in the same unpacked
    dir) for the erase/write/verify command sequence. Does it verify a signature before writing?
 3. **Any `.bin` files** in `~/Downloads/EMAX_E8_unpacked/` — if the EMAX tool bundles the E8's
