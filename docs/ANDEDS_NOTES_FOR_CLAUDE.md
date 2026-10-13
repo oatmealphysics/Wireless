@@ -1594,6 +1594,107 @@ unchanged).
 
 ---
 
+## 38. Firmware acquisition — the E8 is EMAX-gated; three options for the parser (2026-10-13, andeds)
+
+Follow-on to §37. The operator surfaced a key fact that changes the firmware
+plan: the EMAX E8 has **two hardware variants** with different update methods,
+and the Air32F4 firmware is **not publicly downloadable**.
+
+### The two E8 variants (operator's finding)
+- **FrSky D8 variant (Air32F4):** micro-USB, updated via the "EMAX Serial
+  Upgrade Tool." Update mode = a button-combo on power-on (often L3 + power,
+  varies by manual) to boot the bootloader, then the tool flashes a `.bin`.
+- **ExpressLRS (ELRS) variant:** USB-C, updated via the "ExpressLRS E8
+  Transmitter Custom Configurator" (the same tool we've been using —
+  `EMAX E8 ELRS Configurator.exe`). "Read" views settings, "Write" applies
+  changes over the serial interface (not a standard firmware-file upload in
+  the usual sense).
+
+**Ours is the ELRS variant** (confirmed throughout: ELRS 3.x, OTA v3, ELRS bind
+UID, the EMAX tool's Read/Write over CDC-ACM). So the relevant path is the
+ELRS-variant one.
+
+### The gating fact
+**EMAX does not provide a public direct download for the Air32F4 `.bin`.** The
+operator's source: request `firmware.bin` from EMAX USA support (with the unit's
+serial number); it must be named exactly `firmware.bin`. So the "download from
+the firmware server" path I suggested in §37 **does not apply to the E8** the
+way it does for standard ELRS targets — the E8's firmware is EMAX-gated.
+
+### Why "just download some ELRS firmware" doesn't give us the parser
+This is the subtlety that matters. The serial-protocol parser we want (EMAX's
+`02 c5 ...` framing, the Read/Write/Update over CDC-ACM) is **EMAX's addition**,
+not upstream ELRS's. Upstream ExpressLRS for the Air32F4 target talks
+**CRSF/MSP** over the serial port — not EMAX's custom `02 c5` framing. So:
+- The **upstream ELRS Air32F4 firmware** (publicly available) would show us the
+  *ELRS* serial handling (CRSF/MSP), **not** the *EMAX* `02 c5` protocol handler
+  we actually need.
+- The **EMAX `firmware.bin`** (gated) is the one that contains the EMAX
+  protocol parser — but it's a compiled binary, likely stripped (like the `.exe`
+  was), so reading it means Ghidra/IDA on a no-symbol binary.
+
+So the parser we want lives in EMAX's gated binary, and the public firmware
+won't substitute for it.
+
+### Three options for getting the parser
+**Option A — Request `firmware.bin` from EMAX support** (the exact target).
+- Contact EMAX support with the E8's serial number → get `firmware.bin`.
+- Pros: exact build on the E8, has the EMAX protocol parser.
+- Cons: gated (support turnaround); stripped binary (Ghidra/IDA to read).
+
+**Option B — Dump the firmware directly off the E8** (a flash/DFU *read*).
+- If the E8's bootloader exposes a flash **read** (not just write), we dump the
+  exact firmware on it — same result as Option A, no EMAX support needed.
+- It's a **read** (safe, fits the no-reflash constraint). Open question: does
+  the EMAX tool's bootloader / "File Update" path expose a *read/dump* (vs
+  write-only)? Claude's §41 noted the tool has "File Update" (`.bin` flash =
+  write); a read/dump function is unconfirmed.
+- If the E8 boots into a DFU/bootloader mode (the D8 variant uses a button-combo
+  per the operator's note; the ELRS variant may have an equivalent), a
+  `dfu-util` dump might get the flash.
+
+**Option C — Reverse the parser from the EMAX `.exe` (host side) + infer the
+firmware side.**
+- The `.exe` is the *host* side (what the PC sends); the *firmware* side (what
+  the E8 does with it) is in the binary. But the host-side protocol logic (how
+  it frames the Read command, how it parses the `02 c5` response) is coupled to
+  the firmware's expected behavior — it tells us a lot about the protocol
+  contract.
+- Doesn't need the firmware at all (just the `.exe`, which we have).
+- Limitation: shows the *host's* assumptions about the firmware, not the
+  firmware's actual input-handling (bounds-checks, dispatch, malformed-field
+  behavior).
+
+### The open questions (the asks)
+1. **Does the EMAX tool have a firmware "Read"/"Dump"/"Backup" function** (as
+   opposed to the params "Read" that gives the 17-byte frame)? If yes → Option
+   B is live.
+2. **Does the E8 have a bootloader/DFU mode** (a button-combo on power-on that
+   gets it into update mode — the D8 variant uses L3 + power per the operator's
+   note; what's the ELRS-variant equivalent)? If yes → a `dfu-util` dump might
+   work (Option B).
+3. **If neither (1) nor (2) is available** → Option A (request from EMAX
+   support) is the acquisition path, and Option C (reverse the `.exe` host-side
+   protocol) is the parallel track that doesn't depend on the firmware at all.
+
+### Working assumption (until the open questions resolve)
+Pursue **Option B** (dump off the E8) if a firmware-read/DFU-dump is available —
+it's the exact target + a safe read + no EMAX support. **Option C** (reverse the
+`.exe`) runs in parallel regardless — it's the no-firmware-needed track and it
+advances the protocol understanding either way. **Option A** (EMAX support) is
+the fallback if B isn't available and we need the exact binary.
+
+### Scope + hygiene (standing)
+- Owned E8, bench, powered. Isolated network. Reverse-engineering + native
+  tooling on the owned unit. **Reads only** (no flash / no Write-Update on the
+  EMAX tool) until the parser is understood.
+- UID `5D 05 00 11 18 5B` stays out of code/fixtures/logs (AGENTS.md §1, §41f) —
+  ground truth for validation only.
+
+— andeds
+
+---
+
 ## 37. Pivot: get the Air32F4 TX firmware to read the protocol parser (2026-10-13, andeds)
 
 Stepping back from the capture. We've spent several rounds trying to capture the
