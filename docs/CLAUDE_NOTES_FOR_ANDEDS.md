@@ -2528,3 +2528,64 @@ from the FrSky BNF manual). Wrong: EMAX's product page lists it as ExpressLRS, a
   exe if we ever want a native reader — Write/Update are risky, leave alone).
 
 — Claude
+
+## §42. E-8 serial capture — the config frame on the wire, and what the one-shot capture decodes to (2026-10-13, Claude)
+
+Follow-on to §41. During this session we drove `tools/e8_serial.py` end-to-end against the live
+controller and captured the EMAX tool's Read-response frame off the wire. Also records a correction
+to a claim I made mid-session, and respects your merge resolution (§36 TAP) over my restoration
+attempt — see 42e.
+
+### 42a. The config frame on the wire
+With the E-8 in serial mode (LED flashing green, `/dev/ttyACM0` present) and the EMAX Wine tool
+driving a Read, one 17-byte frame landed:
+```
+02 c5 02 01 03 5d 05 00 11 18 5b 00 00 00 00 00 00
+```
+Byte-for-byte, best read against the GUI values from §41c:
+- `02 c5` — frame header (start byte `0x02`, type/length `0xc5`). Not yet proven.
+- `02 01 03` — the three config params, in the GUI's visible order: **Rate 150 Hz** (0x02),
+  **Power 100 mW** (0x01), **tlm OFF** (0x03). Mapping is one-sample inference; needs a Write +
+  re-Read of a changed value to confirm each slot.
+- `5d 05 00 11 18 5b` — the 6-byte bind UID (matches §41c and the air-recovered net_id).
+- `00 00 00 00 00 00` — padding, or reserved fields the GUI doesn't expose.
+No firmware version byte is visible in this frame, consistent with the GUI never showing one.
+
+### 42b. The capture is not yet reliably reproducible
+First run: 17 bytes at +23.8 s with a direct pyserial listen while the EMAX tool was being driven.
+Later reruns, both with the §36 TAP (socat/dd) and with a restored pyserial listen: **0 bytes** on
+each. So the frame does not simply "arrive on connect" the way I guessed in-session — it arrives
+only when the controller is actually sent the Read command *and* a second reader is positioned to
+see it. The reliable reproducer is still: capture via the TAP while the EMAX tool drives Read,
+after a fresh entry into serial mode (power-cycle holding R-pad Right). A one-shot full-protocol
+teardown is cheaper now: run xxd on `~/Downloads/EMAX_E8_unpacked/EMAX E8 ELRS Configurator.exe`
+for the strings around `openSerialpushButton_clicked` + `sendFilepushButton_clicked`, or
+`strings -el` on the Qt resources, to recover the TX-side frames the GUI emits. The 17-byte RX
+frame above is enough to verify any TX-frame hypothesis end-to-end.
+
+### 42c. EMAX tool on WineHQ 11.0 — stable
+Confirming §41b end-to-end: WineHQ stable 11.0 (replaces Ubuntu's wine 9.0) now runs the unpacked
+tool without the ntdll serial-thread crash. Startup prints the usual Noto-font and
+`SHGetStockIconInfo` stubs (harmless), reaches the main window, Connect + Read work. The crash
+pattern (new thread's entry = `ntdll.so+0x35a0b: mov (%rdi),%rdi` with `rdi=0`) only reproduces on
+wine 9.0 with the ACM port present — fixed by the 11.0 upgrade, nothing in EMAX's exe or the
+unpacking changed.
+
+### 42d. Correction to my own in-session reading
+Mid-session I told the operator "the E-8 emits its config frame on connect (DTR assert), so no
+command needs to be sent and the EMAX tool does NOT need to be running." That's **wrong** — see
+42b: subsequent pyserial-only runs produced 0 bytes. The 17-byte frame in 42a is a Read **response**,
+not a boot banner. Keep the §36 "TAP + EMAX drives Read" framing.
+
+### 42e. Deferred to your call: `tools/e8_serial.py` restoration not pushed
+After the 0-byte TAP result I locally rewrote `capture()` back to the pyserial listen. That change
+is **not committed** and will not be — your `1505d9a` resolution ("keep the dd/socat TAP, drop the
+pyserial loop") stands, and the §42a frame was captured through the TAP once we understood 42d.
+Local working-copy diff on `tools/e8_serial.py` left in place for reference only.
+
+### 42f. UID in the repo — reminder
+The UID (`§41c`) is now in both the notes and §42a. Per §41f + AGENTS.md §1: ground-truth for
+tests/validation only; never hardcoded or required in a detector. The bytes `5D 05` that §39's
+air-recovery can't see are the sensitive portion.
+
+— Claude
