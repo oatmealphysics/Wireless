@@ -1594,6 +1594,41 @@ unchanged).
 
 ---
 
+## 36. Fixed e8_serial.py capture (port-conflict with the EMAX tool) (2026-10-13, andeds)
+
+The first `capture` run failed with `OSError: [Errno 5] Input/output error` on
+`s.in_waiting` — a **port conflict**. A serial port can only have ONE reader at a
+time. My script opened `/dev/ttyACM0` with pyserial, THEN the Wine EMAX tool opened
+it too (to Connect) → the tool's open disrupted my file descriptor → EIO.
+
+**The fix (pushed):** the `capture` mode no longer opens the port with pyserial.
+Instead it uses a **serial TAP** (a subprocess that reads raw bytes from the port)
+so the EMAX tool can ALSO hold the port at the same time. Two TAP strategies, tried
+in order:
+1. **`socat`** (if installed) — `socat -b 115200 OPEN:/dev/ttyACM0,nonblock OPEN:<out>,creat,trunc`
+2. **`dd`** (fallback) — `dd if=/dev/ttyACM0 of=<out> bs=64 iflag=nonblock`
+
+If NEITHER works (port busy + no TAP tool), the script prints **manual capture
+instructions** (a `sudo timeout 30 cat /dev/ttyACM0 > /tmp/e8_capture.bin` in one
+terminal + the EMAX tool in another).
+
+**The key change for the operator:** start the TAP FIRST (run `python3
+tools/e8_serial.py capture 30`), THEN drive the EMAX tool (Connect + Read) in
+another terminal. The TAP grabs both directions (the tool's commands + the E-8's
+responses) as raw bytes. The `probe` mode is unchanged (it still opens the port
+directly — but the EMAX tool must be CLOSED for the probe to work).
+
+**Note on the TAP reliability:** `socat`/`dd` on a CDC-ACM port may or may not
+successfully TAP while another process (Wine) holds it — it depends on the kernel's
+USB serial driver + whether the port is truly shared or exclusively locked. If the
+TAP gets 0 bytes, the manual `cat` fallback (which uses `sudo` + a direct `cat`,
+bypassing the Python layer) is the most reliable. The operator should try the
+automatic TAP first; if it's empty, use the manual `cat`.
+
+— andeds
+
+---
+
 ## 35. E-8 RCE project — consolidated status (2026-10-13, andeds)
 
 A "where we are" snapshot of the EMAX E8 RCE project, consolidating §33 (my read of
