@@ -2799,3 +2799,65 @@ That instruction sequence (`mov rax,[rip+disp] → 0x414270; cmp WORD [rax], 0x5
 The strace+GUI-click approach is still viable and would give the exact TX bytes for one command cycle. The port-exclusivity blocker only applied to a SECOND reader TAPing `/dev/ttyACM0`; `strace -f -e trace=write` on the Wine process itself sees the host-side `write()` calls BEFORE they go to the kernel, with no port contention. The one blocker here is driving the GUI click without a human — `xdotool`/`wmctrl` aren't installed and this is a Wayland session (where cross-app input injection is restricted anyway). If/when the operator can do one Connect+Read click under strace, that gives the TX commands directly.
 
 — Claude
+
+## §46. Static decode — command/response frame sizes mapped (2026-10-13, Claude)
+
+Deeper static analysis of the QIODevice::read/write call sites in the 115 KB inner exe, pulled out the exact buffer lengths each handler uses. The protocol is **fixed-length framed**: all commands TX 64 bytes; responses are 17 bytes for params-read, with other fixed sizes (1/2/17/59) elsewhere.
+
+### 46a. Function map of all serial handlers (verified by Qt-API call pattern)
+```
+0x4018b0-0x401fbe (1806B)  Connect / Disconnect: setPortName @ 0x401acd, QTimer::stop @ 0x4019bf
+0x402a60-0x4034b6 (2646B)  Update (flash): 4× QIO::write @ 0x402d24, 0x4030b0, 0x4031c6, 0x403439
+0x404620-0x4049ad ( 909B)  writeConfig:   QIO::write(64B) @ 0x404807, QTimer start/stop
+0x405940-0x40615f (2079B)  readConfig:    QIO::write(64B) @ 0x40607c, QTimer start/stop
+0x406160-0x4067a5 (1605B)  openSerial init: QSerialPort::ctor + full port config at 0x40636e–0x4063a4
+0x406c60-0x4078a4 (3140B)  readConfig response handler: QIO::read(17B) @ 0x406c88 ← § 42a's frame
+0x4078b0-0x407e7d (1485B)  openFile (choose .bin): QFileDialog::getOpenFileName @ 0x407a34
+0x4067b0-0x406c52 (1186B)  refresh: QSerialPortInfo::availablePorts @ 0x4068a8
+```
+
+### 46b. Frame-size table
+| Direction | Site | Length | Interpretation |
+|---|---|---|---|
+| **TX writeConfig** | 0x404807 | **64 bytes** | fixed-size command frame |
+| **TX readConfig** | 0x40607c | **64 bytes** | fixed-size command frame (same format?) |
+| **TX Update** | 0x402d24, 0x4030b0, 0x4031c6, 0x403439 | runtime-variable (loaded from a register/memory, not an immediate) — the chunked-flash pattern |
+| **RX params-read response** | 0x406c88 | **17 bytes** ← matches §42a exactly |
+| RX small read (ACK poll?) | 0x402508 | 1 byte | likely the "wait for ACK byte" in Update |
+| RX header peek | 0x403f0e | 2 bytes | likely a short status/length prefix |
+| RX medium read | 0x402339 | 59 bytes (0x3b) | unknown — larger than the 17-byte frame; possibly a bind-ID list or longer status block |
+
+**Implication:** the Read command TX is a **64-byte fixed frame** that elicits a **17-byte response**. The 17-byte response wire layout (`02 c5 02 01 03 <UID:6> <padding:6>`) was already in §42a; now we also know TX is 64 bytes, not matching the 17-byte RX. That's an asymmetric fixed-size protocol — common for USB CDC-ACM to allow simple parsers. The 64-byte TX likely has the same `02 c5 <op> ... <padding to 64>` shape.
+
+### 46c. Why we can't dump the exact 64 TX bytes from .text alone
+The TX buffer at `[rbx+0xb4]` is populated incrementally in the handler by a sequence of `mov [rbx+0xXX], value` and function-call fillers. Without actually executing the code or doing full backward data-flow analysis in a disassembler, I can only point at the memory layout, not the exact byte sequence. The two cheapest ways to get those bytes:
+1. **Ghidra decompile of `on_readConfigButton_clicked` (0x405940) and `on_writeConfigButton_clicked` (0x404620)** — decompiled C-ish output will show the buffer construction plainly. Both are < 2 KB functions, so this is a 5-min pass on the enclave.
+2. **Live `strace -f -e trace=write -s 128` on the Wine process with one manual Connect+Read click** — captures the exact 64-byte TX bytes written to `/dev/ttyACM0`. One click. The port-exclusivity problem doesn't apply because `strace` reads syscalls, not the serial port.
+
+### 46d. The 59-byte RX at 0x402339 is the interesting mystery
+The function at `0x402050-0x4024ee` reads **59 bytes** (0x3b) at `0x402339`, uses QFileInfo in it (QFileInfo::QFileInfo @ 0x4020f9), and has multiple QTimer::start calls. 59 bytes is a big-ish response. If this is called when "Load Firmware" happens (QFile + 59-byte read), it could be the firmware-handshake / "device-info" response the Update protocol expects right before chunk transmission starts. That would make the Update flow:
+```
+host → device: "update start" command (64B)
+device → host: 59B device-info / version / chunk-size parameters
+host → device: chunk-sized blocks (variable), each ACKed by a 1B read
+```
+Pure hypothesis; needs the Ghidra decompile OR a strace of an Update click to confirm.
+
+### 46e. Pulled-together summary of what's confirmed vs still inferred
+HIGH confidence from static decode:
+- Serial transport = CDC-ACM `/dev/ttyACM0`, baud 115200, 8N1, no flow control (§45)
+- TX command size for readConfig + writeConfig = exactly 64 bytes
+- RX response size for readConfig = exactly 17 bytes (matches §42a)
+- 5 device-traffic handlers + the Update handler (4 writes, variable sizes) + the openSerial init
+- Handler function entry addresses
+
+LOWER confidence (needs decompile or live capture):
+- Exact 64 TX bytes for Read and Write commands
+- Exact Update chunk framing (header, length, CRC)
+- The 59-byte and 2-byte read semantics
+- Whether responses to all commands are also 64 bytes (padded) or variable
+
+### 46f. Scope + hygiene (standing)
+Static analysis of the host tool on the laptop. No device interaction. UID handling per AGENTS.md §1 + §41f.
+
+— Claude
