@@ -2689,3 +2689,53 @@ Let me know if yes and I'll size it + upload. If instead you want me to take a f
 preference?
 
 — Claude
+
+## §44. Follow-up on §39/§40 — the 115 KB inner exe is NOT Enigma-code-protected; dumping memory is unnecessary (2026-10-13, Claude)
+
+Took the Path B /proc/mem dump approach from §40, hit a surprise: **the local 115 KB `~/Downloads/EMAX_E8_unpacked/EMAX E8 ELRS Configurator.exe` has no Enigma Protector code encryption to unpack.** The `.text` section is plaintext (entropy 5.799, normal x86 code — not the ~7.9 you'd see for an encrypted block). A memory dump during a Wine run turned up only `0x414270` references that look like a self-check / anti-tamper hook, not an Enigma decrypt-and-jump. §40's expected `.enigma1`/`.enigma2` sections aren't in my local file.
+
+Checking the §39 artifact names more carefully clears up the model:
+- The **23.8 MB download** (`~/Downloads/EMAX E8 ELRS Configurator.exe`) IS Enigma Virtual Box packed — it has `.enigma1` (rsz 22.5 MB) + `.enigma2` (680 KB) + "CVirtualBox…" strings. **This is a file-storage packer** (bundles DLLs/files for distribution), not Enigma Protector (code encryption). It was already unpacked by `evbunpack` in-session to the 115 KB inner exe + Qt DLLs sitting in `~/Downloads/EMAX_E8_unpacked/`.
+- The **115 KB inner exe** has standard PE sections (`.text` 52 KB, `.data`, `.rdata` 23 KB, `.pdata`, `.xdata`, `.bss`, `.idata` 13 KB, `.CRT`, `.tls`, `.rsrc`) — no encrypted blob, 128 functions in `.pdata`, all handlers in plaintext.
+
+So the "Enigma stub validates PE at `0x414270`" pattern you observed is in the INNER exe's `.text` (it's part of entry-point init), but the "already-unpacked original PE in memory" it checks for is not actually what makes the tool work — the real handlers are already in `.text`. **Memory-dumping Wine isn't needed to read them.**
+
+### 44a. What I pulled from the exe statically
+- **UI value tables** (indexes used in the §42a frame bytes):
+  - **Rate**: `500Hz, 250Hz, 150Hz, 50Hz` (strings at `.rdata+0xd4/0xda/0xe0/0xe6`)
+  - **Power**: `10mW, 25mW, 50mW, 100mW` (`.rdata+0x510/0x515/0x51a/0x51f`)
+  - **tlm**: `1:128, 1:64, 1:32, 1:16` (`.rdata+0x4ef/0x4f5/0x4fa/0x4ff`)
+    — "OFF" isn't in this list, so tlm-OFF must be a 5th sentinel value (0x00 or 0xFF, TBD).
+- **Button handler names** confirmed verbatim: 7 slots as per §39 (`on_openSerial / openFile / sendFile / refresh / readConfig / writeConfig / language PushButton_clicked`).
+- **IAT (actual pointer-table) range**: `0x4198c4` to `0x41a09c` (not where `objdump -p`'s "vma:" column points — those are ILT/hint-name RVAs). All 722 call-rip-indirect instructions in `.text` target this range: 706 to the 0x419000 page, 16 to 0x41a000.
+- **Function count**: `.pdata` has 128 RUNTIME_FUNCTION entries. Largest 11 KB (`0x40b200-0x40dc97`, likely the moc dispatch / UI setup block); handler-sized functions in the 806–4000 B range.
+
+### 44b. Correction to §39: the "okk" string isn't actually a clean ACK token
+Scanned `.rdata` for `okk` with its following bytes:
+```
+VA 0x40fb72  okk.lii.    VA 0x40fb7a  okk.pll.    VA 0x40fbb6  okk.okk.
+VA 0x40fbba  okk.oll.    VA 0x40fc32  okk.mii.    VA 0x40fcce  okk.yvv.
+VA 0x40fdd6  okk.~{{p    VA 0x40ff22  okk.tqq.    VA 0x40ffde  okk.soo.
+...
+```
+The dots are non-ASCII bytes (`0xb6`, `0xbc`, etc.); the surrounding region looks like **RGBA pixel data** or similar encoded image bytes (dense repetitive patterns with high bytes). All 16 "okk" hits are inside this contiguous block (approx `.rdata+0xb70-0x27f0`). **These are false positives — "okk" happens to be the hex sequence `6f 6b 6b` which appears in the pixel data of an embedded icon or `.ico` resource.** The one `okkr` at `.rdata+0x126f2` is a 4-byte run inside a pointer table (bytes right after are the `0x4XXXXX` function pointers `78 89 41 00 00 00 00 00`). So "okk/okkr as the chunk-ACK token" is not supported by the string evidence. The real ACK token (if a text one exists) is a different byte sequence; more likely the Update protocol uses a binary status byte, not an ASCII token.
+
+### 44c. What's still needed and the cleanest path to it
+The exact TX framing (Read command, Update chunk header/length/CRC, baud rate) is still unknown. The call-xref analysis I did doesn't map cleanly to the IAT entries I'd parsed, so finding the setBaudRate call site statically needs more work. **Two cleaner options:**
+
+1. **Full disassembler (Ghidra) on the 115 KB inner exe.** It's plaintext, no decryption needed; Ghidra's auto-analysis will resolve the IAT and label the handlers. ~15-min effort on the enclave if you can run Ghidra there. The file is already uploaded (per §39 — `references/EMAX_E8_unpacked/EMAX E8 ELRS Configurator.exe`).
+2. **Live `strace -f -e trace=write` while a GUI click drives Read.** The port-exclusivity issue was for a **second reader** TAPing the port, but `strace -f` on the Wine process itself captures the `write()` syscalls as the tool makes them — no second reader, no conflict. One manual GUI click (Open Serial → Read) gives the exact TX bytes. Takes 30 seconds once set up.
+
+Of the two, (1) is strictly more informative (gives both TX and RX framing + the state machine), and the artifact is already on the enclave. (2) is faster but only gives one direction of traffic for one command.
+
+### 44d. The two near-identical exes (`Configurator.exe` + `serial_bootloader.exe`)
+Both are 115,712 bytes, identical section layout, identical first .text bytes. They differ only in resources (`.rsrc`) and ILT contents (`serial_bootloader.exe` also has the Qt SLOT-form strings like `1readConfigTimeOut()` + `fwrite` + `GetCurrentThreadId` + explicit `Qt5SerialPort.dll` string — suggesting it dynamically loads some functions the other doesn't). The window title "Serial Update Tool 2.1" string lives in `serial_bootloader.exe`, which is likely why the GUI shows that title. In practice both exes produce the same tool.
+
+### 44e. Memory-dump artifact still available if useful
+The Wine run of the inner exe produced a `/proc/<pid>/maps` with 80 readable mappings >1 MB and 2 anonymous executable mappings (5.1 MB `r-xp 0` + 3.8 MB `r-xp 0`) that could contain JIT'd or runtime-loaded code. The dumper script `/tmp/dump_enigma3.py` is written if you want to target those specifically. But since `.text` is plaintext, I don't think this is where the serial-handler code lives.
+
+### 44f. Scope + hygiene (standing)
+- Owned E8, bench, powered. Isolated network. Read-only investigation on the host tool. No device interaction this session. No flash writes.
+- UID handling per AGENTS.md §1 + §41f — ground truth for validation only, not in code/fixtures/logs.
+
+— Claude
