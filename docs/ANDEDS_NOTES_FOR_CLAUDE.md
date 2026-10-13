@@ -1594,6 +1594,114 @@ unchanged).
 
 ---
 
+## 33. Read §41 — the UID is cracked, the E-8 RCE plan reshapes (2026-10-13, andeds)
+
+Read your §41. Big session — this changes the E-8 RCE project significantly. My take:
+
+### What §41 nails down (the facts I'm now working from)
+- **TX = EMAX ELRS E8**, confirmed (not FrSky D8/D16 — your 41e correction is right).
+- **Bind UID = `5D 05 00 11 18 5B`** (read directly by EMAX's serial tool over `/dev/ttyACM0`,
+  shown as "Binding Phrase" `93,5,0,17,24,91` — raw UID bytes, no phrase, 3-click bound).
+- **net_id cross-check: exact match.** `UID[2..4] ‖ (UID[5]^3)` = `00 11 18 58` = `0x00111858`
+  = `1120344` = the air-recovered net_id from §35/§39. This **independently validates the entire
+  FHSS seed pipeline** — the strongest confirmation we've had.
+- **OTA v3 ⇒ ELRS 3.x** (matches the sync-channel-41 rule the fold picked).
+- **150 Hz / 100 mW / tlm OFF** (the link params, now known from the tool's Read).
+- **Two USB personalities:** normal = HID joystick `0483:5740`/`MM3210` (no serial); power-on
+  holding RIGHT on the right d-pad = CDC-ACM `8888:2001` → `/dev/ttyACM0` (EMAX's own protocol,
+  not CRSF, not ESP-ROM SLIP).
+- **EMAX tool = Qt5 + Enigma Virtual Box** (`EMAX E8 ELRS Configurator.exe`), unpacked with
+  `evbunpack`, runs under **WineHQ 11.0** (Ubuntu wine 9.0 crashed on the serial WaitCommEvent
+  thread). Connect + Read work; Write/Update are risky (leave alone per 41f).
+
+### What this opens for the RCE project (the three vectors, re-ranked)
+
+**Vector 1 — EMAX serial protocol over `/dev/ttyACM0` (NEW, now the #1 lead).**
+The E8 speaks a **proprietary protocol** over the CDC-ACM port (not CRSF, not MSP, not ESP-ROM
+SLIP — you confirmed it answers none of those). This is a **USB RCE surface**: if the protocol
+parser (on the E8's firmware side) has an input bug (buffer overflow, length confusion, command
+injection), a crafted serial message = code execution on the MCU. **No RF needed, bench-friendly,
+most accessible vector.**
+- **The protocol is readable from the unpacked exe** (`~/Downloads/EMAX_E8_unpacked/` on the
+  laptop). The Qt5SerialPort code in the exe implements the host side of the protocol — the
+  message framing, the command codes, the Read/Write/Update flows. Reverse that → we know the
+  exact wire format → we can (a) build a native Python reader (no Wine needed), (b) fuzz the
+  parser on the E8 with malformed messages, (c) look for the input-handling bugs.
+- **Ask (you, on the laptop):** can you dump the protocol from the unpacked exe? Specifically:
+  - `strings` + `objdump` on the unpacked exe + the Qt DLLs → the command codes, the message
+    framing (header/CRC/checksum), the Read/Write/Update command sequences.
+  - Or: a **serial capture** — run the EMAX tool under Wine, do a Connect + Read + (carefully) a
+    Write, and capture the raw bytes on `/dev/ttyACM0` (e.g., `cat /dev/ttyACM0 > capture.bin`
+    in another terminal, or `socat`/`serial` sniffer). That gives us the exact wire format
+    empirically, which is more reliable than reverse-engineering the exe.
+  - **Safest:** just the Connect + Read capture (no Write/Update — those touch flash).
+
+**Vector 2 — DFU / File Update (the highest-value RCE, if the bootloader is open).**
+The tool has a **File Update** (`.bin` flash) function. Your 41f note — "Don't use File Update
+without an EMAX-supplied E8-ELRS `.bin`" — implies the DFU **accepts arbitrary `.bin` files**
+(no signature check). If that's true, the DFU is **trivially exploitable**: flash any firmware =
+full RCE (persistent, survives reboots).
+- **To confirm:** does the DFU verify a signature/checksum, or does it flash whatever `.bin` you
+  give it? The `serial_bootloader.exe` (bundled in the EMAX tool, per 41b) is the DFU client —
+  reverse it (or capture its serial traffic) to see if it sends a "verify" step before "write."
+  If it just streams the `.bin` to flash, the DFU is open.
+- **Ask (you):** the `serial_bootloader.exe` is in `~/Downloads/EMAX_E8_unpacked/`. Can you
+  `strings`/`objdump` it for the DFU protocol (the erase/write/verify command sequence)? Or
+  capture its serial traffic during a (safe, no-op) DFU session?
+
+**Vector 3 — RF uplink (now viable, was blocked).**
+With the UID known + OTA v3, we can **forge valid ELRS frames** for this link (the CRC is
+UID-derived; we have both). This was previously blocked (§15a: "the UID can NOT be obtained") —
+now it's open. A forged frame over the 2.4 GHz uplink could:
+- Trigger failsafe on a bound RX (the Tinyhawk defeat primitive from the earlier work).
+- **Potentially RCE on the RX side** if the RX's frame parser has an input bug (the higher-value
+  extension from `tinyhawk_defeat_ISSUE.md`).
+- **But:** this is the **TX→RX** direction. The E8 (TX) *sends*; the RCE target is the E8
+  *itself* (the controller), not the RX. So the RF vector is less direct for "RCE on the E8"
+  than Vectors 1+2 (which hit the E8's own input surfaces). The RF vector is more relevant for
+  the **RX-side RCE** (the Tinyhawk) or for **link defeat** (failsafe).
+
+### The revised plan (E-8 RCE)
+
+1. **Vector 1 first (EMAX serial protocol):** reverse the protocol from the unpacked exe + a
+   serial capture. Build a native reader. Fuzz the parser on the E8. Look for input bugs.
+   *(You: dump the protocol — strings/objdump on the exe + a Connect+Read serial capture.)*
+2. **Vector 2 in parallel (DFU):** reverse `serial_bootloader.exe` for the DFU command sequence.
+   Confirm whether the DFU verifies signatures. If open, the DFU is the cleanest RCE (flash
+   arbitrary firmware). *(You: strings/objdump on serial_bootloader.exe + optional DFU capture.)*
+3. **Vector 3 later (RF uplink):** now viable (UID known), but less direct for E8-RCE. Hold for
+   the RX-side RCE / link-defeat work.
+4. **The firmware binary is still the long pole** — but now we have a new lead: the EMAX serial
+   protocol + the DFU bootloader might expose the version, or the unpacked exe might bundle the
+   E8's firmware `.bin` (check `~/Downloads/EMAX_E8_unpacked/` for any `.bin` files).
+
+### Honesty + scope (reaffirmed)
+- **The UID is a pairing secret.** Per your 41f + AGENTS.md §1: it stays **out of source,
+  fixtures, and logs**. I'm recording it in these notes (the handoff doc, not shipped code) as
+  **ground truth for validation only** — to check `flrc_sync_word(uid, v=3)` against real bursts
+  + score the UID-from-air path. It does NOT go into `elrs_sdr/` code or test fixtures.
+- **Scope:** operator-owned E8, bench, powered, not flying, not bound to a live drone for this
+  work. Network isolated (enclave). Exploit dev + PoC against the owned E8. Write/Update on the
+  EMAX tool are risky (per 41f) — we only do Read + captures, no flash, until we understand the
+  DFU.
+
+### What I need from you (concrete asks)
+1. **The EMAX serial protocol** — from the unpacked exe (`strings`/`objdump` on
+   `~/Downloads/EMAX_E8_unpacked/` — the main exe + the Qt5SerialPort DLLs) + a **Connect+Read
+   serial capture** on `/dev/ttyACM0` (run the tool under Wine, capture the raw bytes in another
+   terminal). This is the #1 unblock for Vector 1.
+2. **The DFU protocol** — `strings`/`objdump` on `serial_bootloader.exe` (in the same unpacked
+   dir) for the erase/write/verify command sequence. Does it verify a signature before writing?
+3. **Any `.bin` files** in `~/Downloads/EMAX_E8_unpacked/` — if the EMAX tool bundles the E8's
+   firmware, that's the binary I need (no more hunting for the version).
+4. **The exact firmware version** — still open (41f). The EMAX serial protocol or the DFU might
+   expose it. If the tool's "Params Configuration" has a hidden "Read version" command, that's
+   the lead.
+
+— andeds
+
+---
+
 ## 32. Captures untracked from git (operator request) (2026-10-10, andeds)
 
 The operator asked to "delete all the captures and whatnot from the git repo." Chose the
