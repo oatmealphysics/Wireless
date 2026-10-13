@@ -1594,6 +1594,86 @@ unchanged).
 
 ---
 
+## 37. Pivot: get the Air32F4 TX firmware to read the protocol parser (2026-10-13, andeds)
+
+Stepping back from the capture. We've spent several rounds trying to capture the
+EMAX serial protocol off the live port (TAP, strace, Wine `+serial` debug), and
+hit a wall that's worth naming clearly so we don't keep paying for it:
+
+### Why the live capture keeps coming up empty
+A serial port is **exclusive** — one reader at a time. The EMAX Wine tool opens
+`/dev/ttyACM0` to do Connect+Read; a second reader (our TAP / `cat` / strace)
+can't see the traffic while the tool holds the port. Every capture attempt
+(TAP, `sudo cat`, the two straces) returned 0 bytes for this reason, even though
+the tool's Connect+Read genuinely succeeded (the operator confirmed "connect
+worked, read worked, disconnect worked"). Claude's §42a 17-byte frame was a
+one-shot that happened to land; it's not reproducible because of this exclusivity,
+not because of a serial-mode timing issue.
+
+So: **the live-capture path is a port-exclusivity fight with diminishing returns.**
+We already have most of the wire format from §42a (the 17-byte Read-response:
+`02 c5 02 01 03 <UID:6> 00 00 00 00 00 00`). The missing half (the TX frames the
+tool *sends*) is nice-to-have for a complete native reader, but it is **not** the
+bottleneck for the actual analysis.
+
+### The real leverage: the firmware binary
+To understand how the E8's firmware handles the serial messages (the parser's
+input handling — bounds-checks, command dispatch, what it does on a malformed
+field), the high-signal move is to **read the parser's code**, not black-box
+probe it over a port we can't TAP. That needs the **Air32F4 TX firmware binary**
+(`.elf` preferred — it has symbols; `.bin` works too).
+
+We don't have it yet:
+- Not bundled in the EMAX tool (`find . -name "*.bin"` in the unpacked dir = empty).
+- The enclave's ExpressLRS source snapshot is ESP32-only (from the earlier RX
+  work) — no Air32F4/E8 TX target, no `Constants.h`.
+- The exact version is still open (§41f — the EMAX tool doesn't display it).
+
+### The plan (firmware-first)
+1. **Get a representative ELRS 3.x Air32F4 TX firmware** (`.elf` + `.bin`). It
+   doesn't have to be the *exact* build on the E8 — for reading the parser, any
+   recent ELRS 3.x Air32F4 TX build is close enough (the serial-protocol parser
+   is stable across 3.x point releases). Easiest source: the **Configurator
+   1.8.3 Firmware tab** (the operator has the `.deb`) → select the EMAX E8 /
+   Air32F4 TX target → download the latest 3.x (or "stable") → the `.bin`/`.elf`
+   lands in the Configurator's firmware cache → upload to the enclave.
+2. **Read the serial-protocol parser** in the firmware — how it frames the
+   messages, how it dispatches command codes, how it bounds-checks lengths, what
+   it does on a malformed/oversized field. This is the input-handling analysis
+   that the live capture was a proxy for.
+3. **Build a native reader** for the EMAX protocol (from §42a's frame + the
+   parser's framing logic) — so we can drive the E8 from the enclave's tooling
+   without Wine.
+4. **Characterize the parser's behavior** with a test harness against the owned
+   E8 (varied + malformed messages, observe the responses).
+
+### What I need from the operator (the ask)
+- **The Air32F4 / EMAX E8 TX firmware** (`.elf` + `.bin`), ELRS 3.x, from the
+  Configurator's Firmware tab (or a direct download). Upload to the enclave:
+  `/opt/data/Drone_Project/references/`.
+- **Confirm what TX targets the Configurator's Firmware tab lists** — if
+  "EMAX E8" / "Air32F4" is there, it's a 2-minute download. If not, tell me what
+  it lists and I'll give the direct firmware-server URL for the Air32F4 target.
+
+### Note on the exact version
+For *reading the parser*, a close 3.x build is fine. For *byte-exact* offsets
+(later, if we get to laying out specific structures), we'd want the exact build
+on the E8 — and the version is recoverable from the flashed firmware's DFU
+header (a flash/DFU **read** of the E8, which is safe + fits the no-reflash
+constraint). But that's a later refinement; the representative 3.x binary
+unblocks the parser analysis now.
+
+### Scope + hygiene (standing)
+- Owned E8, bench, powered. Isolated network. Reverse-engineering + native
+  tooling on the owned unit. Reads only (no flash / no Write-Update on the EMAX
+  tool) until the parser is understood.
+- UID `5D 05 00 11 18 5B` stays out of code/fixtures/logs (AGENTS.md §1, §41f) —
+  ground truth for validation only.
+
+— andeds
+
+---
+
 ## 36. Fixed e8_serial.py capture (port-conflict with the EMAX tool) (2026-10-13, andeds)
 
 The first `capture` run failed with `OSError: [Errno 5] Input/output error` on
