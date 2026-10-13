@@ -1594,6 +1594,93 @@ unchanged).
 
 ---
 
+## 39. Reverse pass on the EMAX exe — protocol reconstructed from plaintext; the handler code is Enigma-packed (2026-10-13, andeds)
+
+Did the Option-C reverse pass (Claude's §43f) on the enclave against the two
+uploaded exes. Summary: **the protocol is reconstructed from the plaintext
+evidence; the handler *code* is Enigma-packed and can't be read statically
+without a runtime unpack.**
+
+### What I worked with
+- `references/EMAX_E8_unpacked/` (from `emax.tgz`) — the unpacked tool dir
+  (54 files): `EMAX E8 ELRS Configurator.exe` (113 KB, the GUI tool) +
+  `serial_bootloader.exe` (113 KB, a *different* binary — same build size,
+  different md5 — the raw bootloader/flash tool) + the Qt5 runtime DLLs.
+- The 23.8 MB Enigma-packed original ("actual download") — `EMAX_E8_ELRS_
+  Configurator_unpacked.exe` (`.enigma1` 23 MB encrypted data section +
+  `.enigma2` 11 MB).
+
+### What I recovered (the plaintext evidence)
+The current PE's `.rdata` + `.idata` are **plaintext** (Enigma doesn't pack
+them — the loader needs them to map the DLLs before the stub runs). From those:
+- **The full command surface** (the Qt meta-object stringdata): 7 button slots
+  (`openSerial`/`openFile`/`sendFile`/`refresh`/`readConfig`/`writeConfig`/
+  `language`) + 4 timeout signals (`readTimeOut`/`writeTimeOut`/
+  `readConfigTimeOut`/`writeConfigTimeOut`) + 2 status/progress signals
+  (`transmitStatus`/`Status` + `transmitProgress`/`progress`).
+- **The import table** (the exact serial/IO APIs): `QSerialPort::{setBaudRate,
+  setDataBits, setPortName, setStopBits, setFlowControl, setParity}` +
+  `QIODevice::{read,write}` + `QSerialPortInfo::availablePorts` + `QFile` +
+  `QFileInfo::size` + `QTimer::{start,stop}` + `QObject::timerEvent` +
+  `QFileDialog::getOpenFileName`.
+- **The `okk` chunk-ACK token** (16× in `.rdata` + 1× `okkr`) — the per-chunk
+  ACK for the Update (flash) protocol.
+- **§42a's 17-byte Read-response frame** (the ground-truth RX frame).
+
+From these, the protocol is reconstructed (see
+`references/e8_protocol_reconstruction.md`): 5 device-traffic operations
+(Read params, Write params, Bind, Update/flash, Connect), the 17-byte Read-
+response layout, and the **`okk` chunk-ACK flash handshake** (send chunk →
+wait `okk` → next chunk → `okkr` final → `Update Successed!`, or a `QTimer`
+timeout → `Update Failed`).
+
+### What I could NOT recover (the Enigma block)
+The handler *code* (the exact TX byte framing — how the Read command is built,
+the Update chunk header/length/CRC, the baud/data/stop/parity config) is in
+the `.text`, which is **Enigma-packed**:
+- `.enigma1` (23 MB) is **fully encrypted** (entropy 7.6–7.95 across all 1 MB
+  blocks — not plaintext, not lightly transformed; my initial "PLAIN"
+  classification was a false positive from a weak `fc`-count heuristic).
+- The `.text` stub (52 KB, the part that IS plaintext) is the Enigma
+  *bootstrap*: it validates the **already-unpacked original PE in memory**
+  (MZ check at the `0x414270` pointer, `PE\0\0` sig, machine type `0x20b`,
+  section count `>0xe`) + hands off to the original entry point (`call
+  0x4089d0` at `0x4010f0`). The actual `.enigma1` → in-memory-PE decryption
+  happened *before* this stub (in the first bytes of `.text`).
+
+So the original PE is **unpacked into memory at runtime** — to get the handler
+code, I'd dump that in-memory region (`0x414270` + the section data) under a
+debugger. That's the **Wine + gdb unpack**, which is **blocked on the enclave**
+(no Wine, no gdb, no internet to install them). It needs the laptop.
+
+### The path to the exact TX framing (the remaining unknown)
+Three options, in order of effort:
+1. **Wine + gdb unpack (laptop)** — run the packed exe under Wine + Winegdb,
+   let Enigma self-decrypt, dump the in-memory original PE (the `0x414270`
+   region + sections), save it as a clean PE, then disassemble the handlers
+   (`on_sendFilepushButton_clicked` + `on_readConfigButton_clicked`) in
+   Ghidra/objdump. Gets the exact framing. **This is the next step if we want
+   the byte-exact protocol.**
+2. **A clean dynamic capture (laptop)** — `strace -e trace=write` on the
+   specific Wine child process holding `/dev/ttyACM0` (found via `lsof`
+   while connected), capturing the TX bytes as sent. Lighter, but the
+   port-exclusivity + Wine-multi-process issues made prior attempts return 0
+   bytes.
+3. **The firmware binary (EMAX-gated)** — reading the *firmware's* parser
+   gives the expected framing from the other side. Gated (support request) +
+   the firmware is also a stripped binary.
+
+### Scope + hygiene (standing)
+- Owned E8, bench, powered. Isolated network. Reverse-engineering + native
+  tooling on the owned unit. **Reads only** (no flash / no Write-Update) until
+  the parser is understood.
+- UID `5D 05 00 11 18 5B` stays out of code/fixtures/logs (AGENTS.md §1,
+  §41f) — ground truth for validation only.
+
+— andeds
+
+---
+
 ## 38. Firmware acquisition — the E8 is EMAX-gated; three options for the parser (2026-10-13, andeds)
 
 Follow-on to §37. The operator surfaced a key fact that changes the firmware
