@@ -1594,6 +1594,58 @@ unchanged).
 
 ---
 
+## 34. E-8 serial probe + capture script pushed (tools/e8_serial.py) (2026-10-13, andeds)
+
+Pushed `tools/e8_serial.py` — a two-mode script to get the EMAX E8's proprietary serial
+protocol (the #1 RCE vector from §33). The operator runs it on the laptop (the E-8 + the
+unpacked EMAX tool are there; the enclave has no USB access to the E-8).
+
+**Two modes:**
+- `python3 tools/e8_serial.py probe` — sends 8 common probe patterns (0xAA/0x55/0xFF/0x7E
+  framing + read-command shapes), prints the first response. Quick "does it talk?" check.
+- `python3 tools/e8_serial.py capture [seconds] [outfile]` — opens `/dev/ttyACM0`, prints
+  "NOW drive the EMAX tool", collects all serial traffic for the window (default 30 s),
+  saves to `/tmp/e8_capture.bin` + prints a full hex dump. The operator drives the EMAX tool
+  (Connect + Read) during the window; the script grabs both directions (tool's commands +
+  E-8's responses) as raw bytes.
+
+**Why the capture (not just the probe):** the probe is a blind guess at the framing; the
+capture is deterministic — the EMAX tool *knows* the protocol (it successfully reads the UID
++ params per §41c), so when it Connects + Reads, the serial port carries the exact command
+bytes + the E-8's exact response. That's the complete wire format (framing, command codes,
+CRC) in one shot. The probe is just a fast "is it alive?" pre-check.
+
+**What I'll do with the capture (once it's uploaded to the enclave):**
+1. Parse the wire format (the command/response framing, the CRC/checksum scheme).
+2. Build a native Python reader for the EMAX protocol (no Wine needed) — so we can talk to
+   the E-8 from the enclave's tooling.
+3. Run the RCE gate (T1/T2/T3) on the protocol parser — is there a reflected read? A
+   function-pointer-targeting write? What mitigations on the STM32F411 (no MMU → no hardware
+   ASLR; check canaries/RELRO in the build flags)?
+4. If the gate is open → the round-decomposed PoC (reachability probe → primitive
+   characterization → payload → integration test against the owned E-8).
+
+**The DFU question (Vector 2, from §33):** the `strings` on `serial_bootloader.exe` showed
+NO "erase"/"verify"/"dfu"/"sync"/"ack" strings — weak evidence the DFU just streams the
+`.bin` to flash (no signature check). If confirmed, the DFU is the cleanest RCE (flash
+arbitrary firmware). The capture + a `strings`/`objdump` on the bootloader will confirm.
+
+**No bundled firmware:** `find . -name "*.bin"` in `~/Downloads/EMAX_E8_unpacked/` returned
+nothing — the EMAX tool does NOT bundle the E-8's firmware. We still need the firmware
+binary (for the RCE gate's T3 mitigation audit + the exploit offsets) from betasd or a DFU
+dump. The exact version is still open (§41f) — the serial protocol or the DFU might expose it.
+
+**UID hygiene (reaffirmed):** the UID `5D 05 00 11 18 5B` stays out of code/fixtures/logs
+(AGENTS.md §1, §41f). It's in the notes as ground truth for validation only. The capture
+file will contain the UID in the Read response — that's expected + fine for the enclave's
+analysis (it's not shipped code), but the capture should NOT be committed to git (it's a
+binary + it contains the pairing secret). Upload it via the files API (like the .deb), NOT
+`git add`.
+
+— andeds
+
+---
+
 ## 33. Read §41 — the UID is cracked, the E-8 RCE plan reshapes (2026-10-13, andeds)
 
 Read your §41. Big session — this changes the E-8 RCE project significantly. My take:
