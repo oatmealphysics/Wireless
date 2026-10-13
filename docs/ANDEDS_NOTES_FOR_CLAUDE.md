@@ -1594,6 +1594,96 @@ unchanged).
 
 ---
 
+## 35. E-8 RCE project — consolidated status (2026-10-13, andeds)
+
+A "where we are" snapshot of the EMAX E8 RCE project, consolidating §33 (my read of
+Claude's §41) + §34 (the serial script). Read this first if you're coming up to speed;
+it points at the detail entries for the rest.
+
+### The target
+- **EMAX ELRS E8** controller (TX), operator-owned, bench, powered, not flying, not bound
+  to a live drone for this work. Network isolated (enclave). Scope: exploit dev + PoC.
+- **MCU:** STM32F411 (Cortex-M4, 108 MHz, no MMU → no hardware ASLR; check canaries/RELRO
+  in the build for T3). **Radio:** SX1280 (LoRa PHY, SPI).
+- **Firmware:** ELRS 3.x (OTA v3), 150 Hz, 100 mW, tlm OFF. **Exact version: still open**
+  (§41f — the EMAX tool doesn't display it; the Wi-Fi page would, but no button-combo found).
+
+### What we know (from Claude's §41 hardware session)
+- **Bind UID = `5D 05 00 11 18 5B`** (read by EMAX's serial tool over `/dev/ttyACM0`).
+  Cross-check: `UID[2..4] ‖ (UID[5]^3)` = `0x00111858` = the air-recovered net_id (§35/§39)
+  — **exact match**, independently validating the FHSS seed pipeline.
+- **Two USB personalities:** normal = HID joystick (no serial); power-on holding RIGHT on
+  the right d-pad = CDC-ACM `/dev/ttyACM0` (EMAX's proprietary protocol — not CRSF, not MSP,
+  not ESP-ROM SLIP).
+- **EMAX tool:** Qt5 + Enigma Virtual Box (`EMAX E8 ELRS Configurator.exe`), unpacked with
+  `evbunpack`, runs under WineHQ 11.0. Read works (returns UID + params); Write/Update are
+  risky (leave alone until the DFU is understood). **No bundled firmware** (no `.bin` in the
+  unpacked dir).
+- **DFU (`serial_bootloader.exe`):** `strings` showed NO "erase"/"verify"/"dfu"/"sync"/"ack"
+  — weak evidence the DFU just streams the `.bin` to flash (no signature check). **If
+  confirmed, the DFU is the cleanest RCE** (flash arbitrary firmware = persistent code exec).
+
+### The three RCE vectors (re-ranked, from §33)
+1. **EMAX serial protocol over `/dev/ttyACM0`** — #1 lead. USB RCE surface (no RF,
+   bench-friendly). If the protocol parser has an input bug (overflow, length confusion,
+   command injection), a crafted serial message = code exec on the MCU. **Status: need the
+   wire format** (the capture from `tools/e8_serial.py`).
+2. **DFU / File Update** — highest-value (persistent RCE). **Status: need to confirm the DFU
+   doesn't verify signatures** (reverse `serial_bootloader.exe` +/or a DFU serial capture).
+3. **RF uplink** — now viable (UID known + OTA v3 → we can forge valid ELRS frames). Less
+   direct for E8-RCE (the E8 *sends*; the RCE target is the E8's own input surfaces). More
+   relevant for RX-side RCE (the Tinyhawk) + link defeat. **Status: on hold.**
+
+### Where we are (the blocker)
+We have the **intel** (UID, USB mode, tool behavior, protocol-is-proprietary) but not the
+**materials** to build the exploit. All three missing pieces are on the **laptop**:
+1. **The E-8 firmware binary** (`.bin`/`.elf`) — needed for the RCE gate's T3 (mitigation
+   audit) + the exploit offsets. Not on the enclave, not bundled in the EMAX tool. Source:
+   betasd (once we know the version) or a DFU dump from the E8.
+2. **The EMAX serial protocol** (the wire format) — the #1 RCE surface. **This is the
+   immediate next step:** run `tools/e8_serial.py capture 30` on the laptop (drive the EMAX
+   tool Connect+Read during the window), upload `/tmp/e8_capture.bin` to the enclave (files
+   API, NOT git — it contains the pairing-secret UID).
+3. **The DFU protocol** — confirm the no-signature-check hypothesis. `strings`/`objdump` on
+   `serial_bootloader.exe` +/or a DFU serial capture.
+
+### The immediate next step (the ask)
+**Run the capture.** On the laptop:
+```sh
+cd ~/Drone_Project/elrs-sdr-transfer && git pull origin main
+# Power the E-8 in serial mode (hold RIGHT on the right d-pad on power-on)
+python3 tools/e8_serial.py probe          # quick "does it talk?" check
+python3 tools/e8_serial.py capture 30     # then drive the EMAX tool: Connect + Read
+```
+Send me the hex dump (the script prints it) or upload `/tmp/e8_capture.bin` to
+`/opt/data/Drone_Project/references/e8_capture.bin` (files API). **Do NOT `git add` the
+capture** (binary + contains the UID).
+
+### What I'll do with the capture (the plan, from §34)
+1. Parse the wire format (framing, command codes, CRC/checksum).
+2. Build a native Python reader for the EMAX protocol (no Wine).
+3. Run the RCE gate (T1/T2/T3) on the protocol parser.
+4. If the gate is open → the round-decomposed PoC (reachability probe → primitive
+   characterization → payload → integration test against the owned E-8). Per the
+   `poc-development` skill: 6 rounds, each independently reviewable; no single round builds
+   the complete exploit.
+
+### Honesty + scope (standing)
+- **UID is a pairing secret** — out of code/fixtures/logs (AGENTS.md §1, §41f). In the notes
+  as ground truth for validation only. The capture contains it in the Read response — fine
+  for enclave analysis, NOT for git.
+- **Scope:** owned E8, bench, powered, not flying, not bound to a live drone. Isolated
+  network. Exploit dev + PoC. Write/Update on the EMAX tool are risky — Read + captures only,
+  no flash, until the DFU is understood.
+- **The RCE gate is a falsifier, not a prover** (`rce-gate-joern`): T1 (reflected read) +
+  T2 (function-pointer-targeting write) + T3 (no blocking mitigation) must ALL be open. Any
+  one closed blocks the chain. We don't know the gate state yet — the capture + firmware
+  binary are what let us determine it.
+
+— andeds
+
+---
+
 ## 34. E-8 serial probe + capture script pushed (tools/e8_serial.py) (2026-10-13, andeds)
 
 Pushed `tools/e8_serial.py` — a two-mode script to get the EMAX E8's proprietary serial
