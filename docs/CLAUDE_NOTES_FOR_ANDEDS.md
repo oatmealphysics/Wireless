@@ -2453,3 +2453,78 @@ or never committed.
 and row-click-to-Inspect — the DOM glue can't be unit-tested from here, same boundary as your note.
 
 — Claude
+
+## §41. The controller is an EMAX E8 **ELRS** — and its bind UID is now READ, not recovered (2026-10-13, Claude)
+
+Hardware session with the operator, no code changed. Headline: the transmitter on the bench link is
+an **EMAX ELRS E8**, and EMAX's serial tool reads its **6-byte bind UID** directly. That UID
+reproduces the net_id we recovered off the air (§35–§39) exactly, which independently confirms the
+FHSS seed pipeline and pins the link to **ELRS 3.x**. This supersedes §15a's "the UID can NOT be
+obtained" *for this bench link only* — see 41f for why nothing in the code should change.
+
+### 41a. The controller's two USB personalities
+- **Normal power-on (or any button but one):** USB HID joystick `0483:5710`, product
+  `EMAXJoystick`, serial `MM3210` → `/dev/input/js0` + `event21`. Channel values only (sim use). No
+  serial port, so no config/version over USB in this mode.
+- **Power-on holding RIGHT on the RIGHT d-pad:** CDC-ACM serial `8888:2001` ("USB Serial [Your
+  Company]") → `/dev/ttyACM0`, center LED flashing green. Same USB port path (3-8.3.4), so it's the
+  same device. Every other power-on combo was tried: L-pad = D8/D16/D16-LBT/calibration (legacy
+  FrSky-manual combos), none brings up Wi-Fi.
+- **Bind:** power on, then hold L4+ & R3− ~2 s → LED alternates green/red (EMAX EZ Pilot manual).
+- **Wi-Fi mode: not found.** No combo produced an `ExpressLRS TX` AP (checked from a phone; the
+  laptop's Wi-Fi is rfkill-blocked, so its scans were invalid). No screen ⇒ no Lua "Enable WiFi".
+- The ttyACM port is silent and does **not** answer a CRSF `DEVICE_PING` (0x28, tried 0xEE/0xC8
+  addr) nor an ESP ROM SLIP `SYNC` — it speaks EMAX's own protocol (below).
+
+### 41b. EMAX "Serial Update Tool 2.1" (shipped as `EMAX E8 ELRS Configurator.exe`)
+Qt5 + Qt5SerialPort Windows app, wrapped in **Enigma Virtual Box**; bundles `serial_bootloader.exe`.
+UI: COM select / Connect, **File Update** (`.bin` flash), **Params Configuration** — Rate Speed, tlm
+Speed, Power, Binding Phrase — with **Read** / **Write**. Nothing is persisted on the host (no file,
+no registry key); the controller is the source of truth.
+
+Getting it to run on the laptop (Ubuntu 24.04):
+1. **Packed exe crashes under Wine** (packer hooks Zw* syscalls). Unpacked with `evbunpack` 0.2.6
+   (throwaway venv) → `~/Downloads/EMAX_E8_unpacked/` (real exe + Qt DLLs).
+2. **Unpacked exe still crashed on Ubuntu's wine 9.0** — backtrace: a new thread's entry is
+   `ntdll.so+0x35a0b: mov (%rdi),%rdi` straight from `BaseThreadInitThunk`, `rdi=0`, `rcx` valid —
+   i.e. a SysV unix-side function started as a Win64 thread (arg in rcx, read from rdi). Consistent
+   with wine 9.0's serial `WaitCommEvent` wait thread (crashed only with the ACM port present).
+3. **Fix: WineHQ stable 11.0** (`dl.winehq.org` noble repo, key `D43F…672F`; replaced Ubuntu `wine`
+   9.0), `wineboot -u`. Wine maps the port as **COM33 → /dev/ttyACM0**. Connect + Read now work.
+Run as the user, not `sudo` (root's prefix has no COM mapping). Don't use File Update without an
+EMAX-supplied E8-ELRS `.bin`.
+
+### 41c. What Read returned
+| Param | Value |
+|---|---|
+| Rate Speed | **150 Hz** |
+| tlm Speed | **OFF** |
+| Power | **100 mW** |
+| "Binding Phrase" | **`93,5,0,17,24,91`** = UID `5D 05 00 11 18 5B` |
+
+The field is labelled "Binding Phrase" but holds the 6 raw UID bytes (link was 3-click bound, so
+there is no phrase). No firmware version is displayed by the tool.
+
+### 41d. Cross-check against the air — exact match
+ELRS 3.x seed = `UID[2..4]` ‖ `(UID[5] XOR OTA_VERSION_ID)`, with `OTA_VERSION_ID = 3`:
+```
+00 11 18 (5B ^ 03 = 58)  →  0x00111858 = 1120344   ==  net_id recovered in §35/§39
+```
+So: (1) the E8 is the TX in every capture; (2) **OTA version 3 ⇒ ELRS 3.x**, matching the
+`elrs<=3.x` sync-channel rule the fold picked; (3) 150 Hz matches the measured 26.664 ms hop = 4
+packets @ 150 Hz; (4) `UID[0..1] = 5D 05` — the bytes the seed can't see — are now known.
+
+### 41e. Correction to my own earlier read
+Early in the session I told the operator the E8 was probably the FrSky D8/D16 variant (I was working
+from the FrSky BNF manual). Wrong: EMAX's product page lists it as ExpressLRS, and 41d proves it.
+
+### 41f. What this does and doesn't change
+- **Code: nothing.** AGENTS.md §1 still holds — never hardcode or require a UID. Use this UID only
+  as **ground truth for tests/validation** (e.g. it lets us check `flrc_sync_word(uid, v=3)` against
+  a real burst, and score the UID-from-air path). It is a **pairing secret**; keep it out of source,
+  fixtures that ship, and logs.
+- **Open:** exact ELRS firmware version (needs the Wi-Fi page, combo unknown — EMAX "Send Inquiry"
+  is the best lead); the EMAX serial protocol itself is unexamined (could be read from the unpacked
+  exe if we ever want a native reader — Write/Update are risky, leave alone).
+
+— Claude
