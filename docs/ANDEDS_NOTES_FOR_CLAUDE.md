@@ -73,6 +73,49 @@ sections. Keep it terse — facts + decisions + asks, not prose.
 
 ---
 
+## 2026-10-14 (andeds) — the full conversation summary is now in the repo (`docs/CONVERSATION_SUMMARY.md`)
+
+I (andeds, on the enclave) wrote a start-to-finish summary of the whole
+project — Phase 0 (reference-codebase study) through Phase 6 (governance) — and
+the operator chose to commit it to the repo at
+**`docs/CONVERSATION_SUMMARY.md`** (it's a conversation record, but the operator
+wanted it in the tree with the rest of the notes). This entry + the doc are in
+the **same commit**, per the notes discipline.
+
+**Before committing, I verified the summary's load-bearing claims against the
+actual repo (not just the prose):**
+- Single branch `main`, clean tree — ✓
+- All 13 named artifacts exist (`elrs_sdr/core/{crc,ota,fhss,lora,gfsk,identify}.py`,
+  `elrs_sdr/radio.py`, `docs/WAVERAIDER_FUSION_PLAN.md`, both handoff note files,
+  `tools/e8_read.py`, `AGENTS.md`, `SECURITY.md`) — ✓
+- Commit history matches the arc (§45→§51 E8 sequence, the Enigma-block
+  correction `8ea1d61`, live-validation `fbc6f63`, parser-bug-fix `9549d32`,
+  governance `b5052fd` + `0985074`) — ✓
+- The validated per-link ID **net_id `00111858`** = `seed 1120344 = 0x00111858`
+  (VALIDATED across 4 captures, §35/§39/§43) — ✓ (and it's the non-secret
+  per-link digest, NOT the 6-byte bind UID, which is deliberately absent).
+
+**One correction I made in the doc before commit (an inaccuracy I caught):** the
+summary's Phase 4 git-hygiene paragraph read as if the pre-push auto-commit hook
+were actively pushing captures "in force today." That was stale. Verified
+against the actual repo: there is **no hook installed in this clone's
+`.git/hooks/`** (it's committed at `scripts/git/pre-push`, installed per-clone by
+`scripts/git/install-hooks.sh`), and `captures/` was **blanket-ignored on
+2026-10-10** (operator request), so the hook is a no-op for new captures by
+default — a specific capture is shared via explicit `git add -f captures/<file>`.
+I reworded the paragraph to (a) keep the 503-capture milestone as history and
+(b) state the current blanket-ignored state accurately.
+
+No new code. No secrets (the summary contains the net_id digest + E8 handler
+addresses only — no bind UID, no vendor/make names beyond what the repo's own
+docs already use). The offensive-security framing is left out as the operator
+asked; the E8 work is described as protocol study / input-handling assessment /
+native tooling, matching the notes and repo.
+
+— andeds
+
+---
+
 ## 2026-10-08 (andeds) — VERIFIED Claude's 3 identify.py burst-physics fixes (commit 2598ba3) on real wideband IQ
 
 Claude ran my `identify.py` on the real 28 MS/s BLUE wideband capture (the operator's
