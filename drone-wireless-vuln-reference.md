@@ -35,6 +35,20 @@
   - [MAVLink Protocol](#mavlink-protocol)
   - [ExpressLRS (ELRS)](#expresslrs-elrs)
   - [FrSky / Crossfire / Other RC Protocols](#frsky--crossfire--other-rc-protocols)
+- [Autopilot & Flight Controller Vulnerabilities](#autopilot--flight-controller-vulnerabilities)
+  - [PX4 Autopilot](#px4-autopilot)
+  - [ArduPilot](#ardupilot)
+- [GPS Spoofing](#gps-spoofing)
+- [Coexistence & Cross-Chip Attacks](#coexistence--cross-chip-attacks)
+  - [Spectra (WiFi ↔ Bluetooth Lateral Movement)](#spectra-wifi--bluetooth-lateral-movement)
+- [Hardware Attack Surface](#hardware-attack-surface)
+  - [Debug Interfaces (JTAG / SWD / UART)](#debug-interfaces-jtag--swd--uart)
+  - [Firmware Extraction Techniques](#firmware-extraction-techniques)
+- [Known Drone Hardware Profiles](#known-drone-hardware-profiles)
+- [Consumer Drone Default Security Posture](#consumer-drone-default-security-posture)
+  - [Parrot (Anafi / Bebop / AR.Drone)](#parrot-anafi--bebop--ardrone)
+  - [Toy-Grade Drones (Tello, Syma, Hubsan)](#toy-grade-drones-tello-syma-hubsan)
+- [Drone Attack Methodology](#drone-attack-methodology)
 - [Tooling Reference](#tooling-reference)
   - [WiFi Tools](#wifi-tools)
   - [Bluetooth / BLE Tools](#bluetooth--ble-tools)
@@ -77,6 +91,18 @@
 | **CVE-2023-6951** | DJI WiFi | Weak WPA2 credentials | Network access | WiFi range | User interaction | Unknown |
 | N/A | MAVLink v1/v2 | Unencrypted telemetry | **Hijack** / inject | Radio range | No | Multiple |
 | N/A | ExpressLRS 1.x/2.x | Binding phrase leak | **Hijack** | LoS RF range | No | Yes |
+| **CVE-2026-1579** | PX4 Autopilot | MAVLink shell cmd exec | **RCE** (CVSS 9.8) | Radio range | No (no signing) | Unknown |
+| **CVE-2026-86097** | PX4 Autopilot | param file NULL ptr deref | **DoS** (crash) | Shell access | Yes | Unknown |
+| **CVE-2026-102808** | PX4 Autopilot | sd_stress malloc overflow | **DoS** (crash) | Shell access | Yes | Unknown |
+| **CVE-2026-77812** | DJI (multiple) | BLE WiFi credential leak | Credential theft | BLE range | No | Unknown |
+| **CVE-2019-3944** | Parrot Anafi | WiFi deauth susceptibility | **DoS** | WiFi range | No | Yes |
+| **CVE-2019-3945** | Parrot Anafi | SDK date field crash | **DoS** (web server) | WiFi range | No | Yes |
+| N/A | Parrot Bebop/AR.Drone | Open WiFi / Telnet root | **Full compromise** | WiFi range | No | Yes |
+| N/A | Ryze Tello | No default WiFi password | Network access | WiFi range | No | N/A |
+| N/A | GPS (civilian L1) | GPS spoofing | **Diversion/Hijack** | SDR range | No | Yes |
+| N/A | SiK Radio (433/915 MHz) | NetID sniff + injection | **Hijack** | Radio range | No | Yes |
+| **CVE-2020-12313** | Intel WiFi (AX200/AX210) | Adjacent-access escalation | **Priv Esc** | WiFi range | No | Unknown |
+| **CVE-2022-21212** | Intel WiFi (AX200/AX210) | Input validation DoS | **DoS** | WiFi range | No | Unknown |
 
 ---
 
@@ -250,6 +276,50 @@ The ESP32 is extremely common in hobby drones, companion computers, and DIY dron
 #### BluFi Weaknesses (No CVE assigned)
 
 NCC Group reported memory corruption and cryptographic weaknesses in the BluFi WiFi provisioning component. Espressif declined to issue CVEs.
+
+---
+
+### Intel WiFi (AX200 / AX210)
+
+Intel WiFi adapters appear in ground station laptops, companion computers, and some embedded platforms.
+
+#### CVE-2020-12313 — Privilege Escalation (INTEL-SA-00402)
+
+- **Impact:** Privilege escalation via adjacent access
+- **Affected:** Intel PROSet/Wireless WiFi before v21.110
+- **Auth required:** No — unauthenticated, adjacent range
+- **Note:** Part of a broader Intel WiFi advisory covering multiple CVEs
+
+#### CVE-2022-21212 — Input Validation DoS
+
+- **Impact:** Denial of service via improper input validation
+- **Affected:** AX200 and AX210 firmware
+- **Auth required:** No — adjacent access
+
+#### CVE-2021-0071 — UEFI Privilege Escalation
+
+- **Impact:** Privilege escalation via adjacent access in PROSet/Wireless WiFi UEFI
+- **Affected:** AX200 and AX210 firmware before v22.40
+
+#### Linux iwlwifi Driver Issues (2025)
+
+Recent kernel CVEs in the iwlwifi driver are mostly stability/DoS issues, not RCE:
+
+| CVE | Impact | Detail |
+|---|---|---|
+| CVE-2025-38656 | Use-after-free (DoS) | Lost error code during DVM startup |
+| CVE-2025-21930 | Instability | Commands sent to unresponsive firmware |
+| CVE-2025-71226 | PTP failure | Missing callback in PTP clock registration |
+
+---
+
+### Synaptics (SYN43xxx)
+
+Synaptics WiFi/BT combo chips are used in newer DJI drones (Mavic 3 Pro, Mini 3).
+
+- **SYN43752A2XKUBG:** WiFi 802.11ax + Bluetooth 5.1 + FM receiver (found in Mavic 3 Pro per iFixit teardown)
+- **SYN43456PXKUBG:** WiFi 802.11ac + Bluetooth 5 + FM receiver (found in Mini 3 per iFixit teardown)
+- **Security research:** No public CVEs specific to these Synaptics parts as of this writing. However, Synaptics acquired Broadcom's wireless IoT business, so the firmware lineage may share code with the BCM43xx family — Broadcom-era vulnerabilities may be worth investigating on these chips.
 
 ---
 
@@ -458,6 +528,13 @@ Nordic's nRF52 series is widely used in BLE peripherals, drone RC receivers, and
 
 ### DJI WiFi & DroneID
 
+#### CVE-2026-77812 — BLE WiFi Credential Leak (2026)
+
+- **Impact:** WiFi credentials sent in cleartext over Bluetooth Low Energy
+- **Mechanism:** DJI drones transmit WiFi SSID and password over BLE during certain operations; an attacker within BLE range can passively sniff and recover credentials
+- **Affected:** Mini, Mavic, and Air series (specific models TBD)
+- **CTF relevance:** Passive attack — just sniff BLE traffic near the drone to get WiFi credentials, then connect to the drone's WiFi network
+
 #### CVE-2023-6951 — Weak WiFi Credentials
 
 - **CVSS:** 6.6 (Medium)
@@ -512,8 +589,8 @@ MAVLink is the dominant telemetry/command protocol for open-source drone platfor
 #### Transport Layers
 
 MAVLink runs over multiple transports — each is an attack surface:
-- **Serial radio (SiK 433/915 MHz):** No encryption, NetID can be sniffed
-- **WiFi (UDP):** Standard WiFi attacks apply
+- **Serial radio (SiK 433/915 MHz):** No encryption on standard SiK firmware (Si1000 CPU cannot support it). NetID can be sniffed from traffic and used to inject packets. RFD900+ models have a stronger CPU with beta AES encryption firmware — verify current status. Anyone with a radio using the same NetID can disarm a quadcopter remotely.
+- **WiFi (UDP):** Standard WiFi attacks apply; MAVLink typically runs on UDP ports 14550/14555
 - **Bluetooth:** Standard BT/BLE attacks apply
 - **LTE/cellular:** Harder to attack but not immune
 
@@ -548,6 +625,317 @@ ExpressLRS is a popular open-source RC link protocol for FPV drones.
 - **TBS Crossfire (CRSF):** No encryption over the air; binding phrase is the only security
 - **nRF24L01-based links:** Toy-grade drones often use nRF24L01 2.4 GHz with no encryption or rolling codes — fully replayable
 - **CTF relevance:** For toy/hobby drones, SDR capture + replay is often sufficient. For ELRS/Crossfire, the binding phrase is the target.
+
+---
+
+## Autopilot & Flight Controller Vulnerabilities
+
+### PX4 Autopilot
+
+PX4 is one of the two dominant open-source autopilot stacks (the other being ArduPilot). It runs on flight controllers like Pixhawk and is used in commercial and research drones.
+
+#### CVE-2026-1579 — MAVLink Remote Command Execution (CRITICAL)
+
+- **CVSS:** 9.8
+- **Impact:** Arbitrary shell command execution without authentication
+- **Root cause:** When MAVLink message signing is not enabled (the default), anyone with access to the MAVLink interface can execute shell commands on the flight controller
+- **Affected:** PX4 v1.16.0 and likely earlier
+- **CISA advisory:** ICSA-26-090-02
+- **CWE:** CWE-306 (Missing Authentication for Critical Function)
+- **CTF relevance:** CRITICAL — this is the single most impactful finding for an open-source drone CTF. If the drone runs PX4 with default settings (no MAVLink signing), you can get a shell on the flight controller over any MAVLink transport (WiFi, serial radio, Bluetooth). From there: arm/disarm motors, change waypoints, modify parameters, exfiltrate data.
+
+#### CVE-2026-86097 — Parameter File NULL Pointer Dereference
+
+- **Impact:** Flight controller crash (DoS)
+- **Root cause:** `param select` and `param select-backup` commands accept empty path arguments, causing NULL pointer dereference
+- **Requires:** Shell access (via MAVLink or serial console)
+
+#### CVE-2026-102808 — sd_stress Malloc Overflow
+
+- **Impact:** Flight controller crash (DoS)
+- **Root cause:** The `-b` byte count parameter is parsed without validation before being passed to `malloc()` and `memset()`
+- **Requires:** Shell access
+
+#### CVE-2026-102809 — file2 Stack Overflow
+
+- **Impact:** Flight controller crash (DoS)
+- **Root cause:** Excessively large value to `-c` option triggers stack overflow
+- **CVSS:** 6.5
+- **Requires:** Shell access
+
+### ArduPilot
+
+ArduPilot is the other major open-source autopilot. No specific CVEs were found in this research, but ArduPilot inherits all MAVLink protocol weaknesses documented in the [MAVLink Protocol](#mavlink-protocol) section. ArduPilot's default configuration does not enable MAVLink signing.
+
+---
+
+## GPS Spoofing
+
+GPS spoofing is adjacent to wireless chipset attacks but highly relevant in drone CTFs — civilian GPS (L1 C/A) has no authentication.
+
+### Attack Mechanism
+
+1. **Signal generation:** Attacker generates counterfeit GPS signals using an SDR (HackRF, BladeRF, USRP)
+2. **Signal overpowering:** Fake signals are transmitted at higher power than genuine satellites
+3. **Receiver lock:** Drone's GPS receiver locks onto the spoofed signals
+4. **Position manipulation:** Attacker controls the drone's perceived position, velocity, and time
+
+### Research Findings
+
+| Study | Year | Key Finding |
+|---|---|---|
+| Sathaye et al. (USENIX Security) | 2022 | Full takeover requires real-time signal manipulation; simple diversion is easier |
+| "Tractor Beam" (ACM TOPS) | 2019 | Exploits drone failsafe mechanisms (RTH) to redirect aircraft by spoofing the "home" position |
+| Scientific Reports (Nature) | 2026 | Real-time spoofing demonstrated with HackRF in outdoor trials; also developed telemetry-based detection |
+| TechRxiv (Russia-Ukraine analysis) | 2025 | Battlefield GPS spoofing documented at scale; single-constellation reliance is a key weakness |
+
+### Attack Modes
+
+- **Diversion:** Shift the drone's perceived position to make it fly off course
+- **Geofence manipulation:** Spoof position to trigger or bypass geofence boundaries
+- **RTH hijack:** Spoof the "home" coordinates so Return-to-Home flies to attacker's location
+- **Time spoofing:** Corrupt GPS time to break time-dependent protocols (MAVLink timestamps, log integrity)
+
+### Tools
+
+- **gps-sdr-sim:** Open-source GPS signal simulator for HackRF/BladeRF
+- **HackRF One:** Transmit spoofed GPS signals (requires appropriate licensing/authorization)
+- **GNSS-SDR:** Software-defined GPS receiver for analysis and testing
+
+### CTF Relevance
+
+GPS spoofing is often a CTF category of its own. Look for:
+- Drones using single-constellation GPS (no GLONASS/Galileo cross-check)
+- No IMU-based spoofing detection
+- RTH failsafe that can be exploited by position spoofing
+
+---
+
+## Coexistence & Cross-Chip Attacks
+
+### Spectra (WiFi ↔ Bluetooth Lateral Movement)
+
+- **Discovered by:** Jiska Classen and Francesco Gringoli (2020)
+- **Presented at:** Black Hat USA / DEF CON
+- **Impact:** Privilege escalation between WiFi and Bluetooth chips on combo hardware
+
+#### How It Works
+
+Modern combo chips (Broadcom, Cypress, etc.) share spectrum via "coexistence" mechanisms. Spectra exploits this:
+
+1. **Shared RAM:** Bluetooth and WiFi firmware share a RAM region. Writes from one side are immediately visible to the other.
+2. **Escalation path:** Attacker gains code execution on the Bluetooth chip (e.g., via BrakTooth or BlueBorne), then writes to shared RAM to achieve code execution on the WiFi chip.
+3. **OS escalation:** From the WiFi chip, existing WiFi firmware → kernel escalation techniques apply (e.g., Broadpwn-style).
+
+#### Attack Chain Example
+
+```
+BLE exploit (BrakTooth/BlueBorne)
+  → Code execution on BT firmware
+    → Write to shared coexistence RAM
+      → Code execution on WiFi firmware
+        → Kernel exploit via WiFi driver
+          → Full device compromise
+```
+
+#### Affected Hardware
+
+- Broadcom and Cypress combo WiFi/BT chips (confirmed)
+- Other vendors' combo chips may have similar shared-memory architectures
+- **Relevance to drones:** Any drone using a Broadcom/Cypress/Synaptics combo chip (including newer DJI models) may be vulnerable to this cross-chip escalation
+
+#### Additional Coexistence Effects
+
+- Denial of service on spectrum access (jam WiFi from BT side or vice versa)
+- Information disclosure across chip boundaries
+- Kernel panics on Android/iOS during WiFi firmware code execution
+
+---
+
+## Hardware Attack Surface
+
+### Debug Interfaces (JTAG / SWD / UART)
+
+Physical access to debug interfaces can bypass all wireless security. These are highly relevant in CTFs where you may have hands-on access to hardware.
+
+#### Interface Comparison
+
+| Interface | Pins | Speed | Capability | Common On |
+|---|---|---|---|---|
+| **JTAG** | 4-20 | Medium | Full debug, flash R/W, boundary scan | Larger SoCs, FPGAs |
+| **SWD** | 2 (SWDIO + SWCLK) | Fast | Full debug, flash R/W (ARM only) | ARM Cortex-M (STM32, nRF52, etc.) |
+| **UART** | 2 (TX + RX) | Variable | Serial console, bootloader access, sometimes shell | Almost everything |
+
+#### Common Obstacles
+
+- **Unlabeled pads:** Most consumer drones have debug pads with no silkscreen labels
+- **Locked debug ports:** Readout protection (RDP), APPROTECT, secure boot
+- **Epoxy potting:** PCBs covered in epoxy to prevent probing
+- **Removed test points:** Production boards may have debug pads depopulated
+- **Multiplexed signals:** Debug pins shared with other functions
+
+#### Techniques
+
+1. **Visual inspection:** Look for unpopulated headers, test points, labeled pads
+2. **Continuity testing:** Trace PCB connections from known chip pins to test points
+3. **JTAGulator:** Automated pin identification for JTAG/SWD
+4. **Voltage glitching:** Bypass readout protection (see nRF52 APPROTECT, CVE-2020-27211)
+5. **UART discovery:** Common baud rates (115200, 921600); look for boot messages
+
+#### Tools
+
+| Tool | Purpose |
+|---|---|
+| **JTAGulator** | Automated JTAG/SWD pin discovery |
+| **OpenOCD** | Open-source debug server for JTAG/SWD |
+| **Flipper Zero** | JTAG/SWD interface with DAP support |
+| **Bus Pirate** | Multi-protocol debug interface |
+| **Logic analyzer** | Signal identification and protocol decode |
+| **ChipWhisperer** | Voltage glitching for readout protection bypass |
+
+### Firmware Extraction Techniques
+
+#### Methods (in order of increasing difficulty)
+
+1. **UART bootloader:** Connect to UART, interrupt boot, dump flash via bootloader commands
+2. **SWD/JTAG read:** Connect debugger, read flash contents directly (if not read-protected)
+3. **SPI flash clip:** Attach test clip directly to SPI flash chip, read with flashrom or Bus Pirate
+4. **Firmware update capture:** Intercept OTA update traffic, extract firmware image
+5. **Chip-off:** Desolder flash chip, read in external programmer
+6. **Fault injection:** Glitch readout protection during boot (CVE-2020-27211 technique for nRF52)
+
+#### What to Do With Extracted Firmware
+
+- **binwalk:** Extract filesystem, identify compression, find embedded keys
+- **Ghidra / IDA Pro:** Disassemble and reverse-engineer firmware
+- **strings:** Find hardcoded credentials, URLs, API keys
+- **entropy analysis:** Identify encrypted/compressed sections
+- **emulation (QEMU/Unicorn):** Run firmware in emulator for dynamic analysis
+
+#### Recent Research
+
+A 2026 arXiv paper evaluated firmware extraction on three Holy Stone drone platforms using SPI flash reading, SWD/JTAG, UART boot messages, and clip-based methods. Key finding: consumer drones typically have unlabeled debug pads and undocumented memory layouts, but rarely enable readout protection.
+
+---
+
+## Known Drone Hardware Profiles
+
+Mapping specific drone models to their wireless chipsets helps target the right exploits.
+
+| Drone Model | WiFi Chip | BT Chip | Control Protocol | Source |
+|---|---|---|---|---|
+| **DJI Mavic 3 Pro** | Synaptics SYN43752 (802.11ax) | Integrated (BT 5.1) | OcuSync 3+ | iFixit teardown |
+| **DJI Mini 3** | Synaptics SYN43456 (802.11ac) | Integrated (BT 5) | OcuSync 3 | iFixit teardown |
+| **DJI Spark** | Qualcomm/Atheros AR1021X | Unknown | Enhanced WiFi | EDN teardown |
+| **DJI Mini SE** | Unknown (WiFi-based) | Unknown | Enhanced WiFi | Security research |
+| **Parrot Anafi** | Unknown (WiFi AP mode) | Unknown | WiFi direct | Tenable advisory |
+| **Parrot Bebop 2** | Unknown (WiFi AP mode) | N/A | WiFi direct | Community research |
+| **Parrot AR.Drone** | Atheros AR9271 (likely) | N/A | WiFi direct (open) | Community teardowns |
+| **Ryze Tello** | Unknown (WiFi AP mode) | N/A | WiFi direct | Which? testing |
+| **Generic ArduPilot** | Varies (ESP32/WiFi module) | Varies | MAVLink over WiFi/serial | Platform-dependent |
+| **Generic PX4** | Varies | Varies | MAVLink over WiFi/serial | Platform-dependent |
+| **FPV (ELRS)** | N/A | N/A | ExpressLRS 2.4GHz/900MHz | Community |
+| **FPV (Crossfire)** | N/A | N/A | TBS CRSF 868/915MHz | Community |
+| **Toy drones (nRF24)** | N/A | N/A | nRF24L01 2.4GHz | Community |
+
+**Note:** Chipset identification is tentative for many models — iFixit and EDN teardowns are the most reliable sources. Confirm by visual inspection or FCC filings when possible.
+
+---
+
+## Consumer Drone Default Security Posture
+
+### Parrot (Anafi / Bebop / AR.Drone)
+
+Parrot drones historically have some of the weakest wireless security of any major drone brand.
+
+#### AR.Drone (Legacy)
+
+- **WiFi:** Open network (no password by default)
+- **Telnet:** Root shell accessible over WiFi with no authentication
+- **FTP:** Open FTP server for media access
+- **Impact:** Complete takeover — connect to WiFi, telnet in as root
+- **Status:** End of life, but commonly seen in CTFs and security labs
+
+#### Bebop / Bebop 2
+
+- **WiFi:** WPA2 with weak/predictable default passwords
+- **No PMF:** Cannot enable 802.11w Protected Management Frames
+- **Vulnerable to:** Deauthentication, ARP cache poisoning, buffer overflow, replay attacks
+- **FTP:** Media accessible via FTP
+
+#### Anafi
+
+- **CVE-2019-3944:** Deauthentication vulnerability — forged deauth frames disconnect controller (fixed in firmware 1.5.0)
+- **CVE-2019-3945:** Malformed date in SDK command crashes the web server
+- **WiFi password:** Can be set, but default configuration may use weak/predictable passwords
+- **Testing results:** KTH thesis found 7/10 DoS attempts succeeded against the Anafi
+
+### Toy-Grade Drones (Tello, Syma, Hubsan)
+
+#### Ryze Tello (DJI-powered)
+
+- **WiFi:** Supports password but setup process does not prompt user to set one
+- **Default state:** Open WiFi network
+- **Camera:** Unencrypted video stream accessible to anyone on the network
+- **DJI response:** "Tello supports communication encryption, and users can set up passwords" — but the default is open
+
+#### Syma / Hubsan / Generic Toy Drones
+
+- **WiFi:** No password protection on tested models (Which? lab 2021)
+- **No encryption:** Camera feeds transmitted in cleartext
+- **Control link:** Many use nRF24L01 with no encryption or rolling codes — fully replayable with SDR
+- **App security:** Controller apps often lack TLS; some transmit telemetry in cleartext
+
+---
+
+## Drone Attack Methodology
+
+A structured approach for assessing drone wireless security in a CTF context. Adapted from the Lockheed Martin cyber kill chain for cyber-physical drone systems.
+
+### Phase 1: Reconnaissance
+
+| Action | Tools | Output |
+|---|---|---|
+| Spectrum scan (2.4 GHz, 5 GHz, 433/915 MHz) | RTL-SDR, HackRF, `hackrf_sweep` | Active frequencies, modulation types |
+| WiFi AP enumeration | `airodump-ng`, `kismet` | SSIDs, BSSIDs, channels, encryption type |
+| BLE device scan | `bluetoothctl`, `bettercap`, `hcitool lescan` | BLE addresses, service UUIDs, device names |
+| DroneID capture (DJI) | `gr-dji`, RTL-SDR | Drone position, pilot position, serial number |
+| MAVLink traffic capture | Wireshark (MAVLink dissector), `tcpdump` | System ID, component ID, message types |
+| Identify drone model | Visual + RF signature | Narrow chipset and protocol possibilities |
+
+### Phase 2: Vulnerability Identification
+
+| Check | Method | What You're Looking For |
+|---|---|---|
+| WiFi encryption type | `airodump-ng` output | Open/WEP/WPA2; presence of PMF |
+| Default credentials | Known defaults for model | Tello (open), Bebop (weak), Parrot AR.Drone (none) |
+| MAVLink signing | Capture MAVLink traffic | Unsigned packets = full injection capability |
+| BLE services | GATT enumeration | Writable characteristics, provisioning services |
+| Firmware version | MAVLink AUTOPILOT_VERSION, BLE device info | Map to known CVEs |
+| Protocol version | ELRS sync packets, MAVLink header | ELRS 1.x/2.x vs 3.x, MAVLink v1 vs v2 |
+
+### Phase 3: Exploitation
+
+| Target | Primary Attack | Fallback |
+|---|---|---|
+| **WiFi-controlled drone (open)** | Connect directly, access telnet/FTP/API | Deauth + reconnect |
+| **WiFi-controlled drone (WPA2)** | PMKID capture + crack, or deauth + handshake | Default password, Kr00k if Broadcom/Cypress |
+| **DJI (Enhanced WiFi)** | CVE-2026-78306 (BT command injection) | WiFi MitM on Enhanced WiFi models |
+| **DJI (OcuSync)** | CVE-2026-78306 (BT), CVE-2026-77812 (BLE cred leak) | DroneID passive recon |
+| **MAVLink drone (PX4)** | CVE-2026-1579 (shell via MAVLink) | MAVLink command injection (unsigned) |
+| **MAVLink drone (ArduPilot)** | MAVLink injection (unsigned default) | Parameter tampering, waypoint override |
+| **ELRS 1.x/2.x FPV drone** | Binding phrase recovery + link hijack | Jamming |
+| **Toy drone (nRF24)** | SDR capture + replay | Jamming |
+| **Any drone (GPS)** | GPS spoofing (gps-sdr-sim + HackRF) | — |
+
+### Phase 4: Post-Exploitation
+
+Once you have access:
+
+- **Data exfiltration:** Flight logs, GPS tracks, camera feeds, stored media
+- **Persistent access:** Modify firmware, install backdoor, change credentials
+- **Lateral movement:** WiFi → BT via Spectra coexistence, MAVLink → companion computer
+- **Physical impact:** Change waypoints, disable geofence, modify failsafe behavior, alter PID gains
 
 ---
 
@@ -671,6 +1059,17 @@ Alphabetical index of all CVEs referenced in this document.
 | CVE-2026-68309 | [MediaTek](#mediatek-mt76xx) | mt76 driver NULL ptr deref DoS |
 | CVE-2026-78306 | [DJI Bluetooth](#dji-bluetooth-vulnerabilities) | DJI BT command injection |
 | CVE-2026-81507 | [ESP32](#espressif-esp32) | ESP32 BT Classic L2CAP OOB read |
+| CVE-2026-86097 | [PX4 Autopilot](#px4-autopilot) | PX4 param file NULL ptr deref DoS |
+| CVE-2026-102808 | [PX4 Autopilot](#px4-autopilot) | PX4 sd_stress malloc overflow DoS |
+| CVE-2026-102809 | [PX4 Autopilot](#px4-autopilot) | PX4 file2 stack overflow DoS |
+| CVE-2026-1579 | [PX4 Autopilot](#px4-autopilot) | PX4 MAVLink shell command RCE |
+| CVE-2026-77812 | [DJI WiFi](#dji-wifi--droneid) | DJI BLE WiFi credential leak |
+| CVE-2019-3944 | [Parrot](#parrot-anafi--bebop--ardrone) | Parrot Anafi deauth DoS |
+| CVE-2019-3945 | [Parrot](#parrot-anafi--bebop--ardrone) | Parrot Anafi web server crash |
+| CVE-2020-12313 | [Intel WiFi](#intel-wifi-ax200--ax210) | Intel WiFi privilege escalation |
+| CVE-2021-0071 | [Intel WiFi](#intel-wifi-ax200--ax210) | Intel WiFi UEFI priv esc |
+| CVE-2022-21212 | [Intel WiFi](#intel-wifi-ax200--ax210) | Intel WiFi input validation DoS |
+| CVE-2025-38656 | [Intel WiFi](#intel-wifi-ax200--ax210) | iwlwifi use-after-free DoS |
 
 ---
 
@@ -685,11 +1084,22 @@ Alphabetical index of all CVEs referenced in this document.
 - [KRACK — Mathy Vanhoef (2017)](https://www.csoonline.com/article/3233290/security/krack-researcher-discovers-flaws-in-wpa2-authentication.html)
 - [FragAttacks — Mathy Vanhoef (2021)](https://securityaffairs.com/posts/wifi-fragattacks)
 - [Kr00k — ESET Research (2020)](https://en.wikipedia.org/wiki/Kr00k)
+- [Spectra — Coexistence Attacks on WiFi/BT Combo Chips (2020)](https://arxiv.org/pdf/2112.05719)
+- [Frankenstein — BT Firmware Fuzzing for Escalation (2020)](https://arxiv.org/pdf/2006.09809)
 - [DJI DroneID — NDSS 2023 (Schiller et al.)](https://www.ndss-symposium.org/wp-content/uploads/2023-217-paper.pdf)
 - [DJI Enhanced WiFi Hijacking (2023)](https://arxiv.org/pdf/2309.05913)
 - [MAVLink Protocol Survey](https://arxiv.org/pdf/1906.10641)
 - [MAVLink Vulnerability Analysis](https://www.researchgate.net/publication/326860779_Empirical_Analysis_of_MAVLink_Protocol_Vulnerability_for_Attacking_Unmanned_Aerial_Vehicles)
 - [MAVLink Hijacking via Legitimate Commands (2026)](https://arxiv.org/html/2606.22289v1)
+- [GPS Spoofing and Takeover of UAVs — USENIX Security 2022](https://www.usenix.org/system/files/sec22-sathaye.pdf)
+- [Tractor Beam — Safe-Hijacking of Consumer Drones (ACM TOPS 2019)](https://dl.acm.org/doi/10.1145/3309735)
+- [GPS Spoofing Detection via Telemetry — Scientific Reports 2026](https://www.nature.com/articles/s41598-026-53481-9)
+- [GPS Spoofing in Russia-Ukraine War — TechRxiv 2025](https://www.techrxiv.org/doi/full/10.36227/techrxiv.175203757.71749390/v1)
+- [Drone Firmware Extraction Methodology — arXiv 2026](https://arxiv.org/html/2605.11040v1)
+- [Drone Hacking Part 1: Firmware Dumping — Neodyme](https://neodyme.io/en/blog/drone_hacking_part_1/)
+- [Electronic Warfare and UAV Avionics Survey (2025)](https://arxiv.org/pdf/2504.07358)
+- [SoK: Security and Privacy in the Age of Drones](https://arxiv.org/pdf/1903.05155)
+- [RAND: How to Analyze the Cyber Threat from Drones](https://www.rand.org/content/dam/rand/pubs/research_reports/RR2900/RR2972/RAND_RR2972.pdf)
 - [InternalBlue — Bluetooth Binary Patching Framework](https://arxiv.org/pdf/1905.00631)
 - [L2Fuzz — BLE L2CAP Fuzzing](https://arxiv.org/pdf/2208.00110)
 - [MUVIDS — MAVLink IDS (NDSS AutoSec 2021)](https://www.ndss-symposium.org/wp-content/uploads/autosec2021_23036_paper.pdf)
@@ -702,15 +1112,26 @@ Alphabetical index of all CVEs referenced in this document.
 - [CERT/CC VU#317277 — BLEEDINGBIT](https://kb.cert.org/vuls/id/317277)
 - [CERT/CC VU#647177 — BIAS](https://kb.cert.org/vuls/id/647177/)
 - [CISA ICS-ALERT-20-063-01 — SweynTooth](https://www.cisa.gov/news-events/ics-alerts/ics-alert-20-063-01)
+- [CISA ICSA-26-090-02 — PX4 Autopilot](https://www.cisa.gov/news-events/ics-advisories/icsa-26-090-02)
+- [Intel WiFi Advisory INTEL-SA-00402](https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-00402.html)
 - [TI Security Advisory SWRZ164A](https://www.ti.com.cn/document-viewer/cn/lit/html/SWRZ164A/GUID-D067D4AC-3D0C-4D5E-B009-ADA6D7AB36FF)
+- [Tenable TRA-2019-22 — Parrot Anafi DoS](https://www.tenable.com/security/research/tra-2019-22)
 - [NVD (National Vulnerability Database)](https://nvd.nist.gov/)
 - [OWASP Drone Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Drone_Security_Cheat_Sheet.html)
+
+### Teardowns & Hardware Analysis
+
+- [DJI Mavic 3 Pro Chip ID — iFixit](https://www.ifixit.com/Guide/DJI+Mavic+3+Pro+Chip+ID/161708)
+- [DJI Mini 3 Chip ID — iFixit](https://www.ifixit.com/Teardown/DJI+Mini+3+Chip+ID/160247)
+- [DJI Spark Teardown — EDN](https://www.edn.com/teardown-dji-spark-drone/)
+- [Parrot Anafi Reverse Engineering — hardbreak.wiki](https://www.hardbreak.wiki/network-analysis/protocols/application-layer/proprietary-protocols/parrot-anafi-drone-reverse-engineering)
 
 ### Tool Documentation & Resources
 
 - [PMKID Attack — hashcat Forum (atom)](https://hashcat.net/forum/post-41646.html)
 - [Bettercap PMKID Walkthrough](https://evilsocket.net:443/2019/02/13/Pwning-WiFi-networks-with-bettercap-and-the-PMKID-client-less-attack/)
 - [awesome-drone-hacking (GitHub)](https://www.context-awesome.com/list/nicholasaleks/awesome-drone-hacking)
+- [Damn Vulnerable Drone — Security Research Platform (GitHub)](https://github.com/bgoldmann/Drone-hijack)
 - [Bluetooth Security Vulnerabilities (GitHub)](https://github.com/Shadow7726/Bluetooth-Security-Vulnerabilities)
 - [DJI Drone RF Security Research (GitHub)](https://github.com/Akshit0203/drone-rf-security-hackrf)
 - [ExpressLRS Security Analysis](https://simonkoeck.com/blog/elrs-security-what-is-possible)
@@ -723,3 +1144,10 @@ Alphabetical index of all CVEs referenced in this document.
 - [MediaTek CVE-2024-20017 Public PoC — CyberInsider](https://cyberinsider.com/mediatek-chip-flaw-exposing-millions-of-devices-gets-public-exploit/)
 - [Nozomi Networks DJI Mavic 3 Research](https://www.nozominetworks.com/blog/dji-mavic-3-drone-research-part-2-vulnerability-analysis)
 - [WiFi/BT Chip Coexistence Bugs — BleepingComputer](https://www.bleepingcomputer.com/news/security/bugs-in-billions-of-wifi-bluetooth-chips-allow-password-data-theft/)
+- [PX4 Autopilot RCE — VPNCentral](https://vpncentral.com/critical-px4-autopilot-flaw-could-let-attackers-send-shell-commands-to-drones/)
+- [Consumer Drone Security Testing — Which? (2021)](https://www.which.co.uk/news/2021/12/which-lab-tests-uncover-security-issues-with-toy-drones)
+- [Spectra Coexistence Attack — HotHardware](https://hothardware.com/news/spectra-security-exploit-side-channel-attack-wi-fi-bluetooth)
+- [Coexistence Attacks on WiFi/BT — The Hacker News](https://thehackernews.com/2021/12/researchers-uncover-new-coexistence.html)
+- [KTH Thesis: Parrot Anafi Penetration Testing](https://kth.diva-portal.org/smash/get/diva2:1484619/FULLTEXT01.pdf)
+- [KTH: DoS Attacks Against Parrot Anafi](https://kth.diva-portal.org/smash/get/diva2:1601435/FULLTEXT01.pdf)
+- [IoActive: Drone Security and Fault Injection](https://www.ioactive.com/wp-content/uploads/2025/05/DroneSec-GGonzalez.pdf)
