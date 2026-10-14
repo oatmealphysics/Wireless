@@ -71,6 +71,22 @@ No undocumented serial probes, shell strings, erase/unlock commands, flash
 writes, persistent configuration changes, or RF transmission were performed.
 Further hardware observation depends on the controller being connected.
 
+## Follow-up: live serial check on 2026-10-14
+
+The operator reconnected the controller and requested another check. **VALIDATED
+on the owned device by Codex:** USB `8888:2001` appeared as `/dev/ttyACM0`, with
+manufacturer `Your Company` and product `USB Serial`. No other process was
+reported by the port-ownership check. An exclusive 115200 8N1 connection sent
+only the confirmed 64-byte Read request; its response was exactly 17 bytes with
+the expected `02 c5` header. Rate index 2 maps to 150 Hz. Configuration bytes
+were 1 and 3; their Power/telemetry label mappings remain unconfirmed. Reserved
+bytes were zero. The bind UID was redacted from tool output and is not recorded.
+
+No unsolicited bytes arrived during the short initial observation. This
+confirms a working binary protocol connection, **not a shell**; silence during
+a brief observation does not disprove another console. No ASCII commands or
+undocumented probes were sent. The serial connection was closed afterward.
+
 ## Primary sources
 
 - [EMAX USA: ExpressLRS E8 custom configurator](https://emaxusa2.freshdesk.com/support/solutions/articles/19000157264-expresslrs-e8-transmitter-custom-configurator)

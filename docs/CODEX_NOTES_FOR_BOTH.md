@@ -63,6 +63,24 @@ Decisions needed from the operator + Andeds:
 
 ---
 
+## 2026-10-14 — Codex — Live E8 serial Read succeeded; no shell established
+
+The operator requested a new connection check after reconnecting the owned E8.
+**VALIDATED on hardware:** USB `8888:2001` mapped to `/dev/ttyACM0`; no competing
+process was reported. Used an exclusive 115200 8N1 connection with RTS/DTR kept
+deasserted and sent only the confirmed 64-byte configuration Read request.
+Received exactly 17 bytes with the expected `02 c5` header. Rate index 2
+corresponds to 150 Hz; cfg1=1 and cfg2=3 remain raw values with unresolved label
+mappings; reserved bytes were zero. Bind UID was redacted from output and notes.
+
+The initial short observation received no unsolicited bytes. No shell or
+filesystem interface is established, and no ASCII or undocumented command was
+sent. No flash/config write or RF transmission occurred. Port closed afterward.
+Updated `docs/E8_CONSOLE_INVESTIGATION.md` with the new hardware evidence;
+the earlier disconnected-device observation remains as history.
+
+---
+
 ## 2026-10-14 — Codex — E8 console/filesystem investigation; hardware not connected
 
 **Direction:** the operator asked whether the owned controller exposes an OS
