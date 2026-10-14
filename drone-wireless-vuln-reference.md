@@ -49,6 +49,15 @@
   - [Parrot (Anafi / Bebop / AR.Drone)](#parrot-anafi--bebop--ardrone)
   - [Toy-Grade Drones (Tello, Syma, Hubsan)](#toy-grade-drones-tello-syma-hubsan)
 - [Drone Attack Methodology](#drone-attack-methodology)
+- [Advanced Chipset Exploitation Techniques](#advanced-chipset-exploitation-techniques)
+  - [Why Wireless Chipsets Are Soft Targets](#why-wireless-chipsets-are-soft-targets)
+  - [Broadcom BCM43xx Firmware Exploitation](#broadcom-bcm43xx-firmware-exploitation)
+  - [Marvell Avastar ThreadX Exploitation](#marvell-avastar-threadx-exploitation)
+  - [ESP32 Bluetooth Firmware Exploitation (BrakTooth)](#esp32-bluetooth-firmware-exploitation-braktooth)
+  - [Qualcomm WLAN Firmware & Driver Exploitation](#qualcomm-wlan-firmware--driver-exploitation)
+  - [Linux WiFi Driver Kernel Exploitation](#linux-wifi-driver-kernel-exploitation)
+  - [Firmware-to-Host Escalation Patterns](#firmware-to-host-escalation-patterns)
+  - [Firmware Reversing & Exploit Dev Toolchain](#firmware-reversing--exploit-dev-toolchain)
 - [Tooling Reference](#tooling-reference)
   - [WiFi Tools](#wifi-tools)
   - [Bluetooth / BLE Tools](#bluetooth--ble-tools)
@@ -939,6 +948,305 @@ Once you have access:
 
 ---
 
+## Advanced Chipset Exploitation Techniques
+
+This section covers the low-level exploitation mechanics of wireless chipset attacks — heap overflows, function pointer overwrites, ROP chains, firmware-to-host escalation, and the properties of embedded targets that make these techniques practical.
+
+### Why Wireless Chipsets Are Soft Targets
+
+Wireless chipset firmware runs on a separate processor (typically ARM Cortex-R4 or Cortex-M) from the main application processor. These embedded environments lack the security mitigations found on modern desktop/mobile CPUs:
+
+| Property | Desktop/Mobile OS | Wireless Chipset Firmware |
+|---|---|---|
+| **ASLR** | Yes — randomized memory layout | **No** — firmware loaded to fixed addresses on every boot |
+| **DEP/NX** | Yes — non-executable data pages | **No** — all RAM is typically RWX (read-write-execute) |
+| **Stack canaries** | Yes (compiler-inserted) | **Rarely** — most firmware compiled without |
+| **Heap hardening** | Safe unlinking, heap cookies | **No** — simple freelists, no integrity checks |
+| **Code signing** | Kernel enforces signed code | **Varies** — some vendors sign firmware, many don't |
+| **Secure boot** | Chain of trust from bootloader | **Rare** on WiFi/BT SoCs |
+
+**Implications for exploitation:**
+- No ASLR means addresses are **deterministic per firmware version** — build a dictionary of gadget addresses, retry until the firmware version matches
+- No DEP means **shellcode runs directly in the heap** — no need for ROP chains in many cases, though ROP is still useful for pivoting
+- No heap hardening means **heap metadata overwrites are trivially exploitable** — no safe unlinking to bypass
+- Firmware is loaded by the host OS on every reset and is often unencrypted, making **static analysis straightforward**
+
+### Broadcom BCM43xx Firmware Exploitation
+
+The BCM43xx family is the most thoroughly researched wireless chipset from an exploitation perspective, thanks to Google Project Zero and Exodus Intelligence.
+
+#### Architecture
+
+- **Processor:** ARM Cortex-R4 (runs all frame processing logic)
+- **OS:** HNDRTE (Broadcom proprietary lightweight RTOS)
+- **Memory:** All RAM is RWX — no DEP, no ASLR
+- **Heap:** Simple freelist allocator with **no safe unlinking and no heap header cookies**
+- **Firmware loading:** Unencrypted, loaded by the host driver on every chip reset
+
+#### Broadpwn Exploitation Mechanics (CVE-2017-9417)
+
+**The bug:** A WMM information element buffer is allocated at 0x2c (44) bytes, but IEs can be up to 0xff (255) bytes. This gives ~211 bytes of controlled overflow.
+
+**Why it's reliable:**
+1. The overflow always lands on the **same heap structure** — no heap feng-shui needed
+2. Addresses are deterministic per firmware build — attacker builds a **per-firmware address dictionary** and retries until the version matches
+3. The WiFi chip scans for APs every few seconds, even in power-saving mode — the **ring buffer fills with attacker-controlled data** automatically
+4. The attacker broadcasts malicious beacons — the victim's chip parses them during background scanning with **zero user interaction**
+
+**Exploitation flow:**
+1. Broadcast crafted WiFi beacons containing oversized WMM IEs
+2. Victim chip processes beacons during background scan
+3. Heap overflow corrupts adjacent heap metadata / structures
+4. Overwritten pointer redirects execution into the ring buffer (which contains attacker's payload)
+5. Payload executes as shellcode directly in RAM (RWX, no DEP)
+6. **Result:** Code execution on the WiFi SoC — from there, escalate to host
+
+**Key insight:** Because the ring buffer continuously fills with beacon data the attacker controls, it serves as a **reliable payload staging area** without needing traditional heap spraying.
+
+#### Project Zero "Over The Air" Exploitation (CVE-2017-0561)
+
+Gal Beniamini's research documented two distinct exploitation paths:
+
+**Part 1 — Firmware heap freelist corruption:**
+- TDLS teardown frame triggers a heap overflow (~25 bytes past buffer boundary)
+- Attacker reverse-engineers the heap allocator to locate the freelist head pointer in RAM
+- Overflow corrupts the freelist — next allocation returns an attacker-controlled address
+- This is a **write-what-where primitive** achieved through heap metadata corruption
+- **Constraint:** Requires attacker and victim on the same WPA2 network
+
+**Part 2 — Host kernel heap overflow via WiFi events:**
+- A separate bug in the host driver's event handler fails to validate the relationship between `total_count` and `pkt_count`
+- Attacker (with WiFi firmware code execution) crafts event frames that trigger a **kernel SLUB heap overflow**
+- The researcher shaped the SLUB heap layout using controllable allocations so the overflow target was predictable
+- **Result:** WiFi firmware code execution → host kernel compromise
+
+**Key takeaway for exploitation:** Broadcom's heap allocator performs no safe unlinking and has no heap cookies — once you have a heap overflow, converting it to code execution is straightforward compared to modern userspace heap exploitation.
+
+### Marvell Avastar ThreadX Exploitation
+
+#### CVE-2019-6496 — Block Pool Overflow (Zero-Click)
+
+**The bug:** Block pool overflow in the WiFi frame parser, triggered during background network scanning.
+
+**Architecture:**
+- **RTOS:** ThreadX (real-time OS — common in embedded WiFi/BT chips)
+- **Heap:** ThreadX block pools — fixed-size allocations with metadata headers
+- **Affected chips:** 88W8787, 88W8797, 88W8801, 88W8897, 88W8997
+- **Found in:** Microsoft Surface, Xbox One, PlayStation 4, Samsung Chromebooks, Galaxy J1, Steam Link
+
+**Why it's zero-click:** The scan parser runs on a **5-minute timer** regardless of whether the device is connected to a network. The victim device scans for networks automatically, parses attacker-controlled probe responses, and hits the overflow — "with nobody touching it."
+
+**Exploitation approach (Denis Selianin / Embedi):**
+1. Reverse-engineer ThreadX memory management wrappers and metadata headers
+2. Overflow corrupts block pool metadata — specifically the **next-free-block pointer**
+3. Attacker controls the location of the next allocation
+4. Next allocation writes attacker data to an arbitrary address → **write-what-where primitive**
+5. Overwrite a function pointer or return address → code execution
+6. Escalation to host is possible via DMA if the host OS permits it
+
+**Key technique:** The ThreadX block pool allocator uses linked lists for free blocks. Overwriting the next-free pointer gives an arbitrary-write primitive — the same class of attack as glibc unlink exploitation, but without any of the mitigations.
+
+### ESP32 Bluetooth Firmware Exploitation (BrakTooth)
+
+#### CVE-2021-28139 — LMP Feature Page Overflow → Function Pointer Hijack
+
+**The bug:** Missing bounds check in the ESP32 Bluetooth library when processing `LMP_feature_response_ext` packets. An attacker can write **8 bytes of arbitrary data** past the Extended Feature Page Table.
+
+**Exploitation mechanics:**
+1. The BT library stores **callback function pointers** within the out-of-bounds offset reachable from the Feature Page Table
+2. Attacker sends a crafted LMP Extended Feature Response with malicious data in the feature bits
+3. The 8-byte overflow overwrites a **stored callback pointer**
+4. The callback is eventually invoked during the normal Bluetooth connection lifecycle
+5. Execution redirects to attacker-controlled address → **arbitrary code execution**
+
+**What makes this practical:**
+- No pairing or authentication required — works against any ESP32 with BT Classic enabled in radio range
+- Firmware addresses are fixed (no ASLR) — callback target can be a known function or shellcode in a controlled buffer
+- Researchers demonstrated **NVRAM erasure** and **disabling both WiFi and Bluetooth** on the target
+
+**Tooling:** The BrakTooth PoC toolkit is [publicly available on GitHub](https://github.com/Matheus-Garbelini/braktooth_esp32_bluetooth_classic_attacks). It requires an ESP32 dev board with custom LMP firmware as the attack platform.
+
+**Attack hardware requirements:**
+- ESP32 development kit (attack transmitter)
+- Custom Link Manager Protocol (LMP) firmware (provided in PoC repo)
+- Computer running the PoC tool
+- Target ESP32 device within Bluetooth range
+
+### Qualcomm WLAN Firmware & Driver Exploitation
+
+Qualcomm's WLAN stack has had multiple memory corruption bugs, though fewer have public exploitation details compared to Broadcom.
+
+#### Key Vulnerability Classes
+
+| CVE | Type | Location | Impact |
+|---|---|---|---|
+| CVE-2019-14114 | Buffer overflow | WLAN firmware GTK IE parsing | RCE — GTK key larger than buffer (CVSS 9.8) |
+| CVE-2019-10546 | Heap overflow | WLAN firmware | RCE — remote, no auth |
+| CVE-2021-1972 | Integer overflow | WLAN firmware (extscan hostlist) | Code exec with elevated privileges |
+| CVE-2026-21385 | Integer overflow → heap corruption | WLAN alignment math | RCE — in CISA KEV catalog (actively exploited) |
+| CVE-2016-5342 | Heap overflow | wcnss_wlan Linux driver | Kernel compromise via /dev/wcnss_wlan |
+
+#### CVE-2026-21385 — Actively Exploited in the Wild
+
+- **In the CISA Known Exploited Vulnerabilities catalog** — confirmed real-world exploitation
+- Integer overflow in alignment calculation during memory allocation
+- Affects QCA WiFi/Ethernet chips
+- Patched in Qualcomm's March 2026 bulletin
+- **CTF relevance:** If the target uses Qualcomm WiFi and hasn't applied the March 2026 patch, this is a live RCE vector
+
+#### QuAlPwn Escalation Pattern (2019)
+
+QuAlPwn demonstrated the full chain on Qualcomm WiFi:
+1. Over-the-air WiFi frame triggers firmware vulnerability
+2. Gain code execution on the WiFi firmware (separate ARM core)
+3. Exploit shared memory / DMA interface to write into host kernel memory
+4. Achieve kernel code execution on the application processor
+5. **Full device compromise from a WiFi frame**
+
+### Linux WiFi Driver Kernel Exploitation
+
+WiFi driver bugs in the Linux kernel are valuable because they can give **kernel-level code execution** on the host processor, bypassing all firmware-level boundaries.
+
+#### Relevant Driver Vulnerability Classes
+
+| Driver | Chipset Family | Example CVEs | Typical Bug Class |
+|---|---|---|---|
+| **brcmfmac** | Broadcom/Cypress | CVE-2019-9500, CVE-2019-9502 | Heap overflow in event/IE processing |
+| **ath9k/ath10k/ath11k** | Qualcomm/Atheros | CVE-2025-39746 | Use-after-free, shutdown races |
+| **iwlwifi** | Intel | CVE-2025-38656, CVE-2023-53524 | Use-after-free, integer overflow |
+| **mt76** | MediaTek | CVE-2026-68309 | NULL ptr deref, HE capability parsing |
+| **mwlwifi** | Marvell | (unnumbered) | Heap overflow in auth path |
+| **rtl8812au** (OOT) | Realtek | CVE-2020-26652 | DoS in nl80211 |
+
+#### Exploitation Pattern: WiFi Frame → Kernel Heap Overflow
+
+1. Attacker sends crafted WiFi management or data frames over the air
+2. The kernel WiFi driver processes the frame in **kernel context**
+3. A length/bounds check is missing — data overflows a **kernel heap buffer (SLUB/SLAB)**
+4. Attacker shapes the heap (spray objects of known size) so the overflow corrupts a **target object**
+5. Target object contains a function pointer (e.g., `sk_buff` operations, file operations, timer callbacks)
+6. Overwritten function pointer redirects execution to attacker-controlled data
+7. **Result:** Kernel code execution from a WiFi frame
+
+#### Key Technique: SLUB Heap Shaping
+
+The Linux SLUB allocator groups same-sized allocations into slabs. To exploit a heap overflow:
+1. Spray objects of the same size as the vulnerable buffer to fill the slab
+2. Free one object to create a "hole" adjacent to the vulnerable buffer
+3. Allocate the target object (with function pointers) into the hole
+4. Trigger the overflow — it corrupts the adjacent target object
+5. Trigger the function pointer call — execution redirected
+
+This technique is well-documented for netfilter (CVE-2024-1086, 99.4% success rate) and applies identically to WiFi driver heap overflows.
+
+### Firmware-to-Host Escalation Patterns
+
+Once you have code execution on a wireless chipset's firmware, the next goal is escalating to the host application processor. There are several documented patterns:
+
+#### Pattern 1: DMA (Direct Memory Access)
+
+- WiFi/BT chips often have DMA access to host memory for transferring frames
+- With firmware code execution, the attacker can **read/write arbitrary host memory via DMA**
+- This bypasses all software-level protections on the host
+- **Mitigation:** IOMMU (if configured) restricts DMA to specific memory regions
+- **Research:** Marvell Avastar exploitation noted that "exploitation of the Wi-Fi device can lead to exploitation of the host application processor in some cases, but this depends on host OS hardening and the availability of DMA"
+
+#### Pattern 2: Malicious Event Injection
+
+- The WiFi chip sends events to the host driver (association results, scan data, firmware status)
+- With firmware control, the attacker crafts **malicious events** that trigger driver bugs
+- Project Zero's Broadcom Part 2: injected event frames trigger a kernel heap overflow in the host driver
+- **This is the most common escalation path** — it doesn't require DMA and works even with IOMMU
+
+#### Pattern 3: Shared Memory / Coexistence (Spectra)
+
+- Combo WiFi/BT chips share RAM between the two radios
+- Compromise one radio → write to shared memory → compromise the other
+- From the WiFi side, the host driver interface may be more permissive
+- **Chain:** BT exploit → shared memory write → WiFi firmware control → host driver exploit
+
+#### Pattern 4: Firmware Update Poisoning
+
+- If the host loads firmware on every chip reset (common for Broadcom), a persistent attacker can:
+  1. Modify the firmware image on the host filesystem
+  2. Chip resets → host loads the backdoored firmware
+  3. Persistent code execution on the wireless chip across reboots
+
+#### Complete Exploitation Chain Example
+
+```
+Attacker broadcasts malicious WiFi beacons
+  → Victim chip processes beacons during background scan
+    → Heap overflow in firmware (no ASLR, no DEP)
+      → Shellcode executes on WiFi SoC (ARM Cortex-R4)
+        → Craft malicious event frames to host driver
+          → Kernel heap overflow in brcmfmac/wl driver
+            → SLUB heap shaping → function pointer overwrite
+              → Kernel code execution on application processor
+                → Full device compromise
+```
+
+**Total interaction required from victim:** Zero. The entire chain is triggered by the victim's chip performing routine background WiFi scans.
+
+### Firmware Reversing & Exploit Dev Toolchain
+
+#### Static Analysis
+
+| Tool | Purpose | Key Workflow |
+|---|---|---|
+| **Ghidra** | Free disassembler/decompiler (NSA) | Load firmware binary, set ARM Cortex-R/M architecture, identify RTOS entry points and heap management functions |
+| **IDA Pro** | Commercial disassembler | Better ARM support for some targets; FLIRT signatures for RTOS libraries |
+| **binwalk** | Firmware extraction | Extract filesystems, identify compression, find embedded binaries |
+| **radare2 / rizin** | Scriptable reverse engineering | Quick firmware triage, string search, cross-references |
+
+#### Dynamic Analysis & Emulation
+
+| Tool | Purpose | Key Workflow |
+|---|---|---|
+| **Frankenstein** | Broadcom/Cypress firmware emulation | Emulate firmware in QEMU user-mode, fuzz with AFL/libFuzzer, find crashes, develop exploits without hardware |
+| **InternalBlue** | Broadcom BT firmware patching & debugging | Inject patches into running firmware via HCI, set breakpoints, read/write firmware memory, live experimentation |
+| **QEMU** | ARM system/user emulation | Emulate firmware for crash analysis; pair with Frankenstein for wireless-specific targets |
+| **Unicorn Engine** | Lightweight CPU emulator | Emulate specific firmware functions for targeted fuzzing |
+
+#### Fuzzing
+
+| Tool | Purpose | Key Workflow |
+|---|---|---|
+| **Frankenstein + AFL** | Coverage-guided firmware fuzzing | Emulate WiFi/BT frame parsers, fuzz with AFL, find heap overflows and crashes |
+| **BrakTooth PoC toolkit** | BT Classic LMP fuzzing | ESP32-based fuzzer for LMP protocol — finds BrakTooth-class bugs |
+| **Bluetooth Fuzzing Framework** | L2CAP/GATT/SMP fuzzing | Protocol-aware fuzzing of BLE stack layers |
+| **wifuzzit / owfuzz** | WiFi frame fuzzing | Send malformed 802.11 frames, monitor for crashes |
+
+#### Exploit Development
+
+| Technique | When to Use | Tool Support |
+|---|---|---|
+| **Direct shellcode** | Firmware target with RWX memory (most chipsets) | Write ARM shellcode, place in ring buffer / heap spray, jump to it |
+| **Function pointer overwrite** | Heap overflow near stored callbacks (BrakTooth pattern) | Identify callbacks in Ghidra, calculate overflow distance |
+| **Heap metadata corruption** | Heap overflow with no safe unlinking (Broadcom, ThreadX) | Overwrite freelist pointer → arbitrary write → code execution |
+| **ROP chain** | When DEP is enabled (rare on chipsets, common on host kernel) | Use ropper/ROPgadget on kernel or firmware binary to find gadgets |
+| **SLUB heap shaping** | Linux kernel driver exploitation | Spray same-size objects, create holes, place target objects adjacent to overflow |
+| **DMA abuse** | Firmware-to-host escalation | From firmware, use DMA engine to read/write host kernel memory |
+
+#### Key References for Exploit Development
+
+| Resource | What It Covers |
+|---|---|
+| [Project Zero: Over The Air Part 1](https://projectzero.google/2017/04/over-air-exploiting-broadcoms-wi-fi_4.html) | Broadcom firmware heap analysis, freelist corruption, TDLS overflow |
+| [Project Zero: Over The Air Part 2](https://projectzero.google/2017/04/over-air-exploiting-broadcoms-wi-fi_11.html) | Host kernel exploitation via malicious WiFi events, SLUB shaping |
+| [Exodus Intelligence: Broadpwn](https://blog.exodusintel.com/2017/07/26/broadpwn/) | WMM IE overflow, ring buffer payload staging, per-firmware address dictionary |
+| [Black Hat: Broadpwn whitepaper](https://blackhat.com/docs/us-17/thursday/us-17-Artenstein-Broadpwn-Remotely-Compromising-Android-And-iOS-Via-A-Bug-In-Broadcoms-Wifi-Chipsets-wp.pdf) | Full technical detail on Broadpwn exploitation chain |
+| [Frankenstein: Advanced Wireless Fuzzing (USENIX)](https://www.usenix.org/system/files/sec20-ruge.pdf) | Firmware emulation, fuzzing, BT escalation targets |
+| [InternalBlue (GitHub)](https://github.com/seemoo-lab/internalblue) | Broadcom BT firmware experimentation framework |
+| [BrakTooth PoC (GitHub)](https://github.com/Matheus-Garbelini/braktooth_esp32_bluetooth_classic_attacks) | ESP32 BT Classic attack toolkit |
+| [Quarkslab: Reversing Broadcom WiFi](https://blog.quarkslab.com/reverse-engineering-broadcom-wireless-chipsets.html) | Firmware analysis, allocator hooking, emulation |
+| [Embedi: Marvell Avastar ThreadX](https://www.bleepingcomputer.com/news/security/vulnerabilities-found-in-highly-popular-firmware-for-wifi-chips/) | ThreadX block pool exploitation, zero-click scan overflow |
+| [HackerNotes Ep. 157: MediaTek WiFi Heap Overflow](https://blog.criticalthinkingpodcast.io/p/hackernotes-ep-157-kernel-driver-exploitation-mediatek-wi-fi-heap-overflow-to-root-shell-with-hypr) | MediaTek mt76 driver kernel exploitation walkthrough |
+| [Coexistence Attacks (arXiv)](https://arxiv.org/pdf/2112.05719) | Cross-chip escalation via shared memory on combo WiFi/BT SoCs |
+| [Awesome Embedded Vuln Research (GitHub)](https://github.com/IamAlch3mist/Awesome-Embedded-Systems-Vulnerability-Research) | Curated links for embedded firmware exploit development |
+
+---
+
 ## Tooling Reference
 
 ### WiFi Tools
@@ -1070,6 +1378,14 @@ Alphabetical index of all CVEs referenced in this document.
 | CVE-2021-0071 | [Intel WiFi](#intel-wifi-ax200--ax210) | Intel WiFi UEFI priv esc |
 | CVE-2022-21212 | [Intel WiFi](#intel-wifi-ax200--ax210) | Intel WiFi input validation DoS |
 | CVE-2025-38656 | [Intel WiFi](#intel-wifi-ax200--ax210) | iwlwifi use-after-free DoS |
+| CVE-2019-6496 | [Marvell Avastar](#marvell-avastar-threadx-exploitation) | ThreadX block pool overflow zero-click RCE |
+| CVE-2019-10546 | [Qualcomm WLAN](#qualcomm-wlan-firmware--driver-exploitation) | Qualcomm WLAN firmware heap overflow RCE |
+| CVE-2019-14114 | [Qualcomm WLAN](#qualcomm-wlan-firmware--driver-exploitation) | Qualcomm WLAN GTK IE buffer overflow RCE |
+| CVE-2021-1972 | [Qualcomm WLAN](#qualcomm-wlan-firmware--driver-exploitation) | Qualcomm WLAN extscan integer overflow |
+| CVE-2026-21385 | [Qualcomm WLAN](#qualcomm-wlan-firmware--driver-exploitation) | Qualcomm WLAN integer overflow RCE (CISA KEV) |
+| CVE-2016-5342 | [Qualcomm WLAN](#qualcomm-wlan-firmware--driver-exploitation) | wcnss_wlan driver heap overflow |
+| CVE-2017-0561 | [Broadcom Exploitation](#broadcom-bcm43xx-firmware-exploitation) | Broadcom TDLS heap overflow RCE |
+| CVE-2023-53524 | [Linux WiFi Drivers](#linux-wifi-driver-kernel-exploitation) | iwlwifi debugfs integer overflow |
 
 ---
 
@@ -1103,6 +1419,16 @@ Alphabetical index of all CVEs referenced in this document.
 - [InternalBlue — Bluetooth Binary Patching Framework](https://arxiv.org/pdf/1905.00631)
 - [L2Fuzz — BLE L2CAP Fuzzing](https://arxiv.org/pdf/2208.00110)
 - [MUVIDS — MAVLink IDS (NDSS AutoSec 2021)](https://www.ndss-symposium.org/wp-content/uploads/autosec2021_23036_paper.pdf)
+- [Project Zero: Over The Air Part 1 — Broadcom WiFi Firmware](https://projectzero.google/2017/04/over-air-exploiting-broadcoms-wi-fi_4.html)
+- [Project Zero: Over The Air Part 2 — Host Kernel Exploitation](https://projectzero.google/2017/04/over-air-exploiting-broadcoms-wi-fi_11.html)
+- [Exodus Intelligence: Broadpwn Technical Analysis](https://blog.exodusintel.com/2017/07/26/broadpwn/)
+- [Black Hat 2017: Broadpwn Whitepaper](https://blackhat.com/docs/us-17/thursday/us-17-Artenstein-Broadpwn-Remotely-Compromising-Android-And-iOS-Via-A-Bug-In-Broadcoms-Wifi-Chipsets-wp.pdf)
+- [BrakTooth: Causing Havoc on Bluetooth Link Manager (ASSET Group)](https://asset-group.github.io/disclosures/braktooth/disclosure.html)
+- [BrakTooth Paper (PDF)](https://asset-group.github.io/papers/BrakTooth.pdf)
+- [Quarkslab: Reverse Engineering Broadcom Wireless Chipsets](https://blog.quarkslab.com/reverse-engineering-broadcom-wireless-chipsets.html)
+- [HackerNotes Ep. 157: MediaTek WiFi Heap Overflow to Root Shell](https://blog.criticalthinkingpodcast.io/p/hackernotes-ep-157-kernel-driver-exploitation-mediatek-wi-fi-heap-overflow-to-root-shell-with-hypr)
+- [CVE-2024-1086: Universal Linux LPE (netfilter/SLUB technique reference)](https://github.com/Notselwyn/CVE-2024-1086)
+- [Awesome Embedded Systems Vulnerability Research](https://github.com/IamAlch3mist/Awesome-Embedded-Systems-Vulnerability-Research)
 
 ### Vendor Advisories & Databases
 
