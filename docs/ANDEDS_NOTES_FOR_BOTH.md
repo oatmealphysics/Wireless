@@ -116,6 +116,59 @@ native tooling, matching the notes and repo.
 
 ---
 
+## 2026-10-14 (andeds) — repo cleanup: removed non-load-bearing junk (201 files), kept DroneSecurity (live DJI dep)
+
+Operator asked to clean up the unused stuff. I investigated what's actually
+referenced before deleting (the standing rule: verify, don't assume), then
+removed, in **one commit**:
+
+**Removed (201 tracked files):**
+- **Build/cache junk** (violates our own "no `__pycache__`/egg-info" rule):
+  `elrs_sdr.egg-info/`, `waveraider/waveraider.egg-info/`, `waveraider/.pytest_cache/`.
+- **`dronewatch/`** (17 files) — the intern's package that was **merged into
+  `elrs_sdr`** and flagged for `git rm` in `SESSION_SUMMARY_2026-10-05.md` but
+  never removed. It re-implements the ELRS DSP instead of reusing
+  `elrs_sdr.core` (a known flaw). Orphaned; only a stale comment referenced it
+  (fixed: `elrs_sdr/webui.py` now says `elrs-sdr webui`, not `dronewatch webui`).
+- **`elrs_frame/`** (3 files) — my old exploit module (the TX-adjacent
+  `elrc_bench_tx.py` + `elrs_rcframe.py`). Not imported by the package/selftest;
+  now folded into the staged-TX plan, so it's parked in git history.
+- **`cpp/`** (16 files) — the C++ demod experiment, incl. the committed **binary**
+  `demod_cli.bin` (a "no binaries" violation). Not referenced by working code.
+- **`gr-ieee802-11/`** (136 files) — vendored GNU-Radio reference clone. The
+  `elrs_sdr/wifi.py` references are **comments only** (the sync-word code was
+  *ported from* it; no runtime/import/build dependency). Stays in git history.
+- **12 root scratch scripts** (`aligned_scan.py`, `analyze_capture.py`,
+  `fhss_scan.py`, `fhss_seed_scan.py`, `find_link.py`, `inject_sweep.py`,
+  `inject_test.py`, `inject_timing.py`, `ref_scan.py`, `scale_bursts.py`,
+  `webui_diag.sh`) + a stray 167-byte `elrs-sdr` file + the `controller.off.test`
+  scratch spectrum dump (a `cmd_spectrum` output pasted to a file — a debug
+  artifact per the pre-merge checklist).
+
+**KEPT (load-bearing — verified before deciding):**
+- **`DroneSecurity/`** (26 files) — NOT junk. `elrs_sdr/fusion.py:303` runs
+  `apps/droneid_json_rx.py` as a **subprocess**, and that script `sys.path`s
+  into `DroneSecurity/src` + `DroneSecurity/_shim` for the NDSS'23 DJI Drone-ID
+  decode chain. Removing it would break the DJI fusion detector. **Kept**, along
+  with `apps/droneid_json_rx.py` (its companion).
+- **`references/e8_protocol_reconstruction.md`** — the E8 protocol study doc
+  (referenced by AGENTS.md).
+
+**Also fixed:** `elrs_sdr/detect.py` docstring still said "the TX gate is a wall"
++ referenced the now-removed `elrc_bench_tx.py` — reworded to the staged framing
++ dropped the dangling ref (consistent with the AGENTS.md/SECURITY.md reword in
+the prior commit).
+
+**Verification:** `python3 -m elrs_sdr.selftest` → **ALL CHECKS PASSED**; import
+check of `elrs_sdr.{detect,fusion,wifi,cli,webui}` + `apps.droneid_json_rx` all
+OK (confirms the kept DJI path is intact). The 8.9G `captures/` was **left
+untouched** (deliberately-ignored raw IQ, not tracked). No `__pycache__` in the
+commit.
+
+— andeds
+
+---
+
 ## 2026-10-14 (andeds) — handoff model changed: 3 agents, notes renamed to _FOR_BOTH, TX is a staged goal (not out-of-scope), QC-001 verified
 
 **The team changed (operator, 2026-10-14).** Codex is now the primary coder;

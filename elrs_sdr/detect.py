@@ -28,11 +28,12 @@ or any acronym/abbreviation of it in notes, code, filenames, or commit messages.
 *drone-protocol* names (ELRS, Crossfire, LoRa, WiFi, DJI, SiK, ...) are the subject
 matter (the links we detect) and are kept.
 
-PASSIVE-ONLY (AGENTS.md §2 — the hard boundary)
+PASSIVE-ONLY, CURRENT PHASE (AGENTS.md §2)
 -----------------------------------------------
 This is a receive-only detector. It measures + classifies what's in the air; it never
-transmits. It must never import, call, or wire in the TX side of `radio.py`
-(`tx_tune`/`tx_stream`) or `elrc_bench_tx.py`. The TX gate is a wall.
+transmits. In the current phase it must never import, call, or wire in the TX side of
+`radio.py` (`tx_tune`/`tx_stream`). (TX is a staged project goal — gated/bench-only
+for now, see AGENTS.md §2.)
 
 HONESTY (AGENTS.md §3)
 ----------------------

@@ -1,9 +1,0 @@
-scapy>=2.5.0
-textual>=0.60.0
-numpy>=1.24
-
-[dev]
-pytest>=8.0.0
-
-[sdr]
-numpy>=1.24

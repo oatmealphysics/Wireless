@@ -11,7 +11,7 @@ Endpoints:
     GET  /api/state     -> {summary, drones:[...], window_s}
     POST /api/window    -> {"seconds": 120}   (0 = all time)
 
-Launched by `dronewatch webui` (see cli.py), which wires up the sources the
+Launched by `elrs-sdr webui` (see cli.py), which wires up the sources the
 operator selected and hands this server the shared TrackTable.
 """
 
