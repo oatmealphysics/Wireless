@@ -10,8 +10,6 @@
 ## Table of Contents
 
 - [Shared Understanding](#shared-understanding)
-- [Lab Hardware Inventory](#lab-hardware-inventory)
-- [Target Drone Acquisition Plan](#target-drone-acquisition-plan)
 - [Phase 1: WiFi-Based Drone Attacks](#phase-1-wifi-based-drone-attacks)
 - [Phase 2: MAVLink / Telemetry Attacks](#phase-2-mavlink--telemetry-attacks)
 - [Phase 3: ELRS / RC Protocol Attacks](#phase-3-elrs--rc-protocol-attacks)
@@ -47,37 +45,6 @@ On game day, the attack team needs to:
 - Can wirelessly exfiltrate data from a GCS running common drone software
 - Have a game-day playbook: see an unknown drone, identify its protocol in <60 seconds, select and launch the right attack
 - All attack tooling is scripted/automated — no fumbling with manual commands under time pressure
-
----
-
-## Lab Hardware Inventory
-
-### Currently Owned
-
-| Item | Role |
-|---|---|
-| **TinyHawk III** | ELRS FPV target drone |
-| **EMAX E8 controller** | ELRS TX — can also be attack TX for ELRS link hijack testing |
-| **FPV headset** | Monitor FPV feed during attacks |
-| **Ettus B205mini** | SDR transceiver — GPS spoofing, custom RF attacks, signal analysis |
-| **Ettus B210** | SDR transceiver — higher bandwidth, full-duplex, simultaneous RX/TX |
-| **Multiple ALFA cards** | Monitor mode WiFi — deauth, packet injection, PMKID capture, rogue AP |
-| **Ubuntu lab machine** | Attack platform — runs all tooling |
-
-### Recommended Acquisitions
-
-These fill gaps in target drone coverage so you can practice against each protocol family you might face.
-
-| Item | Est. Cost | Purpose | Priority |
-|---|---|---|---|
-| **Ryze Tello** | ~$90 | WiFi-controlled target (open by default, DJI SDK) | **HIGH** — cheapest way to practice WiFi drone attacks |
-| **Pixhawk 6C/X mini + telemetry radio** | ~$200-300 | MAVLink target — run ArduPilot or PX4, practice MAVLink injection | **HIGH** — covers the most likely CTF protocol |
-| **SiK 433/915 MHz radio pair** | ~$30-50 | MAVLink telemetry transport — practice NetID sniffing and injection | **HIGH** — pairs with Pixhawk |
-| **ESP32 dev board** | ~$10 | BLE/WiFi target — test BrakTooth, provisioning exploits, NBNS attacks | **HIGH** — dirt cheap, covers many CVEs |
-| **nRF52840 dongle** | ~$15 | BLE sniffer — passive BLE capture, SweynTooth testing | **MEDIUM** |
-| **Parrot Bebop 2 (used)** | ~$50-100 | WiFi target with known vulns (weak WPA2, no PMF, FTP/Telnet) | **MEDIUM** — more interesting than Tello |
-| **Ubertooth One** | ~$120 | Bluetooth Classic sniffing — BlueBorne, KNOB/BIAS lab work | **MEDIUM** |
-| **Toy drone (Syma/Hubsan)** | ~$30-50 | nRF24L01 target — practice SDR replay attacks | **LOW** — good for nRF24 replay but less likely in CTF |
 
 ---
 
