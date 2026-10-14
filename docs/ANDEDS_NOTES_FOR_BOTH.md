@@ -116,6 +116,71 @@ native tooling, matching the notes and repo.
 
 ---
 
+## 2026-10-14 (andeds) — handoff model changed: 3 agents, notes renamed to _FOR_BOTH, TX is a staged goal (not out-of-scope), QC-001 verified
+
+**The team changed (operator, 2026-10-14).** Codex is now the primary coder;
+Claude is the adversarial QC reviewer (+ research); andeds (me) is the
+orchestrator + secondary QC + guiding. There is a shared handoff now, and each
+agent keeps their own rolling notes file, all renamed to `..._FOR_BOTH` since
+we all read each other:
+- **`docs/ANDEDS_NOTES_FOR_BOTH.md`** (this file — was `ANDEDS_NOTES_FOR_CLAUDE.md`)
+- **`docs/CLAUDE_NOTES_FOR_BOTH.md`** (Claude's — was `CLAUDE_NOTES_FOR_ANDEDS.md`)
+- **`docs/CODEX_NOTES_FOR_BOTH.md`** (Codex's — I seeded it from Codex's
+  `docs/NOTES_FOR_BOTH.md`, which I will delete so the name is unambiguous)
+
+This rename (a `git mv`, history preserved) + the governance reword below are in
+**one commit**, per the code+notes discipline. **@Claude:** I can't rename your
+file without stepping on your lane — please `git mv
+docs/CLAUDE_NOTES_FOR_ANDEDS.md docs/CLAUDE_NOTES_FOR_BOTH.md` on your side and
+add a short entry there. **@Codex:** you now own `docs/CODEX_NOTES_FOR_BOTH.md`;
+my andeds entry there (above this line, newest-first) confirms QC-001.
+
+**The TX framing changed (operator, 2026-10-14) — this is the important one.**
+The project's end state **includes transmission**. The current receive-only
+posture is a **phase** (finish passive detect/identify first), *not* the
+mission. So the old "TX is out of scope / a wall" wording in the governance docs
+was describing a *current-phase* posture as if it were the permanent scope — and
+it was misleading. I reworded it in this same change:
+- **`AGENTS.md` §2** — "The TX gate" is now "The TX gate (staged control)": TX is
+  an *intended capability* to be built, deliberately gated/bench-only for the
+  current phase, enabled by explicit human sign-off. **Not** "out of scope."
+- **`SECURITY.md` rule 3** — "The TX gate is a staged control, not a wall": the
+  gate is an in-force control for the current phase (bench-only + human
+  sign-off), to be re-evaluated as the TX phase begins. The "Enforced
+  architecture" section now states the TX path is **not reachable from the
+  passive detector / UI** (the honest current state), with the CLI `tx` command
+  called out as a deliberate gated capability, not a violation.
+- **The current-phase restrictions are UNCHANGED**: bench/owned-only, and no
+  transmit / flash / persistent device change without a human approving that
+  specific change. This is a reword of *intent*, not a loosening of the
+  *current-phase* control. **@Claude: QC that the reword is accurate and does
+  not actually lower the current gate.**
+
+**QC-001 (Codex's finding) — I verified it in the actual code, and I agree it's
+a real enforcement gap.** `elrs_sdr/cli.py:751,754` (the `tx` subcommand) calls
+`RadioDevice.tx_tune`/`tx_stream`; `elrs_sdr/radio.py:880,898` are fully
+implemented UHD TX paths (not stubs); the only gate is the self-asserted
+`--i-am-authorized-to-transmit` flag (`cli.py:738`). So the TX path **is**
+reachable from a CLI flow, gated only by a flag the operator types. Under the
+*old* framing that was a clean §2 violation. Under the *new* framing it's a
+noted-but-deferred weakness: since TX is intentional, the right fix is a proper
+human sign-off mechanism **when we build the TX phase**, not a removal now. I
+recorded this in `docs/CODEX_NOTES_FOR_BOTH.md`. **No implementation change** —
+the TX path stays exactly as-is for now (gated, not exercised).
+
+**What I did NOT do / open items:**
+- I did **not** rename Claude's file (his lane — see above).
+- I did **not** modify any code. No selftest run needed (docs only), but I'll run
+  `elrs_sdr.selftest` before pushing to be safe.
+- The `CONVERSATION_SUMMARY.md` Phase 6 "governance" paragraph still describes the
+  old "hard boundary / TX is a wall" framing. It's a point-in-time record, but if
+  you want it corrected to match the new staged framing, say so and I'll do it in
+  a follow-up commit (I left it as historical for now).
+
+— andeds
+
+---
+
 ## 2026-10-08 (andeds) — VERIFIED Claude's 3 identify.py burst-physics fixes (commit 2598ba3) on real wideband IQ
 
 Claude ran my `identify.py` on the real 28 MS/s BLUE wideband capture (the operator's

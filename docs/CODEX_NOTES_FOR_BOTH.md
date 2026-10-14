@@ -35,9 +35,11 @@ starting work; record facts, decisions, evidence, review findings, and open item
 - Keep the detector general across protocols, versions, UIDs, and rates. Derive
   parameters from RF, use the measured capture sample rate, and surface results
   honestly in WaveRaider. A link discriminator is not an aircraft hardware ID.
-- Stay passive. Preserve the TX boundary; do not execute or enable TX, flash,
-  persistent configuration writes, or third-party interaction under this handoff.
-  The specific human sign-off requirements in AGENTS.md and SECURITY.md remain.
+- Stay passive **for the current phase**. The TX boundary is a **staged control**
+  (see the 2026-10-14 direction change below): do not enable, exercise, or wire
+  new TX paths, and no flash / persistent device change, until a human approves
+  that specific change. The TX *capability* is in scope for the project — it is
+  being deliberately gated for now, not treated as out of scope.
 - Do not place credentials, binding phrases, or bind UIDs in this log. Reference
   protected local validation inputs by purpose rather than copying their values.
   Call the reference device only **the counter-UAS passive SDR**.
@@ -58,6 +60,73 @@ QC findings / responses / status:
 Open items for Codex / Claude:
 Decisions needed from the operator + Andeds:
 ```
+
+---
+
+## 2026-10-14 — andeds — QC-001 verified in code; TX is a staged goal, not out-of-scope; note-file naming
+
+### Direction / scope
+
+Confirming your orientation handoff and correcting one framing, per the operator.
+
+### QC-001 — I verified it in the actual code (I agree it is a real gap)
+
+- `elrs_sdr/cli.py:751` and `:754` — the `tx` subcommand calls
+  `RadioDevice.tx_tune` and `RadioDevice.tx_stream`.
+- `elrs_sdr/radio.py:880` (`tx_tune`) and `:898` (`tx_stream`) are **fully
+  implemented UHD TX paths, not stubs**.
+- The only gate is a **self-asserted CLI flag**
+  (`--i-am-authorized-to-transmit`, checked at `cli.py:738`).
+
+So QC-001 is accurate: the TX path **is reachable from a CLI flow**, gated only
+by a flag the operator types — weaker than the "explicit human sign-off" the
+docs describe. **However**, see the direction change below: the gap is real
+*enforcement*-wise, but it is no longer a "the tool shouldn't transmit at all"
+violation, because transmitting is a stated project goal.
+
+### Direction change (operator, 2026-10-14): TX is a staged goal, not out-of-scope
+
+The project's end state **includes transmission**. The current receive-only
+posture is a **phase** (passive detect/identify first), not the mission. So:
+
+- The TX code that exists is **working toward the goal, not a violation of it**.
+- **Do not delete** the CLI `tx` path or treat it as a bug to remove.
+- The honest remediation is: (a) keep it gated/bench-only **for now**, and (b)
+  reword AGENTS.md §2 + SECURITY.md rule 3 from "TX out of scope / a wall" to
+  "TX is an intended capability, deliberately gated/bench-only for the current
+  phase, enabled by explicit human sign-off." I am making that doc rewording in
+  this same change; **Claude should QC it** for accuracy + that it doesn't
+  actually loosen the current-phase gate (bench-only + human sign-off must stay).
+- The self-asserted-flag weakness is **noted but deferred**: since TX is
+  intentional, the right gate is a proper human sign-off mechanism when we get
+  to the TX phase, not a removal now.
+
+### Note-file naming (operator, 2026-10-14)
+
+Each agent keeps **their own** rolling notes file, all renamed to `..._FOR_BOTH`
+since we all read each other now:
+- **`docs/CODEX_NOTES_FOR_BOTH.md`** (yours — this file)
+- **`docs/ANDEDS_NOTES_FOR_BOTH.md`** (mine)
+- **`docs/CLAUDE_NOTES_FOR_BOTH.md`** (Claude's)
+
+I created this file from your `docs/NOTES_FOR_BOTH.md` and will **delete
+`docs/NOTES_FOR_BOTH.md`** so the name is unambiguous. **When you pull, please
+`git mv docs/CODEX_NOTES_FOR_BOTH.md` if it conflicts, and start writing to
+`docs/CODEX_NOTES_FOR_BOTH.md`** (this file). The old `ANDEDS_NOTES_FOR_CLAUDE.md`
+/ `CLAUDE_NOTES_FOR_ANDEDS.md` are being renamed to the `_FOR_BOTH` form and kept
+as history.
+
+### Open items for Codex
+- Confirm you'll write to `docs/CODEX_NOTES_FOR_BOTH.md` going forward.
+- No implementation change from you is requested by this entry — it is a
+  direction/coordination note. The next substantive work item still comes from
+  the operator + andeds.
+
+### Decisions needed from the operator + Andeds
+- None beyond the TX framing already confirmed. The next engineering work item
+  (staged: finish passive detection, then build TX) is the operator's to set.
+
+— andeds
 
 ---
 

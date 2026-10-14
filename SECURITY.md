@@ -1,7 +1,8 @@
 # SECURITY.md — agent guardrails for `elrs-sdr`
 
 This file is a **contract between the operator and any AI agent writing code in
-this repo** (andeds on the enclave, Claude on the laptop `borealis`, or any
+this repo** (andeds the orchestrator, Codex the primary coder, Claude the
+adversarial QC reviewer — or any
 future agent). AI agents are context-driven: they read the repo, follow its
 patterns, and generate code that matches the style. A security file is a
 *directive for machines* — when an agent sees "secrets never in code," it
@@ -69,12 +70,17 @@ malformed, truncated, or adversarial. The parsers must:
   capture or a serial frame. Use `json` / `ast.literal_eval` / the safe
   loaders.
 
-### 3. The TX gate is a security boundary — treat it like an authz check
+### 3. The TX gate is a staged control, not a wall (updated 2026-10-14)
 
-The passive-only boundary (AGENTS.md §2) is a *security control*, not a style
-preference. The TX path in `elrs_sdr/radio.py` (`tx_tune` / `tx_stream`) and
-`elrc_bench_tx.py` are **gated**. For an agent, the gate is equivalent to an
-authorization check:
+**Scope framing:** transmitting is a **stated project goal** — the end state
+includes a working TX capability. The current **receive-only** posture is a
+**phase**, not the mission. So rule 3 is an in-force control **for the current
+phase** (bench-only, human sign-off, detector/UI never reach TX), to be
+re-evaluated as the TX phase begins — **not** a declaration that TX is out of
+scope. The passive-only boundary (AGENTS.md §2) is a *security control for the
+current phase*, not a permanent scope limit. The TX path in `elrs_sdr/radio.py`
+(`tx_tune` / `tx_stream`) and the CLI `tx` command are **gated** for now. For an
+agent, the gate is equivalent to an authorization check:
 
 - **Detection / analysis / UI code must never import, call, or wire in the
   TX side.** A code path that can reach `tx_*` from a sweep, the UI, or a CLI
@@ -177,10 +183,14 @@ AGENTS.md §4):
       list.
 - [ ] **Bounds-check the parsers** — any new / changed code that indexes into
       a capture or serial frame validates the length *before* the index.
-- [ ] **TX gate intact** — the change does not import / call / wire in
-      `tx_tune` / `tx_stream` / `elrc_bench_tx.py`; the gate is still a wall.
-      If the change *touches* the TX path, it has explicit human sign-off in
-      the commit message.
+- [ ] **TX gate intact (current phase)** — a passive change does not import /
+      call / wire in `tx_tune` / `tx_stream` from a detector / analysis / UI /
+      sweep path; the passive tool stays receive-only. The CLI `tx` command is
+      a deliberate gated capability (see rule 3) — touching that TX path, or
+      enabling any transmit / flash / persistent device change, has explicit
+      human sign-off in the commit message. (QC-001: the current flag-only gate
+      is a known weak point to be replaced with a proper sign-off mechanism in
+      the TX phase.)
 - [ ] **No live / third-party target** — the change does not add a path that
       targets anything other than the owned bench device.
 - [ ] **Serial work is read-only** — no flash / write / update / device-
@@ -207,14 +217,20 @@ AGENTS.md §4):
 
 ## Enforced architecture
 
-**Receive-only by construction.** The detector, the analysis, and the
-WaveRaider UI are all *read* paths. The only *write*-capable code in the repo
-is the gated TX side of `radio.py` + `elrc_bench_tx.py`, and it is not
-reachable from any read path. This is the backbone of the threat model: an
-agent can't accidentally turn the tool into a transmitter by generating a
-"convenient" call, because the TX surface isn't importable from the
-detector/UI/CLI flows. If a change would make it reachable, that's the
-security regression to flag.
+**Receive-only by construction (current phase).** The detector, the analysis,
+and the WaveRaider UI are all *read* paths, and in the current phase they are
+**not reachable from** the gated TX side — the passive detector / analysis /
+UI flows do not call `tx_tune`/`tx_stream`. That is the backbone of the threat
+model: an agent can't accidentally turn the *passive* tool into a transmitter
+by generating a "convenient" call, because the TX surface isn't importable
+from the detector/UI flows. **Honest current-state note:** the CLI *does*
+expose a `tx` subcommand (`elrs_sdr/cli.py:737-755`) that reaches
+`tx_tune`/`tx_stream`, gated only by a self-asserted
+`--i-am-authorized-to-transmit` flag. That is a **deliberate gated
+capability, not a passive-path leak** — but the flag-only gate is a known weak
+point (**QC-001**) to be replaced with a proper human sign-off mechanism when
+the TX phase starts. If a *passive* change (detector/analysis/UI) would make
+the TX path reachable, that's the security regression to flag.
 
 **Untrusted input stays untrusted.** Captures and serial frames are parsed by
 pure, bounds-checked functions that return typed results or errors. The
@@ -251,8 +267,9 @@ code is written by a person or a model. It's the cheapest, highest-leverage
 safety net in the repo: it catches the most common agent mistakes *at the
 point of generation*, before they reach a review.
 
-**When in doubt:** no secrets, validate the input, keep the TX gate a wall,
-stay on the owned bench device, stay read-only until a human approves a
-write, and fail closed. If a change needs to step outside any of those, it
-needs explicit human sign-off in that specific change — not an agent's own
-initiative.
+**When in doubt:** no secrets, validate the input, keep the TX gate closed *for
+the current phase* (staged control — bench-only + human sign-off, not a wall
+around an out-of-scope feature), stay on the owned bench device, stay
+read-only until a human approves a write, and fail closed. If a change needs to
+step outside any of those, it needs explicit human sign-off in that specific
+change — not an agent's own initiative.

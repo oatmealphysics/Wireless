@@ -1,10 +1,11 @@
 # AGENTS.md — standing directives for working in `elrs-sdr`
 
 This file is the **canonical set of design goals, ground rules, and conventions** for this
-project. Every agent working here (andeds on the enclave, Claude on the laptop `borealis`, or any
-future agent) MUST read this before making changes. The rolling handoff logs
-(`docs/ANDEDS_NOTES_FOR_CLAUDE.md`, `docs/CLAUDE_NOTES_FOR_ANDEDS.md`) track *current progress*;
-**this file is the durable "what this program is for and how it must behave."**
+project. Every agent working here (andeds on the enclave, Codex the primary coder, Claude the
+adversarial QC reviewer — or any future agent) MUST read this before making changes. The rolling
+handoff logs (`docs/ANDEDS_NOTES_FOR_BOTH.md`, `docs/CLAUDE_NOTES_FOR_BOTH.md`,
+`docs/CODEX_NOTES_FOR_BOTH.md`) track *current progress*; **this file is the durable "what this
+program is for and how it must behave."**
 
 ---
 
@@ -47,12 +48,14 @@ small.
   standard interoperability / compatibility work. It is not circumventing a
   third party's access control — it's understanding the wire format of a
   protocol the operator is entitled to use on their own device.
-- **The scope is what makes the work defensible.** The §2 hard boundary
-  (passive-only, bench/owned, the TX gate as a wall) is the *operational*
-  expression of this scope. As long as the work stays inside §2, it stays
-  inside this authorization. An agent that finds itself wanting to cross a
-  §2 line (e.g. transmit at a live link, flash a device, hit a third party)
-  has left the authorized scope — stop and ask, don't proceed.
+- **The scope is what makes the work defensible.** The §2 boundary
+  (bench/owned, current-phase receive-only, the TX gate as a staged control)
+  is the *operational* expression of this scope. As long as the work stays
+  inside §2, it stays inside this authorization. An agent that finds itself
+  wanting to cross a §2 line (e.g. transmit at a live link, flash a device, hit
+  a third party) has left the authorized scope — stop and ask, don't proceed.
+  (Transmitting to the *owned* bench link is in the project's end state; it is
+  gated for the current phase and needs human sign-off to begin — §2.)
 
 **In short:** we are the owner, on our own gear, in our own space, learning
 how our own equipment talks, for a defensive receive-only purpose. That's the
@@ -153,25 +156,43 @@ code path exists for. ELRS stays at `FAMILY` precisely because every real burst 
 ---
 
 ## 2. The hard boundary (safety — no exceptions)
-- **Passive detect / decode / identify only.** The forged-frame "throw" (transmitting on the live
-  link to stop a drone) is a **remote-kill of an aircraft** and is **OUT OF SCOPE** — not
-  "advanced," just out. `elrc_bench_tx.py` stays **non-functional + out of scope**. The TX path in
-  `elrs_sdr/radio.py` is built but **gated** (direction-symmetric by design, but must not be
-  enabled to hit a live link).
-- **Bench/owned aircraft only.** All real-RF testing is on andeds's **own** drone, on the bench,
-  with the radio present. Never point the TX at a live, in-the-air, third-party link.
-- **The TX gate is load-bearing — treat it as a wall.** The detection, analysis, and web-UI code
-  paths must **never import, call, or wire in** the TX side of `radio.py` (`tx_tune`/`tx_stream`)
-  or `elrc_bench_tx.py`. Removing the gate, making the TX path reachable from a sweep / the UI / a
-  CLI flow, or "just testing" a transmit against a live link requires **explicit human sign-off in
-  that specific change** — never an agent's own initiative, and never justified by a downstream
-  goal. The radio is direction-symmetric by design (so the TX code exists), which is exactly why
-  the gate, not the absence of code, is what keeps us passive.
-- **Defensive / situational-awareness intent.** This is a *receive-only* detector: observe and
-  label what's in the air. Recovered link parameters (sync word, FHSS sequence, rate) are for
-  identification/display, **not** for jamming, spoofing, replay, or any interference with a link.
-- **Same line, both sides.** Both agents (andeds + Claude) hold this boundary. It is not
-  negotiable per-task.
+
+**Scope framing (updated 2026-10-14):** transmitting is a **stated project goal**
+— the end state includes a working TX capability. The current **receive-only**
+posture is a **phase** (finish passive detect/identify first), *not* the
+mission. So the TX code that exists (`tx_tune`/`tx_stream` in `radio.py`, the
+CLI `tx` command) is **working toward the goal, not out of scope.** The
+*current-phase* control below is a **staged gate**: it keeps the tool passive
+*for now* and must be deliberately lifted (by explicit human sign-off) as the
+TX phase begins. Nothing in this section means "TX is out of scope" — it means
+"we are not transmitting yet, and the gate is what enforces that."
+
+- **Current phase: passive detect / decode / identify only.** The tool does not
+  transmit, flash, or write persistent device state **in this phase.** The
+  receive-only behavior is a phase gate, not a permanent scope limit.
+- **Bench/owned aircraft only (every phase).** All real-RF and serial testing is
+  on andeds's **own** hardware, on the bench, with the radio present — **never**
+  a live, in-the-air, or third-party link. This holds for RX and for the future
+  TX phase alike.
+- **The TX gate (staged control — current phase).** In the *current* phase the
+  TX path in `elrs_sdr/radio.py` (`tx_tune`/`tx_stream`) is **gated,
+  bench-only, and not exercised.** Enabling a transmit, flashing a device, or
+  making a persistent device change requires **explicit human sign-off in that
+  specific change** — never an agent's own initiative, and never justified by a
+  downstream goal. As the project moves to the TX phase, the gate is re-evaluated
+  and re-tightened to a proper sign-off mechanism (the current
+  self-asserted-CLI-flag gate is a known weak point, flagged as **QC-001** — to
+  be replaced, not removed, when the TX phase starts). The passive detector /
+  analysis / web-UI paths must **never** wire in the TX side — a detection or UI
+  flow reaching `tx_*` is still a regression.
+- **Defensive / situational-awareness intent (current phase).** The current tool
+  is a *receive-only* detector: observe and label what's in the air. Recovered
+  link parameters (sync word, FHSS sequence, rate) are for
+  identification/display, **not** for jamming, spoofing, replay, or interference
+  with any link in this phase. (This is a current-phase statement; the intent
+  for the TX phase is set when the TX phase starts.)
+- **Same line, all sides.** Every agent (andeds, Codex, Claude) holds this
+  boundary. It is not negotiable per-task.
 
 ---
 
@@ -214,7 +235,7 @@ set + the evidence class, not a confident "found it."
 
 ---
 
-## 4. Ground rules (workflow — both agents)
+## 4. Ground rules (workflow — all agents)
 - **One branch: `main`.** Pull before you work, push after. No feature branches, no `master`/
   `execfix` (those are gone; everything is on `main`).
 - **Captures sync via git.** `captures/` is tracked (full IQ `.complex8` + `.meta.txt`, re-included
@@ -325,12 +346,15 @@ set + the evidence class, not a confident "found it."
 - `docs/FLRC_GFSK_DECODE.md` — the canonical FLRC/GFSK design + status
 - `docs/DRONE_RF_ARCHITECTURE.md` — the RF-identity architecture (the "what ID do we actually get
   from the air" analysis)
-- `docs/ANDEDS_NOTES_FOR_CLAUDE.md` / `docs/CLAUDE_NOTES_FOR_ANDEDS.md` — the rolling handoff logs
-  (current progress; this file is the durable directives)
+- `docs/ANDEDS_NOTES_FOR_BOTH.md` / `docs/CLAUDE_NOTES_FOR_BOTH.md` /
+  `docs/CODEX_NOTES_FOR_BOTH.md` — the rolling handoff logs (current progress;
+  this file is the durable directives). Each agent keeps their own
+  `..._NOTES_FOR_BOTH.md`; the older `ANDEDS_NOTES_FOR_CLAUDE.md` /
+  `CLAUDE_NOTES_FOR_ANDEDS.md` are kept as history.
 
 ---
 
 **When in doubt:** measure from the RF (at the measured rate), recover the sync/UID from the air
 (never ask the operator for it), label the evidence class, keep it general (not single-target),
-surface it in the WaveRaider UI, stay passive (the TX gate is a wall), and never overclaim a
-detection.
+surface it in the WaveRaider UI, stay passive *for the current phase* (the TX gate is a staged
+control — bench-only + human sign-off; see §2), and never overclaim a detection.
