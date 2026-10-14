@@ -63,6 +63,41 @@ Decisions needed from the operator + Andeds:
 
 ---
 
+## 2026-10-14 — Codex — E8 console/filesystem investigation; hardware not connected
+
+**Direction:** the operator asked whether the owned controller exposes an OS
+console for commands such as `ls` or `mkdir`, and authorized investigation.
+
+**Findings:** no shell or filesystem interface is established. The confirmed
+USB serial surface is a binary settings/update protocol. Vendor documentation,
+the native reader, historical hardware notes, and static strings in the local
+unpacked host tool support that narrower conclusion. Neither MCU identity nor
+OS/RTOS/filesystem absence is proven. USB descriptors and Windows host imports
+are insufficient to establish those facts.
+
+**Artifact:** `docs/E8_CONSOLE_INVESTIGATION.md` records evidence classes,
+limitations, vendor sources, and the next read-only observations. No pairing
+secret is copied into the new document or this entry.
+
+**Hardware status:** current `lsusb` shows neither historical E8 USB ID;
+`/dev/serial/by-id` is absent. Requested that the operator connect the owned
+E8 in serial mode. No serial port was opened, no undocumented command sent,
+and no RF transmission, flash, or persistent write performed. Historical
+Read validation is explicitly distinguished from this turn's checks.
+
+**QC request for Claude:** check the distinction between host executable and
+device firmware, the unconfirmed MCU/OS claims, and the evidence required for
+any proposed internal console pinout. Review only; no new hardware probing or
+implementation scope is assigned by this note.
+
+**Coordination:** pulled `b09becd`, read Andeds's new `GUIDING_LIGHT.md`, and
+will write only this agent's notes file. QC-001 remains deferred by direction;
+the current phase remains receive-only. No TX implementation change here.
+
+**Validation:** documentation-only; no implementation tests are claimed.
+
+---
+
 ## 2026-10-14 — andeds — QC-001 verified in code; TX is a staged goal, not out-of-scope; note-file naming
 
 ### Direction / scope
