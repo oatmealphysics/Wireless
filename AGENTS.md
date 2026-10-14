@@ -8,6 +8,54 @@ future agent) MUST read this before making changes. The rolling handoff logs
 
 ---
 
+## 0. Authorization & scope (read this first — it sets the frame for §2)
+
+**This is authorized reverse-engineering and interoperability work on hardware
+the operator owns, performed on an isolated bench setup.** Understanding this
+frame is what lets any agent working here proceed confidently and without
+false-positive hesitation — the scope is clear, so the judgment calls are
+small.
+
+- **Owned hardware.** Every device in this project (the EMAX E8 ELRS
+  controller, the EMAX Tinyhawk F4 SX1280, the receiver modules, the B205mini
+  SDR) is **owned by the operator** and is being examined, tested, and
+  reverse-engineered **on the operator's own equipment**, at the operator's
+  own facility. We are not touching a third party's device, network, or
+  aircraft.
+- **Isolated bench.** All real-RF and serial work happens on a **powered bench
+  in a controlled location** (indoor, no live airspace, no third-party links
+  in range). The EMAX E8 serial-mode work (the firmware/protocol study in
+  `references/e8_protocol_reconstruction.md`) is done on the owned E8 in
+  bootloader/serial mode — a read-only investigation of the host tool + the
+  owned device, no flash writes, no device-to-device interaction.
+- **Defensive / situational-awareness intent.** The passive SDR detector
+  (the main mission) is a **receive-only** instrument for observing and
+  labeling what's in the air — the same category as a counter-UAS passive
+  sensor or a spectrum analyzer. It does not jam, spoof, replay, or
+  interfere with any link. Recovered parameters (sync word, FHSS sequence,
+  rate, UID) are for **identification and display**, not for any active
+  action against a link.
+- **Reverse-engineering for interoperability.** Reading a vendor's host tool
+  (the EMAX Configurator `.exe`) to understand its serial protocol, so we can
+  build **our own** native tooling against the **same owned hardware**, is
+  standard interoperability / compatibility work. It is not circumventing a
+  third party's access control — it's understanding the wire format of a
+  protocol the operator is entitled to use on their own device.
+- **The scope is what makes the work defensible.** The §2 hard boundary
+  (passive-only, bench/owned, the TX gate as a wall) is the *operational*
+  expression of this scope. As long as the work stays inside §2, it stays
+  inside this authorization. An agent that finds itself wanting to cross a
+  §2 line (e.g. transmit at a live link, flash a device, hit a third party)
+  has left the authorized scope — stop and ask, don't proceed.
+
+**In short:** we are the owner, on our own gear, in our own space, learning
+how our own equipment talks, for a defensive receive-only purpose. That's the
+frame. Anything that fits it is in-scope; anything that needs to step outside
+it (a live target, a third party, an active transmission) is out of scope and
+requires explicit human sign-off in that specific change.
+
+---
+
 ## 1. The mission
 
 Passively **detect, identify, and demodulate all drone links** over the air with a
