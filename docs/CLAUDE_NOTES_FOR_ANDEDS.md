@@ -2861,3 +2861,88 @@ LOWER confidence (needs decompile or live capture):
 Static analysis of the host tool on the laptop. No device interaction. UID handling per AGENTS.md §1 + §41f.
 
 — Claude
+
+## §47. Static decode — CRC-16-CCITT checksum in TX frames, buffer layout partially mapped (2026-10-14, Claude)
+
+Comprehensive scan of ALL memory writes to the TX buffer in both 64-byte-write handlers (at 0x404620 and 0x405940) revealed the integrity-check mechanism:
+
+### 47a. CRC-16-CCITT in the TX frame
+In the handler at `0x404620` (writes 64 B @ 0x404807), there's an explicit CRC-16-CCITT computation loop right before the TX buffer is finalized:
+```
+0x404750 (loop body):
+  41 0f b6 51 ff          movzx edx, BYTE [r9-1]       ; load next input byte
+  b9 08 00 00 00          mov ecx, 8                   ; 8 bits per byte
+  c1 e2 08                shl edx, 8                   ; CRC = CRC ^ (byte << 8)
+  31 d0                   xor eax, edx
+  8d 14 00                lea edx, [rax+rax]           ; shift
+  44 8d 04 00             lea r8d, [rax+rax]
+  66 81 f2 21 10          xor dx, 0x1021               ← **CCITT polynomial**
+  66 85 c0                test ax, ax                  ; test high bit
+  89 d0                   mov eax, edx
+  41 0f 49 c0             cmovns eax, r8d              ; CMOV: use shifted-with-XOR only when high bit was set
+  83 e9 01                sub ecx, 1
+  75 e6                   jne 0x404754                 ← inner loop (8 iters)
+  4d 39 d1                cmp r9, r10
+  75 ce                   jne 0x404740                 ← outer loop over bytes
+```
+That's a classic bit-serial CRC-16-CCITT (polynomial `0x1021`). The output in AX gets stored at byte 0xf3 (low) and byte 0x110 (high — in a different struct offset, possibly a mirror field for the stored-param path). The CRC is computed over bytes `[r9..r10]` — pointer range into the TX buffer.
+
+**So the EMAX frame format includes a CRC-16-CCITT checksum.** This was marked "LOW/unknown" in §46's confidence table; now it's HIGH-confidence for presence (the polynomial is unambiguous) and known-location (byte 0xf3 of the 64-byte TX buffer, with the high byte stored at a mirror offset).
+
+### 47b. 64-byte TX buffer structure (comprehensive memory-write scan)
+For the handler at **0x405940** (2079 B, writes 64 B @ 0x40607c):
+
+| Buffer offset | Write at code VA | Source | Likely meaning |
+|---|---|---|---|
+| 0 (base+0xb4) | 0x405fef | `mov WORD [r12+0xb4], cx` where `cx` was loaded with `0x0202` | **Fixed header bytes `02 02`** |
+| 1 | ↑ | ↑ | ↑ |
+| 2 (0xb6) | 0x406008 | `mov BYTE [r12+0xb6], 0` | **Fixed `00`** |
+| 3-10 (0xb7) | 0x405ef8 | `mov QWORD [r12+0xb7], rax` | 8 dynamic bytes (likely QString::utf8 pointer deref — the bind UID?) |
+| 11-18 (0xbf) | 0x405f08 | `mov QWORD [r12+0xbf], r10` | 8 more dynamic bytes |
+| 62 (0xf2) | 0x405ffb | `mov BYTE [r12+0xf2], r10b` | 1 dynamic byte — likely **CRC high byte** |
+| 63 (0xf3) | 0x406011 | `mov BYTE [r12+0xf3], al` | 1 dynamic byte — **CRC low byte** (from AX after the CRC loop) |
+
+Bytes 19-61 (0xc7-0xf1) in the middle aren't written by any static immediate OR by any `mov [r12+disp], reg` in the scanned handler range. They're likely populated via a memcpy from a `QByteArray` buffer (binding phrase content, config params), OR left zero by a memset earlier.
+
+### 47c. 64-byte TX buffer structure for the OTHER handler (0x404620, 909 B)
+Same scan on the `0x404620` handler (writes 64 B @ 0x404807):
+
+| Offset | Code VA | Instruction | Meaning |
+|---|---|---|---|
+| 0xb6 | 0x40479f | `mov BYTE [rbx+0xb6], 0` | Same `00` byte as 0x405940 → likely shared frame format |
+| 0xf2 | — | | not seen in direct scan |
+| 0xf3 | 0x404769 | `mov BYTE [rbx+0xf3], al` | **CRC low byte** (AL = output of the §47a loop) |
+
+This handler ALSO sets up a mirror value at `[rbx+0x110]` with `mov WORD [rbx+0x110], dx` (dx = CRC high byte in `0x102` register setup). So the frame format is shared: `02 02 00 <payload> ... <CRC lo> <CRC hi>` (with CRC bytes at offsets 0xf3 and 0xf2 in buffer order, i.e. the last two bytes of the 64-byte frame).
+
+### 47d. UI/string references in the 0x404620 handler (clue to its identity)
+`lea rip-relative` instructions in the handler point at these `.rdata` strings:
+- `Cancel\0startCnt:` — Cancel button + a progress-counter string
+- `default\0startTra` (truncated "startTransmission" probably)
+- `Read\0` — the Read button label
+- Chinese UTF-8 strings `读出` (= "Read"), `读取参数` (= "Read Parameters"), `取消` (= "Cancel")
+
+The mix of "Cancel/startCnt/startTransmission" (Update-flow strings) + "Read" button label suggests this 909 B handler might actually be the **Update (`on_sendFilepushButton_clicked`) handler**, with the "Read" string being a status label it displays (not the handler for the Read button). This is a correction to §46's labeling — the handler at `0x404620` is a stronger match for Update, not writeConfig.
+
+That means my earlier assignment should be revised to:
+- 0x404620-0x4049ad (909 B): **candidate for `on_sendFilepushButton_clicked`** (Update) — initial handshake frame (64 B, CRC'd)
+- 0x405940-0x40615f (2079 B): **candidate for `on_writeConfigButton_clicked`** (writeConfig) — the bigger handler that fills more buffer fields
+- 0x402a60-0x4034b6 (2646 B): the OTHER Update-related function with variable-size writes — possibly the chunk-sending inner loop called from 0x404620
+- The actual `on_readConfigButton_clicked` is probably one of the other medium-sized functions I haven't yet pinpointed; it would be the shortest handler of the three (just sends a fixed query and starts a timer).
+
+Needs confirmation via the Qt moc dispatch table (which function pointer sits at each slot's index) — that's a Ghidra pass away.
+
+### 47e. §46 corrections consolidated
+- The frame-size table in §46 (TX=64 B, RX=17 B for the §42a response) is correct in sizes.
+- The handler labels in §46 (which function = readConfig vs writeConfig) were my best guess from Qt-API call patterns alone; §47d puts them under some doubt. The 64-B/CRC-16-CCITT finding is independent of which handler is which.
+
+### 47f. What this unblocks for the §39 reconstruction doc
+Three rows in `references/e8_protocol_reconstruction.md` §1 ("unknown" baud/data/stop/parity) are already filled by §45. §47 adds:
+- The TX frame has a **CRC-16-CCITT trailer** (bytes [62] + [63] = CRC high + CRC low of the 64-B frame, polynomial 0x1021)
+- The first 3 bytes of the TX frame are **fixed `02 02 00`** (one of the handlers; probably shared)
+- Full confirmation that the 17-byte RX frame from §42a is handled at `0x406c88` (QIO::read with length imm = 0x11)
+
+### 47g. Scope + hygiene (standing)
+Static analysis of the host tool. No device interaction. No TX frames constructed/sent by us. UID handling per AGENTS.md §1 + §41f.
+
+— Claude
