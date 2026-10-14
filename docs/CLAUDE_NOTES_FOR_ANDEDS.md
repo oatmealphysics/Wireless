@@ -2946,3 +2946,64 @@ Three rows in `references/e8_protocol_reconstruction.md` §1 ("unknown" baud/dat
 Static analysis of the host tool. No device interaction. No TX frames constructed/sent by us. UID handling per AGENTS.md §1 + §41f.
 
 — Claude
+
+## §48. Qt moc stringdata table parsed; strace capture tool ready for next GUI click (2026-10-14, Claude)
+
+Two incremental things on top of §47.
+
+### 48a. Qt moc stringdata table located and parsed
+At `.rdata` VA `0x413c00` sits the class's Qt moc stringdata table (18 QByteArrayData entries, 24 bytes each). Parsed index → symbol:
+```
+ [0] "Widget"                              class name
+ [1] "on_openSerialpushButton_clicked"     slot
+ [2] ""                                    (parameter name placeholder)
+ [3] "on_openFilepushButton_clicked"       slot
+ [4] "on_sendFilepushButton_clicked"       slot
+ [5] "on_refreshButton_clicked"            slot
+ [6] "readTimeOut"                         signal (triggered by read QTimer)
+ [7] "writeTimeOut"                        signal
+ [8] "readConfigTimeOut"                   signal
+ [9] "writeConfigTimeOut"                  signal
+[10] "transmitStatus"                      signal
+[11] "Status"                              (param name for transmitStatus)
+[12] "status"                              (param name variant)
+[13] "transmitProgress"                    signal
+[14] "progress"                            (param name)
+[15] "on_readConfigButton_clicked"         slot
+[16] "on_writeConfigButton_clicked"        slot
+[17] "on_languagePushButton_clicked"       slot
+```
+Slot indices: 1, 3, 4, 5, 15, 16, 17. Signal indices: 6-10, 13. Mapping each slot's string index to its function pointer is one static table away in the `qt_metacall` dispatcher — easiest to resolve with Ghidra's auto-analysis (handles Qt moc idioms); doing it by hand means reading the metadata-array format and the switch-table jumps, which is slow without a decompiler.
+
+### 48b. Dynamic-capture infrastructure ready (uncommitted, in /tmp)
+Two helper scripts set up but not committed to the repo (your call on whether they belong there):
+```
+/tmp/wine_strace_emax.sh    — launches wine under 'strace -f -e trace=openat,write,writev -s 256 -y'
+/tmp/parse_wine_strace.py   — parses the strace log, finds writes to /dev/ttyACM0, decodes
+                              strace's \xHH escapes back to raw bytes, prints length + hex + ascii
+```
+Workflow: run the shell script, click Open-Serial + Read in the GUI window, Ctrl-C, then run the parser. Captures the exact 64-byte TX frame on the wire. The port-exclusivity blocker that scuttled TAP-based captures (§37) doesn't apply here — strace sees the Wine process's `write()` syscalls directly, no second reader of `/dev/ttyACM0`.
+
+**The one gap this doesn't close autonomously:** I can't drive the GUI click. No `xdotool`/`wmctrl` installed, and this is a Wayland session where cross-app input injection is restricted. So the strace capture needs one manual operator click.
+
+### 48c. Where I stopped and what's left
+Based on today's §44-§48, the EMAX serial protocol reconstruction (`references/e8_protocol_reconstruction.md`) can be updated with HIGH confidence for:
+- Transport: CDC-ACM, baud 115200, 8N1, no flow (§45)
+- TX frame size: fixed 64 bytes for the Read/Write commands (§46)
+- TX frame integrity: CRC-16-CCITT, polynomial 0x1021, trailer at bytes 62-63 (§47)
+- TX frame first 3 bytes: `02 02 00` fixed header (§47)
+- RX frame for params-read: 17 bytes (§42a / §46)
+- Full Qt method-index-to-name map (§48a)
+
+Still LOW confidence until the Ghidra pass or a strace click:
+- Dynamic 8-byte fields at TX buffer offsets 0xb7 and 0xbf (likely UID/binding-phrase bytes)
+- Bytes 19-61 of the TX frame (probably zero/padding, maybe memcpy'd from a `QByteArray`)
+- Which 64-B handler is readConfig vs writeConfig (§47d's uncertainty) — resolved by one `qt_metacall` disassembly OR one strace capture OR Ghidra
+- Update chunk framing (chunk size, per-chunk header, ACK format)
+- The 1-byte and 2-byte read semantics (§46d)
+- The 59-byte read semantics (§46d — plausible device-info response for Update)
+
+### 48d. Scope + hygiene (standing)
+All read-only. The strace scripts in /tmp are host-side instrumentation of a tool we own; they don't talk to the drone. UID handling per AGENTS.md §1 + §41f.
+
+— Claude
