@@ -3,6 +3,7 @@
 > Written: 2026-10-14. Repository baseline reviewed: `93578f3ae305f52f170088bfdcc3c57f0e744151`.
 > Purpose: preserve the working context, evidence, limitations, and next steps so research can continue from another machine without reconstructing the conversation.
 > The firmware collection is for offline test articles. The owner explicitly said they do not plan to flash the EMAX E8.
+> Concurrent update reviewed: Claude added [SESSION-NOTES.md](SESSION-NOTES.md) in `19260a9` while this handoff was being written; see Section 5 for evidence qualifications.
 
 ## Navigation
 
@@ -163,6 +164,8 @@ research-project/
 
 Extracted source directories may also be present locally. They are intentionally ignored and will not appear after cloning until extracted. A local `.claude/` directory was untracked when this handoff began; it has not been included in the handoff commit.
 
+Claude's [SESSION-NOTES.md](SESSION-NOTES.md) is a companion chronological report added concurrently. Read its hardware/power/takeover predictions with the evidence qualifications in this handoff.
+
 ### 4.2 Session workflow
 
 Before editing:
@@ -207,10 +210,21 @@ The visible recent history is:
 | `bcc565d` | Add ELRS binding phrase rainbow table generator and pre-computed table | Offline lookup tool and tables were added |
 | `7bf484a` | Add AGENTS.md with project context for multi-agent workflow | Persistent project/collaboration instructions were added |
 | `93578f3` | Add CRSF serial probe tool for USB-connected ELRS devices | Candidate USB serial probing script was added |
+| `19260a9` | Add session notes with research progress and next steps | Claude's companion session report arrived while this handoff was being written |
 
 The initial `dd5f5a7` push completed successfully to `origin/main`. At the start of this handoff, `git pull --ff-only` reported that the checkout was already up to date at `93578f3`.
 
 Earlier in the conversation, workspace writes and Git commands failed under the execution sandbox. The user restarted Codex and reported running apt/AppArmor commands. The exact apt/AppArmor commands and their complete outputs are not preserved in the available conversation, so this handoff does not invent them or claim they fixed the underlying cause.
+
+### Concurrent session-report evidence
+
+Claude's `SESSION-NOTES.md` reports prior serial attempts at several baud rates, CRSF queries, and no responses/passive output. Those experiments were not repeated by Codex during this handoff, and their raw logs are not included in that document. Preserve them as another researcher's reported negative results, not independently reproduced measurements.
+
+The same notes attribute the negative result to battery/power behavior and predict successful device-info/parameter output once powered. That causal explanation remains a hypothesis. A vendor protocol mismatch, wrong endpoint, device mode, control-line behavior, or decoder limitations also needs consideration. The reported ESP32/ESP8285/WiFi-backpack architecture and E8 WiFi/update surface are similarly unconfirmed for the particular transmitter.
+
+The companion notes also report installed Ghidra 12.1.4, OpenJDK 21, pyserial 3.5, binutils/objcopy, and REA setup on the lab machine. This handoff did not independently inventory those installations. A home Git clone does not install these dependencies, recreate machine-specific SSH aliases, or copy local analysis projects. Check versions and installation requirements in the home environment before relying on those commands.
+
+Older ELRS recovery results and general predictions of immediate link takeover in the companion notes have not been reproduced against the owner's current firmware. Use the pinned-source/version distinctions and milestone requirements in Sections 11–17 when deciding what those historical results establish for a new target.
 
 ## 6. Hardware identity and confidence
 
@@ -990,6 +1004,7 @@ Next highest-value task:
 - [Research and implementation plan](attack-research-plan.md).
 - [Firmware inventory and source notes](firmware/README.md).
 - [Corpus integrity manifest](firmware/SHA256SUMS).
+- [Claude's companion session report](SESSION-NOTES.md), including reported serial attempts and lab tool installations.
 - [Lookup helper](tools/elrs-uid-rainbow.py).
 - [Serial helper](tools/elrs-serial-probe.py).
 

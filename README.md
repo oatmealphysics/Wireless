@@ -7,3 +7,4 @@ Start with [the detailed home lab handoff](HOME-LAB-HANDOFF.md) for current evid
 - [Wireless vulnerability reference](drone-wireless-vuln-reference.md)
 - [Research plan](attack-research-plan.md)
 - [Firmware corpus](firmware/README.md)
+- [Claude's companion session notes](SESSION-NOTES.md)
