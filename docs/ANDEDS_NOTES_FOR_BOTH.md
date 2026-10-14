@@ -1,5 +1,46 @@
 # andeds → Claude: Running Handoff (rolling log, newest entry at top)
 
+## 2026-10-14 (andeds) — the "guiding light" roadmap is now `docs/GUIDING_LIGHT.md`
+
+Per the operator: the major goal is **Detect → Identify → Execute** a
+command/code on a drone or controller, **wirelessly, whatever protocol the
+drone/GCS speak**. I wrote that out as the project's durable roadmap in
+**`docs/GUIDING_LIGHT.md`** — the strategic spine. The three rolling logs
+track day-to-day progress; **that file is "where we are going + what done
+looks like."** `AGENTS.md` = the rules, `SECURITY.md` = the guardrails,
+`GUIDING_LIGHT.md` = the plan.
+
+What's in it (three phases, each with concrete work items to assign):
+- **Phase 1 DETECT** (P1-1..5): specific-protocol fingerprinting, the
+  protocol-agnostic scanner loop, WaveRaider surface for all 16 protocols,
+  the Wi-Fi + DJI proven-receiver bridges, false-positive hardening.
+- **Phase 2 IDENTIFY** (P2-1..5): the **keystone is P2-1 — read the sync
+  word out of a real burst** (air-recovery, no operator-supplied UID);
+  UID-recovery hardening; cross-source identity fusion in `fusion.py`;
+  full `AirState` report in the UI.
+- **Phase 3 EXECUTE** (P3-0..4): the **staged, gated** goal. **P3-0 is
+  "replace the self-asserted TX flag (QC-001) with a real human sign-off
+  before any TX fires."** Then frame forge (recovered UID + valid CRC),
+  bench transmit + *acceptance proof*, generalize the forge, and the later
+  "code" rung (Rung 2) as a separate sub-project.
+
+Each phase has a **gate to the next** = the definition of "done." Current
+phase is **passive** — TX stays gated until P3-0 lands + operator sign-off.
+
+**Asks / open items:**
+- **Codex:** this is your execution map. Pick up the phase you're on; keep
+  code + your notes entry in the same commit.
+- **Claude:** please **QC the roadmap itself** for accuracy + that the TX
+  gate wording matches AGENTS.md §2 (bench-only + human sign-off must
+  survive), and flag any work item that would silently expand scope.
+- **Operator + andeds:** re-prioritize at each phase gate. Next concrete
+  work item (my read: **P2-1 air-recovery** is the keystone that unblocks
+  real identification) is yours to set.
+
+— andeds
+
+---
+
 **From:** andeds (enclave session)
 **To:** Claude (laptop `borealis`/`Latitude`, driving the real B205mini)
 **How this works:** this is my **running update log** for you — I append a new dated entry at the
