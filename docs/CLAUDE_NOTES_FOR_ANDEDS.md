@@ -3073,3 +3073,73 @@ Still need (either Ghidra pass or additional strace captures):
 `/tmp/parse_wine_strace2.py` has the octal fix. If the Write and Update captures use the same strace infra, this parser gives correct bytes. Say the word and I'll commit both parser scripts to the repo (probably as `tools/wine_strace_*.py`).
 
 — Claude
+
+## §50. LIVE VALIDATION — reconstructed Read command works on the actual hardware (2026-10-14, Claude)
+
+With §49's corrected decode, sent the 64-byte Read command to the E-8 from Python directly (no Wine, no vendor tool) and got the exact §42a response back. **Protocol decode confirmed end-to-end on live hardware.**
+
+### 50a. The experiment
+```python
+import serial, time
+PORT = '/dev/ttyACM0'
+TX = bytes([0x02, 0x01]) + bytes(62)   # the Read command from §49
+s = serial.Serial(PORT, 115200, timeout=2, bytesize=8, parity='N', stopbits=1,
+                  xonxoff=False, rtscts=False, dsrdtr=False)
+time.sleep(0.5)
+s.reset_input_buffer()
+s.write(TX); s.flush()
+resp = s.read(64)
+```
+
+### 50b. Result
+```
+TX  (64 B):  02 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+             00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+             00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+             00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+RX  (17 B):  02 c5 02 01 03 5d 05 00 11 18 5b 00 00 00 00 00 00
+             ^^^^^ ^^ ^^ ^^ ^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^^^
+             hdr   Rt P? T? bind UID (6B)     padding (6B)
+```
+Matches §42a byte-for-byte. The handler at `0x404620` is confirmed `on_readConfigButton_clicked`, the Read command is `02 01` + 62 zero bytes, the response is the 17-byte config frame.
+
+### 50c. No handshake needed
+I called `s.write(READ_CMD)` immediately after opening the port — no "Connect" command sent first. The device responded anyway. So the "Connect" step in the vendor tool is just **opening the serial port + maybe polling status**, not a protocol handshake. This matches §42's observation that two Read commands in the strace capture were byte-identical (no state-bearing handshake preceding them).
+
+Implication for a native reader: `open(port) → write(READ_CMD) → read(17)` is enough. No session setup required.
+
+### 50d. Native reader committed: `tools/e8_read.py`
+Added a small, read-only client:
+```sh
+python3 tools/e8_read.py             # read + pretty-print
+python3 tools/e8_read.py --raw       # also print raw 17-byte hex
+```
+Prints the UID + Rate + the two config bytes. Marks the Power/tlm label mapping as **TBD** because:
+- Rate: byte `0x02` = `150Hz` ✓ consistent with GUI screenshot (§41c) and the `.rdata` string table order
+- Power: byte `0x01` in the frame, but GUI showed **100mW**. If `.rdata` order is `10/25/50/100`, index 1 = 25mW (not 100mW). So the Power index→label is NOT just the dropdown order.
+- tlm: byte `0x03` in the frame, but GUI showed **OFF**. The strings `1:128/1:64/1:32/1:16` don't include "OFF". So tlm's index→label also needs a Write-cycle capture to disambiguate.
+
+The tool prints raw hex alongside the guessed labels so you can see what's confirmed vs. inferred.
+
+### 50e. The vendor tool is officially no longer needed to Read
+With §50, we have:
+- Serial config (§45) — confirmed via live sender working at 115200 8N1
+- 64-byte TX frame format (§46/§47/§49) — confirmed by byte-exact match in live capture
+- Read command bytes (§49) — confirmed by live round-trip
+- 17-byte RX frame layout (§42a/§50b) — confirmed byte-for-byte
+- No handshake required (§50c) — confirmed by immediate-write success
+
+So **a passive observer of the E-8 config (UID + rate + power/tlm bytes) is a 20-line Python script**, which `tools/e8_read.py` now is. The vendor tool and Wine aren't needed for Read.
+
+### 50f. What's still outstanding
+Only three unknowns from the full protocol-reconstruction perspective:
+1. **writeConfig TX frame format** — handler at `0x405940`, uses `02 02` header per §47. Decoding needs a Write-click strace capture (now trivially parseable with the §49-fixed parser). Won't do this without your go-ahead since Write actually changes the controller's config.
+2. **Update (flash) chunk framing** — handler at `0x402a60`, variable-size writes with CRC. Needs an Update-click strace OR a Ghidra pass. Again, won't trigger an Update autonomously since it writes firmware.
+3. **Power/tlm index→label mapping** — settled by any Write-cycle capture that varies one field.
+
+The RX side (device's responses to Write/Update) is accessible but needs the TX side first.
+
+### 50g. Scope + hygiene (standing)
+This round: live Read of our own controller's current config via the newly-written native reader. Zero writes to the device. UID still per AGENTS.md §1 + §41f (shown here only because it reproduces §41c, and the UID bytes are already in the repo since §41).
+
+— Claude
