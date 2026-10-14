@@ -1,12 +1,52 @@
 # EMAX E8 (ELRS variant) — Serial Protocol Reconstruction
 
-Status: **largely reconstructed from static decode of the plaintext host tool**
-(the 113 KB inner exe's `.text`/`.rdata`/`.idata` are all plaintext — see the
-§44 correction below) + §42a's captured 17-byte RX frame. Confidence levels
-noted per item. The remaining unknowns (the exact 64-byte TX byte sequence,
-the Update chunk framing, the 59-byte/1-byte/2-byte read semantics) need a
-Ghidra decompile of the handlers OR one live `strace -f -e trace=write`
-capture with a manual Connect+Read click.
+Status: **Read-params command CONFIRMED end-to-end on live hardware** (§49/§50).
+The 64-byte Read TX command (`02 01` + 62 zero bytes, CRC-16/XMODEM trailer)
+was sent natively from Python (no Wine, no vendor tool) and got the exact
+17-byte config response back, byte-for-byte. The Read path is fully decoded +
+validated; a native read-only reader is `tools/e8_read.py`. The remaining
+unknowns (writeConfig TX payload format, the Update/flash chunk framing, the
+Power/tlm index→label mapping) need a Write-click or Update-click strace
+capture (now trivially parseable with the §49-fixed parser) — those are the
+only outstanding items, and they're *write* operations we don't do
+autonomously.
+
+The protocol below was reconstructed from static decode of the plaintext host
+tool (the 113 KB inner exe's `.text`/`.rdata`/`.idata` are all plaintext — see
+the §44 correction) + live captures. Confidence levels noted per item.
+
+## CONFIRMED PROTOCOL (the validated core — §49/§50/§51)
+
+This is the part that's **validated on the actual hardware**, not just
+inferred. A passive read of the E-8's config (UID + rate + power/tlm bytes)
+is a 20-line Python script (`tools/e8_read.py`).
+
+| Item | Value | Evidence |
+|---|---|---|
+| Transport | USB CDC-ACM `/dev/ttyACM0`, **115200 8N1, no flow** | §45 static + §50 live (the native reader works at this config) |
+| **Read TX command** | **64 bytes: `02 01` + 62 zero bytes** (the CRC of the 60-byte zero frame body is `00 00`, so the trailer is also zero) | §49 wire capture (parser-fixed) + §50 live round-trip |
+| **Read RX response** | **17 bytes: `02 c5 <rate:1> <cfg1:1> <cfg2:1> <UID:6> <padding:6>`** | §42a capture + §50 live byte-for-byte match |
+| **No handshake needed** | `open(port) → write(READ_CMD) → read(17)` is enough; no Connect command / session setup | §50c (immediate-write success) |
+| **CRC** | **CRC-16/XMODEM** (poly `0x1021`, init `0x0000`, no reflection), computed over the 60-byte frame body (bytes [2..61] of the TX frame, *excluding* the 2-byte header) | §51a (test vector `123456789`→`0x31C3` ✓; 60 zeros→`0x0000` ✓) |
+| **Rate mapping** | byte `0x02` = 150 Hz (the `.rdata` order `500/250/150/50`, index = byte) | §50d (consistent with the GUI screenshot) |
+| **bind UID** | bytes [5..10] of the RX frame (the 6-byte pairing secret; matches §41c + air-recovered net_id) | §42a + §50 |
+
+**The Read command is constant** — no dynamic fields on the request side. The
+device returns the UID + config in the 17-byte RX. This is why the native
+reader is so small: send a fixed 64-byte frame, parse the 17-byte reply.
+
+### The §42 "32 31 00..." puzzle — RESOLVED (it was a parser bug)
+The §42 live capture showed `32 31 00...` which didn't match the static
+decode. **The strace parser was broken**: it didn't handle strace's default
+*octal* escapes (`\2\1\0\0...` = bytes `0x02 0x01 0x00 0x00`), so `\2` and
+`\1` fell through to literal ASCII `'2'` (0x32) + `'1'` (0x31). The fixed
+parser (`/tmp/parse_wine_strace2.py`, proper octal decode) re-parsed the
+existing log and gave the correct `02 01 00...00`. **The `32 31` was pure
+parser corruption, not a protocol feature.** This also resolved §47d's
+handler-identity uncertainty: the `mov ecx, 0x102` (→ WORD store `02 01`) is
+at `0x404764`, inside the 909-byte handler at `0x404620` — so **`0x404620` IS
+`on_readConfigButton_clicked`** (confirmed by wire bytes + the matching
+store sequence).
 
 ## §44 CORRECTION (important)
 

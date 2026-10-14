@@ -1594,7 +1594,119 @@ unchanged).
 
 ---
 
+## 43. Reviewed §49–§51 — the Read command is CONFIRMED on live hardware; the 32 31 puzzle was a parser bug (2026-10-14, andeds)
+
+Reviewed Claude's §49–§51 + **independently verified the key claims on the
+enclave**. This is the "yes" — the EMAX serial Read-params protocol is decoded
+and validated end-to-end on the actual hardware, and we have a working native
+reader.
+
+### The "32 31 00..." puzzle (my §42) is RESOLVED — it was a parser bug
+Claude's §49 found the strace parser was broken: it didn't handle strace's
+default **octal** escapes (`\2\1\0\0...` = bytes `0x02 0x01 0x00 0x00`), so
+`\2`/`\1` fell through to literal ASCII `'2'` (0x32) + `'1'` (0x31). The
+`32 31` header in my §42 capture was **pure parser corruption**, not a
+protocol feature. The fixed parser (`/tmp/parse_wine_strace2.py`) re-parsed
+the existing log → the real bytes are `02 01 00...00`. I should have suspected
+this earlier (the `32 31` = ASCII "21" was too clean + the all-zeros frame body
+didn't fit the static decode) — good catch.
+
+### What I verified on the enclave
+- **CRC-16/XMODEM math** (independently implemented, not trusting Claude's):
+  - `CRC-16/XMODEM("123456789") = 0x31C3` ✓ (the standard XMODEM test vector)
+  - `CRC-16/XMODEM(60 zero bytes) = 0x0000` ✓ (matches the captured Read-frame
+    trailer bytes [62..63] = `00 00`)
+  - So the CRC is XMODEM (poly `0x1021`, init `0x0000`, no reflection),
+    computed over the 60-byte *frame body* (bytes [2..61] of the TX frame,
+    excluding the 2-byte header). Confirmed.
+- **`tools/e8_read.py`** (the native reader) — reviewed the code: it's
+  read-only (sends only the Read command + reads the response; no
+  write/flash), validates the response (checks length=17 + header `02 c5`),
+  and honestly marks the Power/tlm index→label mapping as TBD (prints raw hex
+  alongside the best-guess labels). Correct pattern per SECURITY.md (fail
+  closed, validate before parse, read-only).
+
+### The confirmed protocol (the validated core)
+| Item | Value |
+|---|---|
+| Transport | CDC-ACM `/dev/ttyACM0`, 115200 8N1, no flow |
+| **Read TX** | **64 bytes: `02 01` + 62 zero bytes** (CRC of the zero frame body = `00 00`) |
+| **Read RX** | **17 bytes: `02 c5 <rate:1> <cfg1:1> <cfg2:1> <UID:6> <padding:6>`** |
+| Handshake | **None** — `open(port) → write(READ_CMD) → read(17)` is enough |
+| CRC | CRC-16/XMODEM (poly `0x1021`, init `0x0000`), over the 60-byte frame body |
+| Rate | byte `0x02` = 150 Hz (`.rdata` order `500/250/150/50`) |
+| bind UID | RX bytes [5..10] (the 6-byte pairing secret) |
+
+**The Read command is constant** (no dynamic fields on the request side) —
+which is why the native reader is a 20-line script. The vendor tool + Wine are
+no longer needed for a Read.
+
+### The handler-identity map is now resolved (§49/§51)
+| Addr | Size | Handler | How confirmed |
+|---|---|---|---|
+| `0x404620` | 909 B | `on_readConfigButton_clicked` (Read) | §49: `mov ecx,0x102` + wire-byte match |
+| `0x405940` | 2079 B | `on_writeConfigButton_clicked` (Write) | §47/§51: `02 02` header + more config fields |
+| `0x402a60` | 2646 B | `on_sendFilepushButton_clicked` (Update) | §51: 3 frame types, dynamic chunk, `0x18×5` sync |
+| `0x4018b0` | 1806 B | `on_openSerialpushButton_clicked` (Connect) | §46 (setPortName) |
+| `0x406160` | 1605 B | QSerialPort init / ctor | §46 (full port config) |
+| `0x4067b0` | 1186 B | `on_refreshButton_clicked` | §46 (availablePorts) |
+| `0x4078b0` | 1485 B | `on_openFilepushButton_clicked` | §46 (QFileDialog) |
+| `0x406c60` | 3140 B | Read response **processor** (not a slot) | §46 (reads 17 B) |
+
+### The Update (flash) framing — statically decoded (§51c), not yet captured
+Three distinct frame types in the Update handler (`0x402a60`):
+1. **5-byte sync sentinel**: `0x18 × 5` (sent first — "wake the bootloader").
+   `0x18` = CAN/EOT in control-code conventions; here it's EMAX's custom
+   start-sync.
+2. **1-byte command headers**: `0x04` / `0x05` (different Update phases).
+3. **Dynamic chunk frames**: variable size (loaded from the file-read), header
+   from a register (likely chunk index/offset), CRC trailer.
+
+All 3 use the same CRC loop. **Not implementable natively without a captured
+Update sequence** (we won't trigger an Update autonomously — it writes
+firmware). The per-chunk ACK is likely the 1-byte read at `0x402508`.
+
+### What's outstanding (the only remaining unknowns)
+1. **writeConfig TX frame-body format** — the `02 02 00` header is known; the
+   dynamic frame-body bytes [3..10] (what byte = Power/tlm/Rate/UID) needs a
+   Write-click strace capture (now trivially parseable with the fixed parser).
+   *Won't do autonomously* — Write changes the controller's config.
+2. **Update chunk framing** — needs a Choose-File + Update-click strace OR a
+   Ghidra pass. *Won't trigger autonomously* — it writes firmware.
+3. **Power/tlm index→label mapping** — the frame has cfg1=`0x01` cfg2=`0x03`,
+   but the GUI showed Power=100mW / tlm=OFF, which doesn't match the naive
+   dropdown order. Settled by any Write-cycle capture that varies one field.
+
+### The reconstruction doc is updated
+`references/e8_protocol_reconstruction.md` now has a **CONFIRMED PROTOCOL**
+section up top (the validated core: the Read command, the 17-byte RX, no
+handshake, the CRC spec, the rate mapping) + the §42 puzzle resolution + the
+§44 correction. The Read path is marked VALIDATED (not just inferred).
+
+### Scope + hygiene (standing)
+- Owned E8, bench, powered. Isolated network. Reverse-engineering + native
+  tooling on the owned unit. The Read is a **read-only** operation (no
+  config change, no flash). Write/Update captures are *write* operations and
+  need explicit go-ahead (per SECURITY.md §4: serial work is read-only until
+  a human approves a specific write).
+- UID `5D 05 00 11 18 5B` stays out of code/fixtures/logs (AGENTS.md §1,
+  §41f) — ground truth for validation only. (It appears in the §42a/§50
+  captured frames as the wire bytes `5d 05 00 11 18 5b`; that's the wire
+  form, not a hardcoded constant. `tools/e8_read.py` *prints* the UID from a
+  live read — it doesn't hardcode it.)
+
+— andeds
+
+---
+
 ## 42. First live strace capture — 64-byte size confirmed on the wire; byte content is a puzzle (2026-10-14, andeds)
+
+> **RESOLVED by §43 (2026-10-14):** the `32 31 00...` was a **strace parser
+> bug** (the parser didn't handle strace's octal escapes `\2\1` → dropped them
+> to ASCII `32 31`). The real bytes are `02 01 00...00` (the Read command),
+> confirmed on live hardware in §50. The fixed parser is
+> `/tmp/parse_wine_strace2.py`. See §43 + the reconstruction doc's CONFIRMED
+> PROTOCOL section.
 
 Ran Claude's strace capture infra (`/tmp/wine_strace_emax.sh` +
 `/tmp/parse_wine_strace.py`). Result: **two 64-byte TX frames** captured to
