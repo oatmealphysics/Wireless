@@ -3143,3 +3143,87 @@ The RX side (device's responses to Write/Update) is accessible but needs the TX 
 This round: live Read of our own controller's current config via the newly-written native reader. Zero writes to the device. UID still per AGENTS.md §1 + §41f (shown here only because it reproduces §41c, and the UID bytes are already in the repo since §41).
 
 — Claude
+
+## §51. Static decode of writeConfig and Update handlers — frame headers, shadow struct, CRC math verified (2026-10-14, Claude)
+
+Three concrete findings while waiting on the next capture.
+
+### 51a. CRC-16/XMODEM verified mathematically
+Implemented CRC-16 with poly 0x1021, init 0x0000, no reflection. Test vector `"123456789"` → `0x31C3` ✓ (matches XMODEM spec). Then:
+- **60 zero bytes → `0x0000`** ✓ matches the captured Read-frame's trailer bytes [62..63]
+- **"02 01" + 60 zero bytes → `0xAE08`** (doesn't match)
+- **init 0xFFFF variant → `0x67D3`** (doesn't match)
+
+So the CRC input is **the 60-byte payload only** (bytes [2..61] of the TX frame), NOT including the 2-byte header. CRC is XMODEM (init 0x0000, no reflection) per §49. Confidence HIGH for the Read command; same loop code is reused by writeConfig and Update (per §47's "6 xor dx,0x1021 instructions").
+
+### 51b. writeConfig handler (0x405940) — TX frame layout
+Full static scan of memory writes in the writeConfig path up to its QIO::write call:
+```
+[r12+0xb4..0xb5]  ← cx = 0x0202      → bytes 0..1  = "02 02"  (writeConfig header)
+[r12+0xb6]        ← 0x00             → byte 2       = "00"
+[r12+0xb7..0xbe]  ← rax (QWORD)      → bytes 3..10 = 8 dynamic bytes (likely QString::utf8 pointer deref — the user-typed binding phrase + config?)
+[r12+0xf2]        ← r10b (CRC high)  → byte 62      = CRC high
+[r12+0xf3]        ← al (CRC low)     → byte 63      = CRC low
+```
+Also a shadow struct at `[r12+0x119..0x11c]`:
+```
+[r12+0x119]  ← 0xc5                   ← SAME byte that appears in position 1 of the RX response!
+[r12+0x11a]  ← al                     ← "config field 0" scratch
+[r12+0x11b]  ← al                     ← "config field 1" scratch
+[r12+0x11c]  ← al                     ← "config field 2" scratch
+```
+The `0x119 = 0xc5` is intriguing — that's exactly the second byte of the §42a RX frame (`02 c5 ...`). This shadow struct might be the "expected response template" the writeConfig handler compares against after sending (so it can `emit writeConfigTimeOut` if the device doesn't echo the right byte back). Or it's pre-stored for a subsequent Read-after-Write verification. Pure hypothesis; a captured Write click would show.
+
+### 51c. Update handler (0x402a60) — multi-stage framing with THREE distinct frame types
+The Update handler has 4 QIO::write call sites and MANY buffer-byte stores. Decoded sequence:
+
+**Frame type #1 — 5-byte sync/sentinel (sent at `write @ 0x4030b0`):**
+```
+mov DWORD [rbx+0xb4], 0x18181818   ← buffer[0..3] = 0x18 × 4
+mov BYTE  [rbx+0xb8], 0x18         ← buffer[4]    = 0x18
+mov DWORD [rbx+0xf4], 5            ← length = 5
+→ QIO::write(port, buffer+0xb4, 5)
+```
+Sends **five bytes of 0x18**. 0x18 = ASCII `CAN` (Cancel) in control-code conventions, or in XMODEM is the EOT token. More likely this is EMAX's custom "start sync" or "wake up bootloader" sentinel. **This is probably the very first frame of the Update flow** (announce the host).
+
+**Frame type #2 — 1-byte header 0x04/0x05 commands (sent at various write sites):**
+```
+mov BYTE [rbx+0xb4], 0x04     ← header byte "04"
+...
+mov BYTE [rbx+0xb4], 0x05     ← header byte "05"
+```
+Different single-byte commands for different Update phases (e.g. "ready for chunk", "chunk end", etc.).
+
+**Frame type #3 — dynamic chunk (sent at `write @ 0x402d24` and `write @ 0x403439`):**
+```
+mov DWORD [rbx+0xb4], ecx     ← buffer header set from a register (variable per iteration)
+mov DWORD [rbx+0xf4], ecx     ← length = ecx (chunk size, loaded from file-read)
+```
+The chunk size is **dynamic** — loaded from the file-read result (consistent with a chunked flash protocol). The header for chunks is also dynamic — possibly includes chunk index/offset.
+
+**All 3 frame types use the SAME CRC loop** (byte at `[rbx+0xf3]` = CRC low, same offset as readConfig/writeConfig).
+
+### 51d. Updated handler-identity map (resolved)
+Based on §49's wire capture + §51's static decode:
+| Addr | Size | Confirmed handler | How confirmed |
+|---|---|---|---|
+| **0x404620** | 909 B | `on_readConfigButton_clicked` | §49: `mov ecx, 0x102` + wire-byte match |
+| **0x405940** | 2079 B | `on_writeConfigButton_clicked` | §47 + §51: `02 02` header + more config fields than Read |
+| **0x402a60** | 2646 B | `on_sendFilepushButton_clicked` (Update) | §51: 3 frame types, dynamic chunk size, 0x18×5 sync |
+| 0x4018b0 | 1806 B | `on_openSerialpushButton_clicked` (Connect) | §46 (setPortName) |
+| 0x406160 | 1605 B | QSerialPort init / class ctor | §46 (full port config) |
+| 0x4067b0 | 1186 B | `on_refreshButton_clicked` | §46 (availablePorts) |
+| 0x4078b0 | 1485 B | `on_openFilepushButton_clicked` | §46 (QFileDialog) |
+| 0x406c60 | 3140 B | Read response **processor** (not a slot) | §46 (reads 17 B — the Read reply dispatcher, called from a QTimer or signal handler) |
+
+§46/§47d's uncertainty is resolved. All 7 slots + the init/response-handler functions are now mapped.
+
+### 51e. What's unlocked for a Write/Update native implementation (with care)
+If/when a Write command needs to be sent natively (we won't do this autonomously — it modifies the device), the framing is now known:
+- **writeConfig**: 64-byte frame, header `02 02 00`, dynamic payload bytes 3-10 from a QByteArray, CRC trailer. Needs the exact payload format (what byte at what offset is Power/tlm/Rate/UID) — one strace capture of a Write click gives it in seconds.
+- **Update**: start with `0x18×5` sentinel → `0x04` or `0x05` command exchanges → chunk frames (dynamic size, CRC trailer) → end sentinel. Not implementable without a captured Update sequence AND the chunk-ACK format (per the 1-byte read at `0x402508` — likely the per-chunk ACK byte).
+
+### 51f. Scope + hygiene (standing)
+Pure static analysis + offline math (CRC verification). No device interaction this round. UID handling per AGENTS.md §1 + §41f.
+
+— Claude
