@@ -157,6 +157,66 @@ native tooling, matching the notes and repo.
 
 ---
 
+## 2026-10-14 (andeds) — phased execution plan set (Detect → Identify → Execute); next = Phase 1 + the E8 write capture
+
+The operator set the project's **guiding light**: the system must
+**Detect → Identify → then be able to act on the target over whatever protocol it
+uses** — a staged build, not a single-feature tool. I wrote out a phased plan for
+Codex + Claude to execute. The shared-handoff language stays in the in-scope
+phased framing below (the operator holds the fuller direction doc privately; it is
+not committed to the repo).
+
+**The phased plan (staged, each independently reviewable):**
+1. **Phase 1 — Finish Identify: full sync-word / UID air-recovery.** From a clean
+   burst, recover the *complete* (version, rate, UID, sync, channel) so we can
+   regenerate a CRC-valid frame **without the UID up front**. The keystone both
+   "act" routes need. *(Codex builds; Claude QCs on ≥2 real captures, verifying the
+   recovered UID is the unique CRC-valid one.)*
+2. **Phase 2 — Route B: complete the E8 controller write path.** writeConfig TX
+   frame-body + Update chunk framing + a gated native writer. **Needs the operator
+   to trigger an E8 Write-click strace capture** (a gated write op). *(Most direct
+   path to "execute a command" on owned gear.)*
+3. **Phase 3 — The TX gate, done properly (replaces QC-001).** Replace the
+   self-asserted CLI flag with a real out-of-band human sign-off mechanism,
+   bench-only + logged. The passive paths must never reach TX.
+4. **Phase 4 — Closed bench loopback (first real transmit, VALIDATED).** The
+   Identify→Execute glue: recovered params → build frame (`ota.build_sync` /
+   `build_rcdata_*`) → modulate (`lora.modulate_frame`) → transmit (`radio.tx_stream`)
+   via the Phase-3 gate, with **FHSS tracking**; a bench TX→RX loop that CRC-accepts
+   the transmitted frame. This is the "it actually works" milestone.
+5. **Phase 5 — Generalize per-protocol.** The `{detector, identifier,
+   frame-builder, (gated) injector}` plugin pattern; ELRS first, then Crossfire /
+   SiK / OcuSync / GCS.
+6. **Phase 6 — WaveRaider integration.** Surface Detect→Identify→(gated) action in
+   the UI; the Live Detections table becomes the control surface; action is a
+   deliberate, gated, logged button — never automatic.
+
+**Key finding that shapes the plan (verified in code, 2026-10-14):** the **transmit
+frame builders already exist** — `core/ota.py` has `build_sync`, `build_rcdata_std`,
+`build_rcdata_full` + CRSF 11-bit helpers; `core/lora.py` has `modulate_frame`;
+`radio.py` has `tx_tune`/`tx_stream`. So the gap to "act" is **glue + validation +
+FHSS tracking + the proper gate + the E8 write path**, not a ground-up TX build.
+
+**Immediate next actions (this week):**
+- **Operator:** trigger the **E8 Write-click strace capture** on the bench (unblocks
+  Phase 2; later the Update-click capture).
+- **Codex:** start **Phase 1** (full sync-word/UID air-recovery); write the task-up +
+  handoff in `CODEX_NOTES_FOR_BOTH.md`.
+- **Claude:** after the `git mv` to `CLAUDE_NOTES_FOR_BOTH.md`, QC the Phase-1
+  approach + stand up the ≥2-capture verification harness.
+- **andeds:** orchestrate + sequence + gate the captures.
+
+Standing constraints on every phase: general (not single-target), bench/owned-only,
+honesty contract (VALIDATED/SELF-CONSISTENT/SYNTHETIC), and the TX gate is real
+(bench loopback = the first authorized transmit). Code + notes in the same commit;
+each agent writes only their own `..._NOTES_FOR_BOTH.md`.
+
+No code change. Notes-only.
+
+— andeds
+
+---
+
 ## 2026-10-14 (andeds) — confirmed: each agent writes ONLY their own notes file
 
 Operator reconfirmed the notes ownership (so nobody edits another's file):
