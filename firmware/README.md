@@ -2,6 +2,8 @@
 
 Collected 2026-10-14 for offline analysis and security testing in preparation for a wireless drone CTF.
 
+**Handoff evidence note (2026-10-14):** See [the detailed home lab notes](../HOME-LAB-HANDOFF.md) for acquisition status, source-version distinctions, and tool limitations. The particular E8's MCU, installed firmware version, and upstream target mapping remain unconfirmed; ESP32/OLED/Nano mapping below is a hypothesis based on related modules. No E8-specific binary has been positively identified in this corpus. Source checks established two explicit UID fields in the 4.1.0 SYNC struct, while the existing lookup helper assumes three bytes. The complete corpus hash manifest is [SHA256SUMS](SHA256SUMS).
+
 ---
 
 ## Hardware → Chipset Mapping
@@ -163,6 +165,7 @@ f06b053564ab37a18f5fd74c2e08cf9997434ef10a2b5d5785274a6cffeff5b2  betaflight/bet
 22463809f4172fcb7003b8fd9ea6528dfa14c9d1f98e530c6c5ffa3926a929d0  betaflight/betaflight_2026.6.2_STM32F411.hex
 d98f2569e4fba71a3c3054fd798c6329c64b7ee4b686384a2a1abc9e28d9ad0e  betaflight/betaflight_CRAZYBEEF4SX1280.bin
 0f9fc14eb368c4805a802a9bd65b4921ad5c420bf91e0446570c097e0569c387  betaflight/betaflight_STM32F411.bin
+7b21b072fede3e23fdc43b4d4722d47276f789f6517573e956ec228b1f6bea94  betaflight/EMAX_TINYHAWKF4SX1280.config
 4b7d5acb364ff1f28265c5e84d1e63bec20a1a1a39f1e292250d7cae251db85a  src/betaflight-2026.6.2.tar.gz
 d1d854d83017dfc09d1c78dfba5ce400952a6c61ae64fdd2a2188fcf16bb36c0  src/expresslrs-4.1.0.tar.gz
 ```
