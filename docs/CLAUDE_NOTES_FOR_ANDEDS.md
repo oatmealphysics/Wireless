@@ -3007,3 +3007,69 @@ Still LOW confidence until the Ghidra pass or a strace click:
 All read-only. The strace scripts in /tmp are host-side instrumentation of a tool we own; they don't talk to the drone. UID handling per AGENTS.md §1 + §41f.
 
 — Claude
+
+## §49. STRACE PARSER WAS BROKEN — real TX bytes are `02 01 00...00`; 0x404620 IS the Read handler (2026-10-14, Claude)
+
+Big correction to §42's "32 31 00…00" result. Two bugs stacked:
+
+### 49a. The parser bug
+`/tmp/parse_wine_strace.py` didn't handle strace's default **octal** escapes (`\N`, `\NN`, `\NNN`). When strace prints `\2\1\0\0…`, those are **bytes 0x02 0x01 0x00 0x00**, not ASCII `"21\0\0"`. My parser's `elif nx == '0'` only matched a lone `\0`; it fell through for `\2`, `\1`, etc., and dropped them to literal `'2'` (0x32) and `'1'` (0x31). That's where the bogus `32 31` header came from — pure parser corruption.
+
+**Fixed parser at `/tmp/parse_wine_strace2.py`** — proper octal decoding. Re-parsed the existing `/tmp/wine_strace.log`:
+```
+--- TX #1  FD=27  path=/dev/ttyACM0  want=64 got=64
+  bytes: 02 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+         00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+         00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+         00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+--- TX #2  (identical to TX #1)
+```
+And **openat() was captured** — my previous regex just didn't match strace's `-y`-annotated form:
+```
+openat(AT_FDCWD<.../server-10302-...>, "/home/borealis/.wine/dosdevices/com33", O_RDWR|O_NONBLOCK) = 162</dev/ttyACM0>
+```
+Port is opened via the Wine dosdevices symlink; strace resolves it to `/dev/ttyACM0`.
+
+### 49b. The on-wire frame IS `02 01 00…00 00 00` (not `02 02 …`)
+With correct bytes, the handler can be pinpointed. Scanning `.text` for `mov ecx, 0x102` (which produces WORD store `02 01` little-endian): **exactly one hit, at `0x404764`** — inside the 909-byte handler at `0x404620-0x4049ad`. Disassembling the surrounding block:
+```
+0x404762  xor edx, edx                 ; CRC-high accumulator starts 0
+0x404764  mov ecx, 0x102               ; cx = 0x0102
+0x404769  mov BYTE [rbx+0xf3], al      ; buffer[0x3f] = AL  (CRC low)
+0x40476f  mov WORD [rbx+0x110], dx     ; mirror CRC state at a shadow offset
+0x40477b  movzx edx, ah                ; dx = AH          (CRC high)
+0x40477e  lea rax, [rip+0xac67]        ; → .rdata "default\0startTra..." (label)
+0x404785  mov WORD [rbx+0xb4], cx      ; buffer[0x00..0x01] = 0x0102 → bytes 02 01
+0x40478f  mov BYTE [rbx+0xf2], dl      ; buffer[0x3e] = DL  (CRC high)
+0x40479f  mov BYTE [rbx+0xb6], 0       ; buffer[0x02] = 0x00
+```
+**That reproduces the exact wire frame** `02 01 <60-byte payload> <CRC16>`. The handler at **0x404620 is `on_readConfigButton_clicked`** — confirmed by wire bytes + the matching WORD-store sequence. §46/§47d's uncertainty is resolved.
+
+### 49c. Why bytes 62-63 are `00 00` (and what it says about the CRC init)
+The CRC-16-CCITT loop (confirmed in §47) is computed over the 60-byte payload (buffer[2..61]). For the Read command, the payload is all zeros. If **CRC init = 0x0000**, CRC-16-CCITT of 60 zero bytes = 0x0000, so bytes [62..63] land as `00 00`. The capture matches that exactly, so **the CRC init value is `0x0000`** (not the "classic CCITT" `0xFFFF`). This narrows down the CRC spec to the "XMODEM" variant: init=0x0000, poly=0x1021, no reflection.
+
+### 49d. Updated protocol table (HIGH confidence)
+Everything in §47-§48's HIGH-confidence table stands, with these refinements:
+| Item | New value | Change from §47 |
+|---|---|---|
+| TX header for **Read command** | **`02 01`** | was `02 02` (that was writeConfig, not readConfig) |
+| TX header byte [2] | `00` | unchanged (both handlers) |
+| CRC algorithm | **CRC-16/XMODEM** (poly 0x1021, init 0x0000, no refl) | init was unknown |
+| Read command payload (bytes 3-61) | all zeros | was "unknown" |
+| **Read command Full frame** | **`02 01 00` + 59 zero bytes + `00 00` CRC** | NEW |
+
+The writeConfig handler (0x405940) still writes `02 02` header per §47 — that's a different command. Captured only the Read handler's output; a Write-click capture would show the writeConfig frame.
+
+### 49e. What this unblocks right now
+A native Python Read-command sender can be written against the owned E-8 immediately. The 64-byte TX frame is **constant**: `02 01` + 62 zero bytes. The device responds with the 17-byte RX from §42a (`02 c5 <config:3> <UID:6> <padding:6>`). No dynamic fields on the request side for Read.
+
+### 49f. Remaining unknowns (unchanged scope)
+Still need (either Ghidra pass or additional strace captures):
+- **writeConfig** TX frame — needs a captured Write click (would show the dynamic UID/config bytes in the payload)
+- **Update** chunk framing — needs a captured Choose-File + Update click
+- Response-side protocol state machine (the 59-byte / 2-byte / 1-byte reads at other read sites)
+
+### 49g. Fixed parser is in /tmp (ready to commit if useful)
+`/tmp/parse_wine_strace2.py` has the octal fix. If the Write and Update captures use the same strace infra, this parser gives correct bytes. Say the word and I'll commit both parser scripts to the repo (probably as `tools/wine_strace_*.py`).
+
+— Claude
