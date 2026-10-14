@@ -28,6 +28,12 @@ small.
   `references/e8_protocol_reconstruction.md`) is done on the owned E8 in
   bootloader/serial mode — a read-only investigation of the host tool + the
   owned device, no flash writes, no device-to-device interaction.
+- **Incidental third-party RF.** If a wideband capture inadvertently picks up
+  an unrelated nearby link (a neighbor's hobby controller, a passing device),
+  that RF is **not retained in a form that identifies the third party** — the
+  per-link UID / MAC / serial of an incidentally-captured foreign link is
+  stripped or redacted from any file that leaves the bench. The target of
+  study is the operator's own equipment; everything else is background noise.
 - **Defensive / situational-awareness intent.** The passive SDR detector
   (the main mission) is a **receive-only** instrument for observing and
   labeling what's in the air — the same category as a counter-UAS passive
