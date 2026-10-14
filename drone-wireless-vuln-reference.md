@@ -54,8 +54,10 @@
   - [Broadcom BCM43xx Firmware Exploitation](#broadcom-bcm43xx-firmware-exploitation)
   - [Marvell Avastar ThreadX Exploitation](#marvell-avastar-threadx-exploitation)
   - [ESP32 Bluetooth Firmware Exploitation (BrakTooth)](#esp32-bluetooth-firmware-exploitation-braktooth)
+  - [Broadcom / Cypress Bluetooth Firmware (Frankenstein)](#broadcom--cypress-bluetooth-firmware-frankenstein)
   - [Qualcomm WLAN Firmware & Driver Exploitation](#qualcomm-wlan-firmware--driver-exploitation)
   - [Linux WiFi Driver Kernel Exploitation](#linux-wifi-driver-kernel-exploitation)
+  - [Host-Stack Memory Corruption and ROP](#host-stack-memory-corruption-and-rop)
   - [Firmware-to-Host Escalation Patterns](#firmware-to-host-escalation-patterns)
   - [Firmware Reversing & Exploit Dev Toolchain](#firmware-reversing--exploit-dev-toolchain)
 - [Tooling Reference](#tooling-reference)
@@ -88,6 +90,13 @@
 | **CVE-2017-0781** (BlueBorne) | Android Bluetooth | BNEP RCE | **RCE** | ~10m BT | No | Yes |
 | **CVE-2017-1000251** (BlueBorne) | Linux BlueZ | L2CAP stack overflow | **RCE** | ~10m BT | No | Yes |
 | **CVE-2021-28139** (BrakTooth) | ESP32 BT Classic | LMP feature page overflow | **RCE** (CVSS 8.8) | BT range | No | Yes |
+| **CVE-2019-11516** (Frankenstein) | Broadcom BT firmware | EIR heap overflow | **RCE** | BT range | No pairing; target scans | Research PoC |
+| **CVE-2019-13916** (Frankenstein) | Broadcom/Cypress BT firmware | BLE PDU heap overflow | **RCE or crash**, build-dependent | BLE range | No | Partial PoC |
+| **CVE-2020-12351/12352** (BleedingTooth) | Linux Bluetooth host stack | Type confusion + stack leak | **Kernel RCE chain** | BT range | No | Yes |
+| **CVE-2020-24490** (BleedingTooth) | Linux Bluetooth host stack | Heap overflow | **RCE or crash** | BLE range | No; target scanning | Yes |
+| **CVE-2022-41674/42719** | Linux cfg80211/mac80211 | Heap overflow / use-after-free | **Potential kernel RCE** | WiFi range | Frame injection | Yes/varies |
+| **CVE-2022-23088** | FreeBSD 802.11 stack | Mesh ID heap overflow | **Kernel RCE** | WiFi range | No; target scanning | Unknown |
+| **CVE-2024-45434** (PerfektBlue) | OpenSynergy BlueSDK | AVRCP use-after-free | **RCE** | BT range | Product-dependent pairing | Private/demo |
 | **CVE-2019-9506** (KNOB) | All BT BR/EDR | Key entropy reduction | MitM | BT range | No | Yes |
 | **CVE-2020-10135** (BIAS) | All BT BR/EDR ≤5.2 | Auth bypass / impersonation | MitM | BT range | No | Yes |
 | **CVE-2018-16986** (BLEEDINGBIT) | TI CC2640/CC2650 | BLE heap overflow | **RCE** | BLE range | No | Yes |
@@ -954,22 +963,24 @@ This section covers the low-level exploitation mechanics of wireless chipset att
 
 ### Why Wireless Chipsets Are Soft Targets
 
-Wireless chipset firmware runs on a separate processor (typically ARM Cortex-R4 or Cortex-M) from the main application processor. These embedded environments lack the security mitigations found on modern desktop/mobile CPUs:
+Many FullMAC WiFi and Bluetooth controllers run protocol logic on a separate processor, often an ARM core, while SoftMAC designs leave more parsing in the host kernel. Mitigations are **firmware- and build-specific**; identify the exact chip, ROM revision, RAM patch level, host driver, and transport before assuming an exploit primitive.
 
 | Property | Desktop/Mobile OS | Wireless Chipset Firmware |
 |---|---|---|
-| **ASLR** | Yes — randomized memory layout | **No** — firmware loaded to fixed addresses on every boot |
-| **DEP/NX** | Yes — non-executable data pages | **No** — all RAM is typically RWX (read-write-execute) |
-| **Stack canaries** | Yes (compiler-inserted) | **Rarely** — most firmware compiled without |
-| **Heap hardening** | Safe unlinking, heap cookies | **No** — simple freelists, no integrity checks |
-| **Code signing** | Kernel enforces signed code | **Varies** — some vendors sign firmware, many don't |
-| **Secure boot** | Chain of trust from bootloader | **Rare** on WiFi/BT SoCs |
+| **ASLR** | Common | Often absent in studied legacy firmware; verify per build |
+| **DEP/NX** | Common | Varies; the studied BCM4358 MPU mapping was effectively RWX |
+| **Stack canaries** | Common | Varies; later Broadcom BT builds added a small BLOC-buffer integrity check |
+| **Heap hardening** | Mature allocators and integrity checks | Often simple RTOS allocators; exact metadata and checks vary |
+| **Code signing / measured boot** | Common on current platforms | Product-specific; RAM patch mechanisms can coexist with signed base firmware |
+| **Host isolation** | MMU/IOMMU and process isolation | Depends on bus, DMA windows, IOMMU policy, driver validation, and shared-memory design |
 
-**Implications for exploitation:**
-- No ASLR means addresses are **deterministic per firmware version** — build a dictionary of gadget addresses, retry until the firmware version matches
-- No DEP means **shellcode runs directly in the heap** — no need for ROP chains in many cases, though ROP is still useful for pivoting
-- No heap hardening means **heap metadata overwrites are trivially exploitable** — no safe unlinking to bypass
-- Firmware is loaded by the host OS on every reset and is often unencrypted, making **static analysis straightforward**
+**Research implications:**
+- Fixed layouts can make addresses deterministic, but addresses still change across firmware builds and RAM patch sets.
+- Executable RAM can permit direct shellcode; NX-capable targets or hardened host kernels require code reuse, an executable mapping, or another control-flow primitive.
+- Freelist corruption becomes useful only after proving allocator behavior, allocation order, overwrite reach, and a controlled allocation.
+- A host-loaded firmware file can aid static analysis, while ROM-resident code may require debug access, a read primitive, vendor symbols, or binary correlation.
+
+Treat “RCE” in an advisory as an impact classification, not proof that a public, reliable exploit exists. Record separately whether a source demonstrates a crash, instruction-pointer control, arbitrary read/write, code execution, or a complete host-compromise chain.
 
 ### Broadcom BCM43xx Firmware Exploitation
 
@@ -1072,6 +1083,25 @@ Gal Beniamini's research documented two distinct exploitation paths:
 - Computer running the PoC tool
 - Target ESP32 device within Bluetooth range
 
+### Broadcom / Cypress Bluetooth Firmware (Frankenstein)
+
+The USENIX Security 2020 **Frankenstein** work is a useful counterexample to treating every overflow as equally exploitable. The researchers emulated substantial portions of Broadcom/Cypress Bluetooth firmware, injected frames at the virtual modem boundary, instrumented the ThreadX/BLOC allocator, and checked results on physical controllers.
+
+| CVE | Reachable surface | Primitive and demonstrated limit |
+|---|---|---|
+| **CVE-2019-11516** | Classic Bluetooth Extended Inquiry Response while the victim scans | Heap overflow; BLOC freelist corruption produced a write-what-where primitive and firmware RCE on tested older Broadcom builds |
+| **CVE-2019-13916** | BLE PDU reception | Four-byte heap overflow; exploitable on some older builds, while a later build's one-byte canary caused a controlled crash and prevented the published RCE technique |
+| **CVE-2019-18614** | ACL traffic between host and controller | Heap overflow caused by advertised/actual buffer-size mismatch on CYW20735; reachability depends on the host path and may require privileges on other builds |
+| **CVE-2019-15063** | WiFi/Bluetooth coexistence registers | Cross-core denial of service and host instability; this is not itself a general arbitrary-write bridge into the WiFi core |
+
+**Reusable exploitation pattern:**
+1. Recover the exact allocator layout and BLOC header fields from the matching firmware.
+2. Use a protocol-valid allocation/free sequence to place an overflow next to a free-list entry.
+3. Corrupt the free-list pointer and trigger repetitive allocations to obtain a controlled write.
+4. Redirect a callback or other control-flow target only after confirming the target build lacks an effective integrity check.
+
+**Why the distinction matters:** the same input caused RCE on some firmware and only a crash on a later controller. Chip family alone is not enough to establish exploitability. Patchram capacity and OEM update delivery also vary, so preserve the firmware build date and patch table in every lab result.
+
 ### Qualcomm WLAN Firmware & Driver Exploitation
 
 Qualcomm's WLAN stack has had multiple memory corruption bugs, though fewer have public exploitation details compared to Broadcom.
@@ -1082,30 +1112,26 @@ Qualcomm's WLAN stack has had multiple memory corruption bugs, though fewer have
 |---|---|---|---|
 | CVE-2019-14114 | Buffer overflow | WLAN firmware GTK IE parsing | RCE — GTK key larger than buffer (CVSS 9.8) |
 | CVE-2019-10546 | Heap overflow | WLAN firmware | RCE — remote, no auth |
+| CVE-2019-10539 | Buffer overflow | Qualcomm WLAN firmware (QualPwn) | Remote firmware code execution; exact trigger/build requirements apply |
+| CVE-2019-10540 | Buffer overflow | WLAN firmware NAN processing (QualPwn) | Controller compromise and demonstrated pivot toward the modem |
+| CVE-2019-10538 | Address-range validation | Qualcomm host-kernel component (QualPwn) | Compromised firmware/modem can map arbitrary pages into its range and compromise HLOS |
 | CVE-2021-1972 | Integer overflow | WLAN firmware (extscan hostlist) | Code exec with elevated privileges |
-| CVE-2026-21385 | Integer overflow → heap corruption | WLAN alignment math | RCE — in CISA KEV catalog (actively exploited) |
 | CVE-2016-5342 | Heap overflow | wcnss_wlan Linux driver | Kernel compromise via /dev/wcnss_wlan |
-
-#### CVE-2026-21385 — Actively Exploited in the Wild
-
-- **In the CISA Known Exploited Vulnerabilities catalog** — confirmed real-world exploitation
-- Integer overflow in alignment calculation during memory allocation
-- Affects QCA WiFi/Ethernet chips
-- Patched in Qualcomm's March 2026 bulletin
-- **CTF relevance:** If the target uses Qualcomm WiFi and hasn't applied the March 2026 patch, this is a live RCE vector
 
 #### QuAlPwn Escalation Pattern (2019)
 
-QuAlPwn demonstrated the full chain on Qualcomm WiFi:
-1. Over-the-air WiFi frame triggers firmware vulnerability
-2. Gain code execution on the WiFi firmware (separate ARM core)
-3. Exploit shared memory / DMA interface to write into host kernel memory
-4. Achieve kernel code execution on the application processor
-5. **Full device compromise from a WiFi frame**
+QualPwn spans **CVE-2019-10539** (compromise WLAN firmware), **CVE-2019-10540** (WLAN-to-modem path through NAN processing), and **CVE-2019-10538** (modem/firmware-to-HLOS address-range validation). Public reporting sometimes shortens the name to two CVEs, so record which stages the target and source actually cover.
+
+1. Establish the exact Snapdragon/WLAN firmware and Android security-patch level.
+2. Confirm the firmware issue is reachable from the target's radio state and frame-processing path.
+3. Treat firmware execution and host execution as separate milestones.
+4. Analyze the WLAN-to-modem and firmware/modem-to-host interfaces as separate, build-specific boundaries.
+
+**Correction from the previous revision:** CVE-2026-21385 is a Qualcomm **Graphics** memory-corruption issue with local attack vector, despite the affected-product list containing connectivity-capable SoCs. It is in CISA KEV, but it is not a WLAN firmware vulnerability and has been removed from this wireless exploit table.
 
 ### Linux WiFi Driver Kernel Exploitation
 
-WiFi driver bugs in the Linux kernel are valuable because they can give **kernel-level code execution** on the host processor, bypassing all firmware-level boundaries.
+WiFi driver and shared-stack bugs execute on the host processor and can therefore be higher impact than controller-only faults. Reachability depends on whether parsing occurs in firmware, a FullMAC driver, or the shared `cfg80211`/`mac80211` stack.
 
 #### Relevant Driver Vulnerability Classes
 
@@ -1117,27 +1143,53 @@ WiFi driver bugs in the Linux kernel are valuable because they can give **kernel
 | **mt76** | MediaTek | CVE-2026-68309 | NULL ptr deref, HE capability parsing |
 | **mwlwifi** | Marvell | (unnumbered) | Heap overflow in auth path |
 | **rtl8812au** (OOT) | Realtek | CVE-2020-26652 | DoS in nl80211 |
+| **cfg80211/mac80211** | Shared Linux 802.11 stack | CVE-2022-41674, CVE-2022-42719 through CVE-2022-42722 | Heap overflow, UAF/refcount errors, list corruption, NULL dereference |
 
-#### Exploitation Pattern: WiFi Frame → Kernel Heap Overflow
+#### 2022 cfg80211/mac80211 Cluster
 
-1. Attacker sends crafted WiFi management or data frames over the air
-2. The kernel WiFi driver processes the frame in **kernel context**
-3. A length/bounds check is missing — data overflows a **kernel heap buffer (SLUB/SLAB)**
-4. Attacker shapes the heap (spray objects of known size) so the overflow corrupts a **target object**
-5. Target object contains a function pointer (e.g., `sk_buff` operations, file operations, timer callbacks)
-6. Overwritten function pointer redirects execution to attacker-controlled data
-7. **Result:** Kernel code execution from a WiFi frame
+The 2022 cluster is especially relevant to Linux-based drone controllers because it affected shared WiFi code rather than one vendor's firmware:
+
+| CVE | Root cause | Research value |
+|---|---|---|
+| **CVE-2022-41674** | Heap overwrite while updating a non-transmitted BSS profile | Controlled management-frame fields reached a kernel allocation; assess overwrite length and adjacent cache objects |
+| **CVE-2022-42719** | Multi-BSSID parsing use-after-free | Demonstrates lifetime bugs in nested information-element parsing |
+| **CVE-2022-42720** | BSS reference-counting errors | UAF potential in shared BSS handling |
+| **CVE-2022-42721** | Non-transmitted BSS list corruption | Primarily treated as list corruption/DoS; public descriptions mention potential code execution, so retain the distinction |
+| **CVE-2022-42722** | P2P beacon-protection NULL dereference | DoS rather than a demonstrated code-execution primitive |
+
+The cluster was fixed in upstream stable kernels including 6.0.2, 5.19.16, 5.15.74, 5.10.148, and 5.4.218. Vendor kernels may backport fixes without matching those version numbers, so compare commits or vendor advisories.
+
+#### FreeBSD Scan-Path Case Study: CVE-2022-23088
+
+FreeBSD's 802.11 beacon handler copied an unchecked Mesh ID into a heap allocation. A malicious beacon could reach the parser while a client was merely scanning, and the FreeBSD advisory classifies kernel-memory overwrite and remote code execution as the impact. This is a useful audit pattern for any drone host stack: enumerate information-element copies reachable before association, then trace their destination allocation sizes.
 
 #### Key Technique: SLUB Heap Shaping
 
-The Linux SLUB allocator groups same-sized allocations into slabs. To exploit a heap overflow:
-1. Spray objects of the same size as the vulnerable buffer to fill the slab
-2. Free one object to create a "hole" adjacent to the vulnerable buffer
-3. Allocate the target object (with function pointers) into the hole
-4. Trigger the overflow — it corrupts the adjacent target object
-5. Trigger the function pointer call — execution redirected
+SLUB groups allocations by cache and size class, but a usable layout depends on object type, per-CPU freelists, allocation context, hardening options, and radio-triggered timing. A defensible workflow is:
 
-This technique is well-documented for netfilter (CVE-2024-1086, 99.4% success rate) and applies identically to WiFi driver heap overflows.
+1. Identify the precise allocation site and cache (`kmalloc-*` or a dedicated cache).
+2. Measure which remotely influenced operations allocate and free objects in that cache.
+3. Choose a target object based on reachable fields and mitigations, not merely the presence of a function pointer.
+4. Establish a separate address-disclosure or control-flow strategy when KASLR, SMEP/SMAP, CFI, or pointer authentication applies.
+5. Reproduce under the target kernel configuration; success rates from unrelated subsystems do not transfer automatically.
+
+### Host-Stack Memory Corruption and ROP
+
+#### BleedingTooth: A Documented Kernel ROP Chain
+
+Google's BleedingTooth work provides a concrete model for moving from a radio-reachable bug to modern host-kernel RCE:
+
+| CVE | Primitive |
+|---|---|
+| **CVE-2020-12351 (BadKarma)** | L2CAP/A2MP heap type confusion used to gain controlled out-of-bounds access |
+| **CVE-2020-12352 (BadChoice)** | Uninitialized stack disclosure used to leak kernel text and heap addresses |
+| **CVE-2020-24490 (BadVibes)** | Oversized BLE advertising report copied into a fixed host buffer; alternative heap-overflow route requiring Bluetooth 5 scanning |
+
+The published Ubuntu 20.04 chain used Bluetooth-reachable heap shaping, reclaimed a known `kmalloc-1024` address, controlled an `sk_filter` pointer, leaked KASLR-relevant addresses, pivoted the kernel stack, and executed a ROP chain. That sequence explains why “heap corruption” alone is not equivalent to RCE: the exploit also needed a stable heap primitive, an information leak, mitigation-aware control flow, and a triggerable dereference.
+
+#### PerfektBlue: Product Integration Changes Reachability
+
+PerfektBlue's **CVE-2024-45434** is an AVRCP use-after-free in OpenSynergy BlueSDK; CVE-2024-45431 through CVE-2024-45433 provide supporting L2CAP/RFCOMM logic and information-disclosure behavior. PCA demonstrated code execution on automotive head units, but its advisory says pairing and profile security depend on each product integration. For drone research, inventory third-party Bluetooth middleware as carefully as the radio silicon and keep “pre-pairing,” “post-pairing,” and “one-click” paths separate.
 
 ### Firmware-to-Host Escalation Patterns
 
@@ -1145,11 +1197,10 @@ Once you have code execution on a wireless chipset's firmware, the next goal is 
 
 #### Pattern 1: DMA (Direct Memory Access)
 
-- WiFi/BT chips often have DMA access to host memory for transferring frames
-- With firmware code execution, the attacker can **read/write arbitrary host memory via DMA**
-- This bypasses all software-level protections on the host
-- **Mitigation:** IOMMU (if configured) restricts DMA to specific memory regions
-- **Research:** Marvell Avastar exploitation noted that "exploitation of the Wi-Fi device can lead to exploitation of the host application processor in some cases, but this depends on host OS hardening and the availability of DMA"
+- Some controllers transfer frames through DMA rings or shared buffers, but firmware execution does **not** automatically imply arbitrary host-memory access.
+- Establish the bus type, device-visible address windows, IOMMU/SMMU mappings, descriptor validation, and whether the controller can choose destination addresses.
+- In Project Zero's Broadcom iPhone work, the WiFi controller had visibility into mapped I/O regions rather than unrestricted host memory; the successful pivot used the host event interface and a separate host bug.
+- Treat “DMA-capable” as a hypothesis to test from schematics, driver setup, and IOMMU state—not as an exploit primitive.
 
 #### Pattern 2: Malicious Event Injection
 
@@ -1167,26 +1218,25 @@ Once you have code execution on a wireless chipset's firmware, the next goal is 
 
 #### Pattern 4: Firmware Update Poisoning
 
-- If the host loads firmware on every chip reset (common for Broadcom), a persistent attacker can:
-  1. Modify the firmware image on the host filesystem
-  2. Chip resets → host loads the backdoored firmware
-  3. Persistent code execution on the wireless chip across reboots
+- Modifying a host-loaded firmware image is a **persistence step after gaining host filesystem write access**, not a controller-to-host escalation technique by itself.
+- Verify signature enforcement, measured boot, immutable partitions, rollback protection, and whether RAM patches are authenticated.
+- A controller-only exploit normally loses volatile changes on reset unless it also reaches nonvolatile storage or a host update path.
 
-#### Complete Exploitation Chain Example
+#### Illustrative Exploitation Chain
 
 ```
-Attacker broadcasts malicious WiFi beacons
-  → Victim chip processes beacons during background scan
-    → Heap overflow in firmware (no ASLR, no DEP)
+Attacker transmits a frame accepted in the target's current radio state
+  → Matching firmware build reaches a memory-corruption bug
+    → A build-specific primitive redirects controller execution
       → Shellcode executes on WiFi SoC (ARM Cortex-R4)
         → Craft malicious event frames to host driver
-          → Kernel heap overflow in brcmfmac/wl driver
-            → SLUB heap shaping → function pointer overwrite
-              → Kernel code execution on application processor
+          → A separate, confirmed host-driver bug is reached
+            → Target-specific heap and mitigation bypasses
+              → Host kernel code execution
                 → Full device compromise
 ```
 
-**Total interaction required from victim:** Zero. The entire chain is triggered by the victim's chip performing routine background WiFi scans.
+This diagram combines patterns seen in published research; it is not evidence that arbitrary firmware and host CVEs compose. Authentication state, scanning behavior, frame filtering, firmware build, driver version, transport, and mitigations must all match. Label a chain “zero-click” only when the cited end-to-end demonstration establishes that property.
 
 ### Firmware Reversing & Exploit Dev Toolchain
 
@@ -1341,8 +1391,18 @@ Alphabetical index of all CVEs referenced in this document.
 | CVE-2019-9502 | [Broadcom/Cypress](#broadcom--cypress-bcm43xx) | wl driver heap overflow |
 | CVE-2019-9503 | [Broadcom/Cypress](#broadcom--cypress-bcm43xx) | Firmware event frame validation bypass |
 | CVE-2019-9506 | [KNOB](#knob--bias-bluetooth-classic) | BT key entropy negotiation downgrade |
+| CVE-2019-10538 | [QualPwn](#qualpwn-escalation-pattern-2019) | Qualcomm firmware/modem-to-HLOS address-range validation |
+| CVE-2019-10539 | [QualPwn](#qualpwn-escalation-pattern-2019) | Qualcomm WLAN firmware buffer overflow/RCE |
+| CVE-2019-10540 | [QualPwn](#qualpwn-escalation-pattern-2019) | Qualcomm WLAN NAN buffer overflow / WLAN-to-modem stage |
+| CVE-2019-11516 | [Frankenstein](#broadcom--cypress-bluetooth-firmware-frankenstein) | Broadcom EIR heap overflow and firmware RCE |
+| CVE-2019-13916 | [Frankenstein](#broadcom--cypress-bluetooth-firmware-frankenstein) | Broadcom/Cypress BLE PDU heap overflow |
+| CVE-2019-15063 | [Frankenstein](#broadcom--cypress-bluetooth-firmware-frankenstein) | WiFi/BT coexistence denial of service |
+| CVE-2019-18614 | [Frankenstein](#broadcom--cypress-bluetooth-firmware-frankenstein) | CYW20735 ACL heap overflow |
 | CVE-2020-10135 | [BIAS](#knob--bias-bluetooth-classic) | BT impersonation / auth bypass |
+| CVE-2020-12351 | [BleedingTooth](#bleedingtooth-a-documented-kernel-rop-chain) | Linux L2CAP/A2MP heap type confusion |
+| CVE-2020-12352 | [BleedingTooth](#bleedingtooth-a-documented-kernel-rop-chain) | Linux Bluetooth stack information leak |
 | CVE-2020-15509 | [Nordic nRF52](#nordic-nrf52) | Nordic Android BLE encryption downgrade |
+| CVE-2020-24490 | [BleedingTooth](#bleedingtooth-a-documented-kernel-rop-chain) | Linux BLE advertising heap overflow |
 | CVE-2020-24586 | [FragAttacks](#fragattacks-fragmentation--aggregation) | WiFi fragment cache attack |
 | CVE-2020-24587 | [FragAttacks](#fragattacks-fragmentation--aggregation) | WiFi mixed key fragment attack |
 | CVE-2020-24588 | [FragAttacks](#fragattacks-fragmentation--aggregation) | WiFi A-MSDU aggregation attack |
@@ -1377,15 +1437,24 @@ Alphabetical index of all CVEs referenced in this document.
 | CVE-2020-12313 | [Intel WiFi](#intel-wifi-ax200--ax210) | Intel WiFi privilege escalation |
 | CVE-2021-0071 | [Intel WiFi](#intel-wifi-ax200--ax210) | Intel WiFi UEFI priv esc |
 | CVE-2022-21212 | [Intel WiFi](#intel-wifi-ax200--ax210) | Intel WiFi input validation DoS |
+| CVE-2022-23088 | [FreeBSD Scan Path](#freebsd-scan-path-case-study-cve-2022-23088) | Beacon Mesh ID heap overflow and kernel RCE |
+| CVE-2022-41674 | [Linux WiFi Drivers](#2022-cfg80211mac80211-cluster) | cfg80211 heap overwrite |
+| CVE-2022-42719 | [Linux WiFi Drivers](#2022-cfg80211mac80211-cluster) | mac80211 multi-BSSID use-after-free |
+| CVE-2022-42720 | [Linux WiFi Drivers](#2022-cfg80211mac80211-cluster) | cfg80211 BSS reference-counting UAF |
+| CVE-2022-42721 | [Linux WiFi Drivers](#2022-cfg80211mac80211-cluster) | cfg80211 BSS list corruption |
+| CVE-2022-42722 | [Linux WiFi Drivers](#2022-cfg80211mac80211-cluster) | mac80211 P2P NULL dereference |
 | CVE-2025-38656 | [Intel WiFi](#intel-wifi-ax200--ax210) | iwlwifi use-after-free DoS |
 | CVE-2019-6496 | [Marvell Avastar](#marvell-avastar-threadx-exploitation) | ThreadX block pool overflow zero-click RCE |
 | CVE-2019-10546 | [Qualcomm WLAN](#qualcomm-wlan-firmware--driver-exploitation) | Qualcomm WLAN firmware heap overflow RCE |
 | CVE-2019-14114 | [Qualcomm WLAN](#qualcomm-wlan-firmware--driver-exploitation) | Qualcomm WLAN GTK IE buffer overflow RCE |
 | CVE-2021-1972 | [Qualcomm WLAN](#qualcomm-wlan-firmware--driver-exploitation) | Qualcomm WLAN extscan integer overflow |
-| CVE-2026-21385 | [Qualcomm WLAN](#qualcomm-wlan-firmware--driver-exploitation) | Qualcomm WLAN integer overflow RCE (CISA KEV) |
 | CVE-2016-5342 | [Qualcomm WLAN](#qualcomm-wlan-firmware--driver-exploitation) | wcnss_wlan driver heap overflow |
 | CVE-2017-0561 | [Broadcom Exploitation](#broadcom-bcm43xx-firmware-exploitation) | Broadcom TDLS heap overflow RCE |
 | CVE-2023-53524 | [Linux WiFi Drivers](#linux-wifi-driver-kernel-exploitation) | iwlwifi debugfs integer overflow |
+| CVE-2024-45431 | [PerfektBlue](#perfektblue-product-integration-changes-reachability) | BlueSDK L2CAP remote-CID validation flaw |
+| CVE-2024-45432 | [PerfektBlue](#perfektblue-product-integration-changes-reachability) | BlueSDK RFCOMM incorrect parameter / disclosure primitive |
+| CVE-2024-45433 | [PerfektBlue](#perfektblue-product-integration-changes-reachability) | BlueSDK RFCOMM control-flow validation bypass |
+| CVE-2024-45434 | [PerfektBlue](#perfektblue-product-integration-changes-reachability) | BlueSDK AVRCP use-after-free RCE |
 
 ---
 
@@ -1421,8 +1490,11 @@ Alphabetical index of all CVEs referenced in this document.
 - [MUVIDS — MAVLink IDS (NDSS AutoSec 2021)](https://www.ndss-symposium.org/wp-content/uploads/autosec2021_23036_paper.pdf)
 - [Project Zero: Over The Air Part 1 — Broadcom WiFi Firmware](https://projectzero.google/2017/04/over-air-exploiting-broadcoms-wi-fi_4.html)
 - [Project Zero: Over The Air Part 2 — Host Kernel Exploitation](https://projectzero.google/2017/04/over-air-exploiting-broadcoms-wi-fi_11.html)
+- [Project Zero: Over The Air Vol. 2 Part 3 — Controller-to-Host Interface](https://projectzero.google/2017/10/over-air-vol-2-pt-3-exploiting-wi-fi.html)
 - [Exodus Intelligence: Broadpwn Technical Analysis](https://blog.exodusintel.com/2017/07/26/broadpwn/)
 - [Black Hat 2017: Broadpwn Whitepaper](https://blackhat.com/docs/us-17/thursday/us-17-Artenstein-Broadpwn-Remotely-Compromising-Android-And-iOS-Via-A-Bug-In-Broadcoms-Wifi-Chipsets-wp.pdf)
+- [Frankenstein — Advanced Wireless Fuzzing (USENIX Security 2020)](https://www.usenix.org/conference/usenixsecurity20/presentation/ruge)
+- [BleedingTooth — Linux Bluetooth Zero-Click Kernel RCE (Google Security Research)](https://google.github.io/security-research/pocs/linux/bleedingtooth/writeup.html)
 - [BrakTooth: Causing Havoc on Bluetooth Link Manager (ASSET Group)](https://asset-group.github.io/disclosures/braktooth/disclosure.html)
 - [BrakTooth Paper (PDF)](https://asset-group.github.io/papers/BrakTooth.pdf)
 - [Quarkslab: Reverse Engineering Broadcom Wireless Chipsets](https://blog.quarkslab.com/reverse-engineering-broadcom-wireless-chipsets.html)
@@ -1433,6 +1505,7 @@ Alphabetical index of all CVEs referenced in this document.
 ### Vendor Advisories & Databases
 
 - [Qualcomm Security Bulletins](https://docs.qualcomm.com/securitybulletin/may-2026-bulletin.html)
+- [Android Pixel Bulletin — August 2019 (QualPwn fixes)](https://source.android.com/docs/security/bulletin/pixel/2019-08-01)
 - [Espressif ESP-IDF Security Vulnerabilities](https://docs.espressif.com/projects/esp-idf/en/stable/esp32/security/vulnerabilities.html)
 - [CERT/CC VU#166939 — Broadcom WiFi Driver Vulns](https://www.kb.cert.org/vuls/id/166939/)
 - [CERT/CC VU#317277 — BLEEDINGBIT](https://kb.cert.org/vuls/id/317277)
@@ -1440,6 +1513,9 @@ Alphabetical index of all CVEs referenced in this document.
 - [CISA ICS-ALERT-20-063-01 — SweynTooth](https://www.cisa.gov/news-events/ics-alerts/ics-alert-20-063-01)
 - [CISA ICSA-26-090-02 — PX4 Autopilot](https://www.cisa.gov/news-events/ics-advisories/icsa-26-090-02)
 - [Intel WiFi Advisory INTEL-SA-00402](https://www.intel.com/content/www/us/en/security-center/advisory/intel-sa-00402.html)
+- [Ubuntu USN-5728-1 — Linux WiFi Stack Vulnerabilities](https://ubuntu.com/security/notices/USN-5728-1)
+- [FreeBSD-SA-22:07.wifi_meshid — Beacon Mesh ID Heap Overflow](https://security.freebsd.org/advisories/FreeBSD-SA-22:07.wifi_meshid.asc)
+- [PCA PerfektBlue Advisory — OpenSynergy BlueSDK](https://pcacybersecurity.com/resources/advisory/perfekt-blue)
 - [TI Security Advisory SWRZ164A](https://www.ti.com.cn/document-viewer/cn/lit/html/SWRZ164A/GUID-D067D4AC-3D0C-4D5E-B009-ADA6D7AB36FF)
 - [Tenable TRA-2019-22 — Parrot Anafi DoS](https://www.tenable.com/security/research/tra-2019-22)
 - [NVD (National Vulnerability Database)](https://nvd.nist.gov/)
