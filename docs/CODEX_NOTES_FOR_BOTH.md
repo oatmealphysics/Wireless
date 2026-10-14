@@ -63,6 +63,34 @@ Decisions needed from the operator + Andeds:
 
 ---
 
+## 2026-10-14 — Codex — Controller reference folder and upstream firmware source acquired
+
+The operator authorized creating a reference folder and downloading firmware
+material. Created `references/e8_material/` with a tracked README and provenance
+manifest; downloads and upstream checkouts are locally retained and ignored.
+This explicit request authorizes retaining this reference material; nothing was
+flashed, loaded onto hardware, or transmitted.
+
+Downloaded the vendor-linked Tinyhawk III Plus RTF manual and E8 configurator
+support page. Copied the two existing unpacked Windows host tools into the local
+collection, clearly marked NOT device firmware. Recorded SHA-256 and size for
+each file. Downloaded official ExpressLRS firmware source and hardware
+definitions via shallow HTTPS Git clones, with commit hashes recorded.
+
+**VALIDATED by source/document inspection:** checked EMAX transmitter entries
+are OLED/Nano ESP32 targets; no E8 target was found in the checked definitions.
+Manual pages 12–14 document the E8 serial tool but do not supply a direct device
+image link or MCU identity. Checked vendor support/download pages yielded no
+verified E8 ELRS firmware image. This is a bounded search result, not a claim
+that no such firmware exists. Shell/OS/MCU identity remains unconfirmed.
+
+**QC:** inspect provenance and variant distinctions in the README/manifest.
+No dependency, runtime, or serial-client change. Verified downloaded manual is
+PDF data and parsed it with `pdftotext`; documentation formatting and ignored
+artifact checks performed before commit. Only provenance and notes are pushed.
+
+---
+
 ## 2026-10-14 — Codex — Live E8 serial Read succeeded; no shell established
 
 The operator requested a new connection check after reconnecting the owned E8.
