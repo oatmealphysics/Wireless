@@ -1594,7 +1594,95 @@ unchanged).
 
 ---
 
+## 41. Reviewed §44–§48 — the Enigma-block was wrong; protocol now largely decoded (2026-10-14, andeds)
+
+Reviewed Claude's §44–§48 + **verified the key claims against the inner exe on
+the enclave**. Headline: **my §39/§40 "Enigma block" was wrong** — the 113 KB
+inner exe is **plaintext** (`.text` entropy 5.799, confirmed by my own
+measurement), not code-encrypted. The 23.8 MB download was **Enigma Virtual
+Box** (a file-storage packer, not code encryption), already unpacked by
+`evbunpack`. No memory-dump needed — the handlers are readable directly.
+
+### What I verified on the enclave (against the inner exe)
+- **`.text` entropy = 5.799** (plaintext — confirms §44; encrypted would be
+  ~7.9). My §39 "7.6–7.95 fully encrypted" was measuring the **Virtual Box
+  data section** (`.enigma1` in the 23.8 MB download), not the inner exe's `.text`.
+- **CRC-16-CCITT poly `0x1021`** — 6 `xor dx,0x1021` instructions in `.text`
+  (`0x2099`, `0x2387`, `0x2549`, `0x2727`, `0x3b4a`, `0x53bb`) + 7 total
+  `0x1021` u16 occurrences. The CRC is real (§47).
+- **`02 02` header** — 1 occurrence in `.text` (the `mov WORD [buf+0xb4],
+  0x0202`; present, just not in the exact byte pattern I first searched).
+- **IAT entries** (Claude's §45a) resolve to valid import pointers:
+  `QIODevice::write` @ `0x419a1c`, `QIODevice::read` @ `0x419a14`,
+  `QSerialPort::setBaudRate` @ `0x419b04`, `QFile::QFile` @ `0x41993c`.
+
+### The protocol is now largely decoded (HIGH confidence)
+- **Transport:** CDC-ACM `/dev/ttyACM0`, **115200 8N1, no flow** (§45).
+- **TX commands = fixed 64 bytes**; **RX params-read = 17 bytes** (§46,
+  matches §42a).
+- **TX frame header = `02 02 00`** (fixed, §47b).
+- **TX frame integrity = CRC-16-CCITT** (poly `0x1021`, trailer at bytes
+  62-63, §47).
+- **Handler function map** + the Qt moc slot/signal index table (§46/§48a).
+- **The `okk` ACK was a false positive** (§44b) — it's pixel data in an
+  embedded icon; the real Update ACK is a binary byte (the 1-byte read at
+  `0x402508`), not an ASCII token.
+
+The full updated reconstruction is in
+`references/e8_protocol_reconstruction.md` (rewritten to incorporate §44–§48,
+with the §44 correction up top + the HIGH-confidence transport/frame/CRC
+details + the remaining unknowns + the next step).
+
+### What's still unknown (LOW confidence)
+- The exact 64-byte TX sequence (the dynamic fields at offsets 3-18 — the
+  UID/binding bytes; 19-61 — the padding/memcpy).
+- Which 64-B handler is readConfig vs writeConfig (the `qt_metacall`
+  slot-index → function-pointer map — one Ghidra pass away).
+- The Update chunk framing (chunk size, per-chunk header, the binary ACK).
+- The 59-byte / 1-byte / 2-byte read semantics (§46d).
+
+### The next step (the recommendation)
+Do **both** (Claude's §44c/§48c):
+1. **One live `strace -f -e trace=write -s 128`** on the Wine process + a
+   manual Connect+Read click — captures the exact 64-byte Read TX bytes (fast,
+   30 s, one click; the port-exclusivity blocker doesn't apply — strace reads
+   the Wine process's syscalls directly). Claude's infra is ready:
+   `/tmp/wine_strace_emax.sh` + `/tmp/parse_wine_strace.py`.
+2. **A Ghidra decompile of the handlers** (on the enclave, if Ghidra is
+   available) — the inner exe is plaintext; decompiling the handlers + the
+   `qt_metacall` dispatcher gives all the TX framing + the state machine + the
+   Update chunk framing. ~15-min pass.
+
+The strace gives ground truth to validate the Ghidra decode against.
+
+### My §39/§40 error, owned
+I measured the `.enigma1` entropy of the **23.8 MB Virtual Box download** and
+concluded "fully encrypted → memory-dump needed." That was the wrong artifact
+(the Virtual Box data section is a file-storage bundle, not code encryption) and the
+wrong conclusion (the inner exe's `.text` is plaintext). The memory-dump paths
+(§40 A/B) are unnecessary. Good catch by Claude; the correction is now in the
+reconstruction doc + this note.
+
+### Scope + hygiene (standing)
+- Owned E8, bench, powered. Isolated network. Reverse-engineering + native
+  tooling on the owned unit. **Reads only** (no flash / no Write-Update) until
+  the parser is understood. The static decode + the strace capture are both
+  host-side reads.
+- UID `5D 05 00 11 18 5B` stays out of code/fixtures/logs (AGENTS.md §1,
+  §41f) — ground truth for validation only.
+
+— andeds
+
+---
+
 ## 40. The Enigma unpack — two paths to the handler code (2026-10-13, andeds)
+
+> **CORRECTED by §41 (2026-10-14):** the 113 KB inner exe is plaintext
+> (`.text` entropy 5.799), not Enigma-code-encrypted. The 23.8 MB download
+> was Enigma Virtual Box (a file-storage packer), already unpacked. The
+> memory-dump paths below (A: winegdb, B: `/proc/<PID>/mem`) are unnecessary
+> — the handlers are readable directly from the inner exe. See §41 + the
+> §44 CORRECTION in `references/e8_protocol_reconstruction.md`.
 
 Follow-on to §39. The protocol is reconstructed from the plaintext evidence,
 but the **exact TX byte framing** (the Read-command layout, the Update chunk
