@@ -124,6 +124,76 @@ range). 6 `xor dx,0x1021` instructions were found in `.text` (at `0x2099`,
 multiple handlers (the frame is CRC'd on the TX path; the RX path presumably
 verifies it).
 
+## 2d. First live strace capture (2026-10-14) — the 64-byte size is confirmed; the byte content is a puzzle
+
+A live `strace -f -e trace=write` capture (Claude's `/tmp/wine_strace_emax.sh`
++ `/tmp/parse_wine_strace.py`) captured **two 64-byte TX frames** to
+`/dev/ttyACM0`. The frame **size** (64 bytes) is now confirmed on the wire
+(matches §46's static decode). The port-exclusivity blocker (§37) is solved —
+strace reads the Wine process's `write()` syscalls directly, no second reader.
+
+**But the byte content doesn't match the static decode:**
+```
+Captured TX (both frames identical):
+  32 31 00 00 00 00 ... 00   (64 bytes; only bytes 0-1 non-zero)
+  ascii: "21" + 62 zero bytes
+```
+| | Static decode (Claude §47b) | Capture (live) |
+|---|---|---|
+| Header (bytes 0-2) | `02 02 00` | `32 31 00` (`21` + zero) |
+| Frame body (bytes 3-61) | dynamic UID/binding bytes | **all zeros** |
+| CRC trailer (62-63) | CRC-16-CCITT | **zeros** (no CRC) |
+| Frame size | 64 bytes | **64 bytes ✓** |
+
+**The parser also warned:** "No serial-port opens found. Did the GUI click
+Connect?" — the **Connect step may not have registered** in the strace. If the
+port wasn't fully opened/handshaken before the Read click, the tool likely sent
+a **default/placeholder frame** rather than the fully-built Read command.
+
+**Three explanations (in order of likelihood):**
+1. **Incomplete handshake (most likely).** The Connect step wasn't captured;
+   the Read click fired before the session was established → the tool sent a
+   placeholder (`32 31 00...` = command code "21" + zero padding). The `32 31`
+   = ASCII "21" is a plausible command opcode, but the all-zeros frame body (no
+   UID, no CRC) suggests the frame wasn't fully populated.
+2. **The Read command genuinely is `32 31 00...`** (command code "21" +
+   padding, no frame data/CRC) — a simple query where the device returns the
+   UID/config in the 17-byte RX. In this case, Claude's `02 02 00` + UID +
+   CRC decode (§47b) was of a *different* handler (writeConfig or Update, per
+   §47d's own uncertainty), and the Read handler is the simpler one. Possible,
+   but unconfirmed from one ambiguous capture.
+3. **strace/parser byte mangling** — less likely (the parser reported
+   want=64 got=64 actual_len=64; the `32 31 00...` pattern is too clean to be
+   corruption), but not impossible.
+
+**Not a verified protocol yet** — one ambiguous frame with a static-decode
+mismatch is a strong lead, not a confirmation. The "yes" so far: **the strace
+method works + the 64-byte frame size is confirmed on the wire.** The
+byte-exact Read command needs one clean **Connect → Read → Disconnect** capture
+(with the Connect handshake captured too).
+
+### The next capture (to resolve the `32 31 00...` ambiguity)
+```sh
+# 1. Power-cycle the E-8 in serial mode (hold RIGHT on right d-pad, green LED)
+# 2. Fresh strace capture:
+bash /tmp/wine_strace_emax.sh 2>&1 | tee /tmp/wine_strace2.log
+# 3. In the GUI, the FULL sequence:
+#    a. Select COM33
+#    b. Click Connect       <- must be captured (port open + handshake)
+#    c. WAIT for "Connected" status (a few seconds)
+#    d. Click Read          <- the Read command (in context now)
+#    e. WAIT for "Read Success" (a few seconds)
+#    f. Click Disconnect
+# 4. Ctrl-C, then:
+python3 /tmp/parse_wine_strace.py /tmp/wine_strace2.log
+```
+The **Connect handshake frames** are the missing piece — they show the port-open
+sequence + the device-query that establishes the session, and put the Read
+command in context. If the Read is genuinely `32 31 00...`, the Connect frames
+confirm the command-code style (ASCII opcodes vs binary). If it was a
+placeholder, the properly-handshaken Read shows the real command (UID/CRC if
+that's how it works).
+
 ## 3. Command surface (from the Qt moc stringdata table — §48a)
 
 The class's Qt moc stringdata (18 entries at `.rdata` VA `0x413c00`):

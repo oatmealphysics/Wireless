@@ -1594,6 +1594,93 @@ unchanged).
 
 ---
 
+## 42. First live strace capture — 64-byte size confirmed on the wire; byte content is a puzzle (2026-10-14, andeds)
+
+Ran Claude's strace capture infra (`/tmp/wine_strace_emax.sh` +
+`/tmp/parse_wine_strace.py`). Result: **two 64-byte TX frames** captured to
+`/dev/ttyACM0`. Two things confirmed, one puzzle.
+
+### What's confirmed (the "yes" so far)
+- **The strace method works** — the port-exclusivity blocker (§37) is solved.
+  strace reads the Wine process's `write()` syscalls directly; no second
+  reader of the port, no 0-byte result.
+- **The 64-byte TX frame size is confirmed on the wire** (matches §46's static
+  decode). Both captured frames are exactly 64 bytes (want=64 got=64
+  actual_len=64).
+
+### The puzzle (not a verified protocol yet)
+The captured frame content is:
+```
+32 31 00 00 00 ... 00   (64 bytes; only bytes 0-1 non-zero; ascii "21" + 62 zeros)
+```
+This **doesn't match** the static decode (Claude §47b: `02 02 00` header +
+dynamic UID bytes + CRC-16-CCITT trailer). The captured frame has no UID, no
+CRC — just `32 31` (ASCII "21") + zero padding.
+
+The parser also warned: **"No serial-port opens found. Did the GUI click
+Connect?"** — the **Connect step likely wasn't captured.** If the port wasn't
+fully opened/handshaken before the Read click, the tool sent a
+**default/placeholder frame**, not the fully-built Read command.
+
+Three explanations (in order of likelihood):
+1. **Incomplete handshake (most likely).** Connect wasn't captured → Read
+   fired before the session was established → placeholder frame. The `32 31`
+   = ASCII "21" is a plausible command opcode, but the all-zeros frame body (no
+   UID, no CRC) says the frame wasn't fully populated.
+2. **The Read command genuinely is `32 31 00...`** (command code "21" +
+   padding, no frame data/CRC) — a simple query where the device returns the
+   UID/config in the 17-byte RX. In this case, Claude's `02 02 00` + UID +
+   CRC decode was of a *different* handler (writeConfig/Update, per §47d's
+   own uncertainty), and the Read handler is the simpler one. Possible, but
+   unconfirmed from one ambiguous capture.
+3. **strace/parser byte mangling** — less likely (want=got=actual_len=64; the
+   `32 31 00...` pattern is too clean to be corruption), but not impossible.
+
+**I'm not declaring "yes" on the protocol yet.** One ambiguous frame with a
+static-decode mismatch is a strong lead, not a confirmation. The honest state:
+the method works + the frame size is confirmed; the byte-exact Read command
+needs one clean capture.
+
+### The next capture (the single thing that resolves it)
+A clean **Connect → Read → Disconnect** capture (with the Connect handshake
+captured too):
+```sh
+# 1. Power-cycle the E-8 in serial mode (hold RIGHT on right d-pad, green LED)
+# 2. Fresh strace:
+bash /tmp/wine_strace_emax.sh 2>&1 | tee /tmp/wine_strace2.log
+# 3. In the GUI, the FULL sequence:
+#    a. Select COM33
+#    b. Click Connect       <- must be captured (port open + handshake)
+#    c. WAIT for "Connected" status (a few seconds)
+#    d. Click Read          <- the Read command (in context now)
+#    e. WAIT for "Read Success" (a few seconds)
+#    f. Click Disconnect
+# 4. Ctrl-C, then:
+python3 /tmp/parse_wine_strace.py /tmp/wine_strace2.log
+```
+The **Connect handshake frames** are the missing piece — they show the
+port-open sequence + the device-query that establishes the session, and put
+the Read command in context. If the Read is genuinely `32 31 00...`, the
+Connect frames confirm the command-code style (ASCII opcodes vs binary). If
+it was a placeholder, the properly-handshaken Read shows the real command
+(UID/CRC if that's how it works).
+
+The full finding + the next-capture procedure are in
+`references/e8_protocol_reconstruction.md` §2d.
+
+### Scope + hygiene (standing)
+- Owned E8, bench, powered. Isolated network. Reverse-engineering + native
+  tooling on the owned unit. **Reads only** (no flash / no Write-Update) until
+  the parser is understood. The strace capture is a host-side read of the
+  Wine process's syscalls (no extra device interaction beyond the tool's
+  normal Connect+Read).
+- UID `5D 05 00 11 18 5B` stays out of code/fixtures/logs (AGENTS.md §1,
+  §41f) — ground truth for validation only.
+
+— andeds
+
+---
+
 ## 41. Reviewed §44–§48 — the Enigma-block was wrong; protocol now largely decoded (2026-10-14, andeds)
 
 Reviewed Claude's §44–§48 + **verified the key claims against the inner exe on
