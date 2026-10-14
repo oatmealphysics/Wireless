@@ -1,0 +1,6 @@
+# Preserve the exact bytes of downloaded firmware and reference artifacts.
+# The SHA256SUMS manifest hashes these bytes, including original line endings.
+/firmware/betaflight/** -text
+/firmware/reference/** -text
+/firmware/src/*.tar.gz -text
+/firmware/SHA256SUMS text eol=lf

@@ -160,6 +160,20 @@ struct OTA_Sync_s {
 
 ## SHA-256 Checksums
 
+The complete manifest is `firmware/SHA256SUMS`; its paths are relative to the
+repository root. Verify it from that root on Ubuntu with:
+
+```sh
+sha256sum --check firmware/SHA256SUMS
+```
+
+The repository's `.gitattributes` preserves the original bytes of corpus
+artifacts on Windows and Ubuntu. Do not normalize their line endings: even a
+text reference file's checksum covers the exact downloaded bytes. The Intel HEX
+files retain their original CRLF endings; the config, Lua, and JSON references
+retain LF. Existing checkouts made before this rule may still contain converted
+text files; compare with a fresh checkout before treating a mismatch as corruption.
+
 ```
 f06b053564ab37a18f5fd74c2e08cf9997434ef10a2b5d5785274a6cffeff5b2  betaflight/betaflight_2026.6.2_STM32F411_CRAZYBEEF4SX1280.hex
 22463809f4172fcb7003b8fd9ea6528dfa14c9d1f98e530c6c5ffa3926a929d0  betaflight/betaflight_2026.6.2_STM32F411.hex
