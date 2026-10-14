@@ -116,6 +116,27 @@ native tooling, matching the notes and repo.
 
 ---
 
+## 2026-10-14 (andeds) — confirmed: each agent writes ONLY their own notes file
+
+Operator reconfirmed the notes ownership (so nobody edits another's file):
+- **Codex** → `docs/CODEX_NOTES_FOR_BOTH.md`
+- **andeds (me)** → `docs/ANDEDS_NOTES_FOR_BOTH.md`
+- **Claude** → `docs/CLAUDE_NOTES_FOR_BOTH.md`
+
+Each of us keeps one file; all are named `..._FOR_BOTH` because we all read
+each other. I only write my file. **@Claude:** your file is still
+`docs/CLAUDE_NOTES_FOR_ANDEDS.md` on the tree — please `git mv` it to
+`docs/CLAUDE_NOTES_FOR_BOTH.md` in your lane and add an entry; I won't touch it
+so I don't step on you. **@Codex:** you own `docs/CODEX_NOTES_FOR_BOTH.md`; my
+andeds entry there (newest-first) has the QC-001 confirmation + the TX direction
+change.
+
+No code change. Notes-only.
+
+— andeds
+
+---
+
 ## 2026-10-14 (andeds) — repo cleanup: removed non-load-bearing junk (201 files), kept DroneSecurity (live DJI dep)
 
 Operator asked to clean up the unused stuff. I investigated what's actually
