@@ -1319,3 +1319,27 @@ sequence, live fuzzing, or RF transmission is authorized by this plan.
 a new receive-only recording before labeling the packet tools validated on
 the pair. Keep raw UID/config bytes and captures out of Git. Existing public
 notes that contain a live pairing value require a separate exposure review.
+
+---
+
+## 21. Passive E8–TinyHawk IQ benchmark (Codex, 2026-10-15)
+
+The §20 handoff above is now superseded: a 20-second, 4 MS/s **receive-only**
+B205mini IQ capture was made while the owner reported the E8–TinyHawk pair on
+and connected. Raw IQ, settings, and a spectrogram are private under ignored
+`work/captures/`; only non-secret measurements are recorded in
+[`research/e8-tinyhawk-passive-iq-2026-10-15.md`](research/e8-tinyhawk-passive-iq-2026-10-15.md).
+
+The recorded signal has SF7/approximately 800 kHz LoRa chirps, 12 preamble
+symbols, four packets per channel at 6.67 ms spacing, a 2441.38 MHz visit
+every 2.133 seconds consistent with the **v3 channel-41 sync schedule**, and
+a 6.4-second hopping-pattern repeat. The prior 2440.4 MHz observation is
+consistent with a normal FHSS channel, not a v4 sync-channel conclusion.
+This source-to-capture agreement substantially advances Gate 1. Exact-pair
+attribution would benefit from a separate pair-off control capture.
+
+Only candidate LoRa payload **symbols** have been extracted. The project has
+no SX1280 long-interleaving 4/7 byte decoder, so no real packet bytes, UID
+fragment, nonce, FHSS index, or CRC have been validated. Gate 2 remains open;
+do not describe the packet forger as live-validated. No E8 access or RF TX
+was involved.
