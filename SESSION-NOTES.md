@@ -773,3 +773,77 @@ The honest milestone labels matter more than the step numbers.
 — andeds, orchestrator, 2026-10-15. §12 is the current state + next steps.
 Step 1 (rewire the tools to `elrs_core`) is the immediate work item for Codex.
 Step 2 (live protocol check on the bench) is the gate to Phase 2.
+
+---
+
+## 13. Firmware vulnerability analysis (andeds, 2026-10-15)
+
+The owner asked for the firmware-analysis phase: lay of the land, function
+map, memory leaks, high-entropy regions, dangerous calls / buffer control. I
+ran it on the corpus binary (`betaflight_CRAZYBEEF4SX1280.bin`) + the pinned
+source (Betaflight 2026.6.2 + ELRS 4.1.0, both in `firmware/src/`). Full write-up:
+**`firmware/vuln-analysis-CRAZYBEEF4SX1280.md`**. This extends Codex's
+`ghidra-analysis-CRAZYBEEF4SX1280.md` (the lay-of-the-land) with the
+entropy + dangerous-sink passes. Evidence class: VALIDATED (source-derived,
+line-cited). No live exploit, no TX, no hardware.
+
+**Key findings:**
+
+1. **Entropy: NO high-entropy region anywhere.** Overall 6.97 bits/byte, 0
+   windows above 7.5, highest 256-byte block 6.63 (code, not data). No
+   encryption, no packed/obfuscated blobs, no embedded API keys, no PRNG key
+   schedule. Plaintext, unstripped, unobfuscated build. The only "computed"
+   data is the CRC14 table, generated deterministically at runtime. **There is
+   no "find the hidden key" problem** — the secrets are the UID (config) and
+   the binding phrase (if set).
+
+2. **Buffer control: the RC-data overflow path is a DEAD END.** The
+   `memcpy(payload, dmaBuffer, ELRS_RX_TX_BUFF_SIZE)` at `expresslrs.c:846`
+   copies a **fixed 8 bytes** (macro `= 8`, `expresslrs_common.h:48`). Both
+   src and size are fixed; no length field from the air controls the copy. A
+   malformed RC packet **cannot** overflow the channel buffer. Don't spend CTF
+   time hunting an overflow in the ELRS RX path — it's not there.
+
+3. **The MSP-over-ELRS path IS the viable RF→RCE sink** (this is the real
+   finding). `processRFMspPacket()` (`expresslrs.c:697`) accumulates the
+   attacker-controlled MSP payload into `mspBuffer[65]` and, once the link is
+   `ELRS_CONNECTED` + CRC-valid + model-matched, dispatches to
+   `processMspPacket()` — the FC's own MSP command handler. **This is command
+   injection, not memory corruption** (the copy into `mspBuffer` is bounded by
+   `ELRS_MSP_BUFFER_SIZE=65`, no length-field overflow). The reachable commands
+   include `MSP_REBOOT_FIRMWARE`, `MSP_REBOOT_BOOTLOADER_ROM/FLASH`,
+   `MSP_REBOOT_MSC` (DFU entry), plus read commands, and (one level up)
+   `MSP_SET_RX_CONFIG` (model ID / rebind). **An air-injected MSP packet can
+   reboot the FC into DFU or rebind it.**
+
+4. **`USE_RX_EXPRESSLRS_TELEMETRY` + `feature TELEMETRY` are ON in this build**
+   (corpus `.config` lines 15 + 108) — the MSP-over-air path is compiled in.
+   Confirmed, not assumed.
+
+5. **No memory leaks in the ELRS RX path.** All buffers are static fixed
+   arrays (`eprState`, `dmaBuffer[8]`, `mspBuffer[65]`, `telemetryPacket[8]`);
+   no `malloc`/`free` in the RX path. (A full heap audit of the
+   scheduler/CLI/USB paths is a separate work item, out of RF scope.)
+
+6. **The attack chain is now concrete** (restated in the doc §4):
+   RECOVER UID (air `fhss_seed.py` / bind-mode `{0,1,2,3,4,5}` / E8 read) →
+   FORGE (elrs_core.ota, **OTA v3** per Codex §4.1) → SYNC → MODEL-MATCH →
+   INJECT (MSP command). Steps 2–5 are the `elrs_chain.py` + `elrs-packet-forger.py`
+   + Phase-2 FLRC TX; step 1 is the elrs-sdr air-recovery.
+
+**The bind-mode UID `{0,1,2,3,4,5}` is the lowest-hanging fruit** — any
+TinyHawk in bind mode uses the universally-known UID, so the whole chain opens
+with no recovery step. Primary game-day option.
+
+**IDA note:** IDA 9.4 headless would not initialize on this host
+(`Failed to initialize IDA as library, error 1` — proc-module load issue). I
+used the pinned source instead, which is more authoritative for buffer control
+than a binary scan. The binary entropy scan ran cleanly without IDA.
+
+**This reframes the CTF goal:** the firmware analysis confirms the *what*
+(MSP command injection is the real sink, overflow is a dead end) but the
+*how-delivered* (FLRC PHY, Step 1/2 protocol + Step 3 RF) is still the elrs-sdr
+work in §12. The two are now consistent: the exploit chain targets the MSP
+injection surface, delivered over FLRC.
+
+— andeds, orchestrator, 2026-10-15.
