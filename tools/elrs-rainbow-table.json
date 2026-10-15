@@ -1,3090 +1,3093 @@
-[
-  {
-    "phrase": "default ExpressLRS binding phrase",
-    "uid_hex": "0A:B7:0C:7C:38:03",
-    "uid_bytes": [
-      10,
-      183,
-      12,
-      124,
-      56,
-      3
-    ],
-    "sync_bytes": "7C:38:03",
-    "fhss_seed": 209467399,
-    "crc_init": 15363,
-    "collision": false
-  },
-  {
-    "phrase": "expresslrs",
-    "uid_hex": "41:F5:21:E6:3A:E2",
-    "uid_bytes": [
-      65,
-      245,
-      33,
-      230,
-      58,
-      226
-    ],
-    "sync_bytes": "E6:3A:E2",
-    "fhss_seed": 568736486,
-    "crc_init": 16098,
-    "collision": false
-  },
-  {
-    "phrase": "ExpressLRS",
-    "uid_hex": "43:7F:2F:B1:D3:39",
-    "uid_bytes": [
-      67,
-      127,
-      47,
-      177,
-      211,
-      57
-    ],
-    "sync_bytes": "B1:D3:39",
-    "fhss_seed": 800183101,
-    "crc_init": 55097,
-    "collision": false
-  },
-  {
-    "phrase": "EXPRESSLRS",
-    "uid_hex": "A5:A0:C6:35:39:6A",
-    "uid_bytes": [
-      165,
-      160,
-      198,
-      53,
-      57,
-      106
-    ],
-    "sync_bytes": "35:39:6A",
-    "fhss_seed": 3325376878,
-    "crc_init": 15722,
-    "collision": false
-  },
-  {
-    "phrase": "elrs",
-    "uid_hex": "FF:77:7A:3B:34:AB",
-    "uid_bytes": [
-      255,
-      119,
-      122,
-      59,
-      52,
-      171
-    ],
-    "sync_bytes": "3B:34:AB",
-    "fhss_seed": 2050700463,
-    "crc_init": 12459,
-    "collision": false
-  },
-  {
-    "phrase": "ELRS",
-    "uid_hex": "51:FF:F3:22:69:65",
-    "uid_bytes": [
-      81,
-      255,
-      243,
-      34,
-      105,
-      101
-    ],
-    "sync_bytes": "22:69:65",
-    "fhss_seed": 4079118689,
-    "crc_init": 28005,
-    "collision": false
-  },
-  {
-    "phrase": "MyBindingPhrase",
-    "uid_hex": "EF:DE:01:4B:23:48",
-    "uid_bytes": [
-      239,
-      222,
-      1,
-      75,
-      35,
-      72
-    ],
-    "sync_bytes": "4B:23:48",
-    "fhss_seed": 21701452,
-    "crc_init": 10056,
-    "collision": false
-  },
-  {
-    "phrase": "mybindingphrase",
-    "uid_hex": "AB:8B:E7:54:43:86",
-    "uid_bytes": [
-      171,
-      139,
-      231,
-      84,
-      67,
-      134
-    ],
-    "sync_bytes": "54:43:86",
-    "fhss_seed": 3881059202,
-    "crc_init": 18310,
-    "collision": false
-  },
-  {
-    "phrase": "my binding phrase",
-    "uid_hex": "B3:C6:5F:40:FE:79",
-    "uid_bytes": [
-      179,
-      198,
-      95,
-      64,
-      254,
-      121
-    ],
-    "sync_bytes": "40:FE:79",
-    "fhss_seed": 1598094973,
-    "crc_init": 64121,
-    "collision": false
-  },
-  {
-    "phrase": "bindphrase",
-    "uid_hex": "D7:74:FE:D2:74:B7",
-    "uid_bytes": [
-      215,
-      116,
-      254,
-      210,
-      116,
-      183
-    ],
-    "sync_bytes": "D2:74:B7",
-    "fhss_seed": 4275205299,
-    "crc_init": 28855,
-    "collision": false
-  },
-  {
-    "phrase": "BindPhrase",
-    "uid_hex": "46:0E:BB:88:13:20",
-    "uid_bytes": [
-      70,
-      14,
-      187,
-      136,
-      19,
-      32
-    ],
-    "sync_bytes": "88:13:20",
-    "fhss_seed": 3146257188,
-    "crc_init": 5920,
-    "collision": false
-  },
-  {
-    "phrase": "binding",
-    "uid_hex": "9C:BF:2F:7F:03:0F",
-    "uid_bytes": [
-      156,
-      191,
-      47,
-      127,
-      3,
-      15
-    ],
-    "sync_bytes": "7F:03:0F",
-    "fhss_seed": 796853003,
-    "crc_init": 1807,
-    "collision": false
-  },
-  {
-    "phrase": "testphrase",
-    "uid_hex": "ED:87:B6:B8:58:A4",
-    "uid_bytes": [
-      237,
-      135,
-      182,
-      184,
-      88,
-      164
-    ],
-    "sync_bytes": "B8:58:A4",
-    "fhss_seed": 3065534624,
-    "crc_init": 23716,
-    "collision": false
-  },
-  {
-    "phrase": "test",
-    "uid_hex": "4F:04:FD:82:21:55",
-    "uid_bytes": [
-      79,
-      4,
-      253,
-      130,
-      33,
-      85
-    ],
-    "sync_bytes": "82:21:55",
-    "fhss_seed": 4253163857,
-    "crc_init": 9557,
-    "collision": false
-  },
-  {
-    "phrase": "test1234",
-    "uid_hex": "C2:D8:3C:9B:26:A9",
-    "uid_bytes": [
-      194,
-      216,
-      60,
-      155,
-      38,
-      169
-    ],
-    "sync_bytes": "9B:26:A9",
-    "fhss_seed": 1016800941,
-    "crc_init": 8873,
-    "collision": false
-  },
-  {
-    "phrase": "example",
-    "uid_hex": "F7:52:25:2F:9E:B5",
-    "uid_bytes": [
-      247,
-      82,
-      37,
-      47,
-      158,
-      181
-    ],
-    "sync_bytes": "2F:9E:B5",
-    "fhss_seed": 623877809,
-    "crc_init": 39605,
-    "collision": false
-  },
-  {
-    "phrase": "changeme",
-    "uid_hex": "8F:CD:1C:15:A5:8A",
-    "uid_bytes": [
-      143,
-      205,
-      28,
-      21,
-      165,
-      138
-    ],
-    "sync_bytes": "15:A5:8A",
-    "fhss_seed": 471180686,
-    "crc_init": 41354,
-    "collision": false
-  },
-  {
-    "phrase": "eyantra123",
-    "uid_hex": "85:7B:4D:AF:05:84",
-    "uid_bytes": [
-      133,
-      123,
-      77,
-      175,
-      5,
-      132
-    ],
-    "sync_bytes": "AF:05:84",
-    "fhss_seed": 1303315840,
-    "crc_init": 388,
-    "collision": false
-  },
-  {
-    "phrase": "betafpv",
-    "uid_hex": "D4:E3:5B:AC:2E:09",
-    "uid_bytes": [
-      212,
-      227,
-      91,
-      172,
-      46,
-      9
-    ],
-    "sync_bytes": "AC:2E:09",
-    "fhss_seed": 1538010637,
-    "crc_init": 10761,
-    "collision": false
-  },
-  {
-    "phrase": "BetaFPV",
-    "uid_hex": "8F:D4:2B:BD:16:87",
-    "uid_bytes": [
-      143,
-      212,
-      43,
-      189,
-      22,
-      135
-    ],
-    "sync_bytes": "BD:16:87",
-    "fhss_seed": 733812355,
-    "crc_init": 4743,
-    "collision": false
-  },
-  {
-    "phrase": "BETAFPV",
-    "uid_hex": "D1:08:EE:C8:C3:E7",
-    "uid_bytes": [
-      209,
-      8,
-      238,
-      200,
-      195,
-      231
-    ],
-    "sync_bytes": "C8:C3:E7",
-    "fhss_seed": 4006134755,
-    "crc_init": 51175,
-    "collision": false
-  },
-  {
-    "phrase": "happymodel",
-    "uid_hex": "DA:1D:24:23:7F:58",
-    "uid_bytes": [
-      218,
-      29,
-      36,
-      35,
-      127,
-      88
-    ],
-    "sync_bytes": "23:7F:58",
-    "fhss_seed": 606306140,
-    "crc_init": 31576,
-    "collision": false
-  },
-  {
-    "phrase": "HappyModel",
-    "uid_hex": "EE:08:30:B8:C0:A8",
-    "uid_bytes": [
-      238,
-      8,
-      48,
-      184,
-      192,
-      168
-    ],
-    "sync_bytes": "B8:C0:A8",
-    "fhss_seed": 817414316,
-    "crc_init": 50344,
-    "collision": false
-  },
-  {
-    "phrase": "radiomaster",
-    "uid_hex": "D3:0B:26:ED:B8:CF",
-    "uid_bytes": [
-      211,
-      11,
-      38,
-      237,
-      184,
-      207
-    ],
-    "sync_bytes": "ED:B8:CF",
-    "fhss_seed": 653113547,
-    "crc_init": 48335,
-    "collision": false
-  },
-  {
-    "phrase": "RadioMaster",
-    "uid_hex": "F1:80:2C:81:EB:1B",
-    "uid_bytes": [
-      241,
-      128,
-      44,
-      129,
-      235,
-      27
-    ],
-    "sync_bytes": "81:EB:1B",
-    "fhss_seed": 746711839,
-    "crc_init": 61211,
-    "collision": false
-  },
-  {
-    "phrase": "jumper",
-    "uid_hex": "3D:AE:CA:5D:34:B2",
-    "uid_bytes": [
-      61,
-      174,
-      202,
-      93,
-      52,
-      178
-    ],
-    "sync_bytes": "5D:34:B2",
-    "fhss_seed": 3395105974,
-    "crc_init": 12466,
-    "collision": false
-  },
-  {
-    "phrase": "Jumper",
-    "uid_hex": "42:E1:A4:16:03:ED",
-    "uid_bytes": [
-      66,
-      225,
-      164,
-      22,
-      3,
-      237
-    ],
-    "sync_bytes": "16:03:ED",
-    "fhss_seed": 2752906217,
-    "crc_init": 2029,
-    "collision": false
-  },
-  {
-    "phrase": "emax",
-    "uid_hex": "E5:1F:6E:A9:37:72",
-    "uid_bytes": [
-      229,
-      31,
-      110,
-      169,
-      55,
-      114
-    ],
-    "sync_bytes": "A9:37:72",
-    "fhss_seed": 1856583542,
-    "crc_init": 13170,
-    "collision": false
-  },
-  {
-    "phrase": "EMAX",
-    "uid_hex": "73:A8:7C:06:0B:BD",
-    "uid_bytes": [
-      115,
-      168,
-      124,
-      6,
-      11,
-      189
-    ],
-    "sync_bytes": "06:0B:BD",
-    "fhss_seed": 2080771001,
-    "crc_init": 4029,
-    "collision": false
-  },
-  {
-    "phrase": "tinyhawk",
-    "uid_hex": "F8:45:BA:15:B8:2F",
-    "uid_bytes": [
-      248,
-      69,
-      186,
-      21,
-      184,
-      47
-    ],
-    "sync_bytes": "15:B8:2F",
-    "fhss_seed": 3121985579,
-    "crc_init": 48175,
-    "collision": false
-  },
-  {
-    "phrase": "TinyHawk",
-    "uid_hex": "CE:CE:C0:50:5C:11",
-    "uid_bytes": [
-      206,
-      206,
-      192,
-      80,
-      92,
-      17
-    ],
-    "sync_bytes": "50:5C:11",
-    "fhss_seed": 3226491925,
-    "crc_init": 22545,
-    "collision": false
-  },
-  {
-    "phrase": "mobula",
-    "uid_hex": "BA:F5:B3:BD:63:76",
-    "uid_bytes": [
-      186,
-      245,
-      179,
-      189,
-      99,
-      118
-    ],
-    "sync_bytes": "BD:63:76",
-    "fhss_seed": 3015533426,
-    "crc_init": 26486,
-    "collision": false
-  },
-  {
-    "phrase": "Mobula",
-    "uid_hex": "5E:D3:46:BC:6B:ED",
-    "uid_bytes": [
-      94,
-      211,
-      70,
-      188,
-      107,
-      237
-    ],
-    "sync_bytes": "BC:6B:ED",
-    "fhss_seed": 1186753513,
-    "crc_init": 28653,
-    "collision": false
-  },
-  {
-    "phrase": "meteor",
-    "uid_hex": "EC:5C:63:6B:07:82",
-    "uid_bytes": [
-      236,
-      92,
-      99,
-      107,
-      7,
-      130
-    ],
-    "sync_bytes": "6B:07:82",
-    "fhss_seed": 1667958662,
-    "crc_init": 898,
-    "collision": false
-  },
-  {
-    "phrase": "Meteor",
-    "uid_hex": "B4:99:92:08:4E:FC",
-    "uid_bytes": [
-      180,
-      153,
-      146,
-      8,
-      78,
-      252
-    ],
-    "sync_bytes": "08:4E:FC",
-    "fhss_seed": 2450018040,
-    "crc_init": 19196,
-    "collision": false
-  },
-  {
-    "phrase": "caddx",
-    "uid_hex": "B9:87:D6:B1:5C:43",
-    "uid_bytes": [
-      185,
-      135,
-      214,
-      177,
-      92,
-      67
-    ],
-    "sync_bytes": "B1:5C:43",
-    "fhss_seed": 3601947719,
-    "crc_init": 22595,
-    "collision": false
-  },
-  {
-    "phrase": "walksnail",
-    "uid_hex": "37:AC:CA:FB:71:5A",
-    "uid_bytes": [
-      55,
-      172,
-      202,
-      251,
-      113,
-      90
-    ],
-    "sync_bytes": "FB:71:5A",
-    "fhss_seed": 3405476190,
-    "crc_init": 30042,
-    "collision": false
-  },
-  {
-    "phrase": "iflight",
-    "uid_hex": "71:3D:12:C9:B8:6F",
-    "uid_bytes": [
-      113,
-      61,
-      18,
-      201,
-      184,
-      111
-    ],
-    "sync_bytes": "C9:B8:6F",
-    "fhss_seed": 315209835,
-    "crc_init": 48239,
-    "collision": false
-  },
-  {
-    "phrase": "geprc",
-    "uid_hex": "86:8C:3A:E2:53:1C",
-    "uid_bytes": [
-      134,
-      140,
-      58,
-      226,
-      83,
-      28
-    ],
-    "sync_bytes": "E2:53:1C",
-    "fhss_seed": 987910936,
-    "crc_init": 22300,
-    "collision": false
-  },
-  {
-    "phrase": "diatone",
-    "uid_hex": "22:FD:DC:C2:A8:79",
-    "uid_bytes": [
-      34,
-      253,
-      220,
-      194,
-      168,
-      121
-    ],
-    "sync_bytes": "C2:A8:79",
-    "fhss_seed": 3703744637,
-    "crc_init": 44153,
-    "collision": false
-  },
-  {
-    "phrase": "speedybee",
-    "uid_hex": "5E:00:58:4E:40:55",
-    "uid_bytes": [
-      94,
-      0,
-      88,
-      78,
-      64,
-      85
-    ],
-    "sync_bytes": "4E:40:55",
-    "fhss_seed": 1481523281,
-    "crc_init": 17493,
-    "collision": false
-  },
-  {
-    "phrase": "flywoo",
-    "uid_hex": "D0:FE:B3:C7:41:87",
-    "uid_bytes": [
-      208,
-      254,
-      179,
-      199,
-      65,
-      135
-    ],
-    "sync_bytes": "C7:41:87",
-    "fhss_seed": 3016180099,
-    "crc_init": 17799,
-    "collision": false
-  },
-  {
-    "phrase": "foxeer",
-    "uid_hex": "DF:18:E8:B1:11:AC",
-    "uid_bytes": [
-      223,
-      24,
-      232,
-      177,
-      17,
-      172
-    ],
-    "sync_bytes": "B1:11:AC",
-    "fhss_seed": 3903918504,
-    "crc_init": 5548,
-    "collision": false
-  },
-  {
-    "phrase": "iloveflying",
-    "uid_hex": "59:9D:C5:B9:D7:59",
-    "uid_bytes": [
-      89,
-      157,
-      197,
-      185,
-      215,
-      89
-    ],
-    "sync_bytes": "B9:D7:59",
-    "fhss_seed": 3317290845,
-    "crc_init": 54105,
-    "collision": false
-  },
-  {
-    "phrase": "fpv4life",
-    "uid_hex": "27:51:A7:B8:AB:59",
-    "uid_bytes": [
-      39,
-      81,
-      167,
-      184,
-      171,
-      89
-    ],
-    "sync_bytes": "B8:AB:59",
-    "fhss_seed": 2813897565,
-    "crc_init": 44889,
-    "collision": false
-  },
-  {
-    "phrase": "fpvlife",
-    "uid_hex": "EC:58:DA:FA:0C:37",
-    "uid_bytes": [
-      236,
-      88,
-      218,
-      250,
-      12,
-      55
-    ],
-    "sync_bytes": "FA:0C:37",
-    "fhss_seed": 3673820211,
-    "crc_init": 2103,
-    "collision": false
-  },
-  {
-    "phrase": "fpvislife",
-    "uid_hex": "81:D9:16:E8:29:80",
-    "uid_bytes": [
-      129,
-      217,
-      22,
-      232,
-      41,
-      128
-    ],
-    "sync_bytes": "E8:29:80",
-    "fhss_seed": 384313732,
-    "crc_init": 11648,
-    "collision": false
-  },
-  {
-    "phrase": "sendit",
-    "uid_hex": "E0:A7:2F:09:56:22",
-    "uid_bytes": [
-      224,
-      167,
-      47,
-      9,
-      86,
-      34
-    ],
-    "sync_bytes": "09:56:22",
-    "fhss_seed": 789141030,
-    "crc_init": 21026,
-    "collision": false
-  },
-  {
-    "phrase": "send it",
-    "uid_hex": "60:6A:79:05:8D:D9",
-    "uid_bytes": [
-      96,
-      106,
-      121,
-      5,
-      141,
-      217
-    ],
-    "sync_bytes": "05:8D:D9",
-    "fhss_seed": 2030407133,
-    "crc_init": 35289,
-    "collision": false
-  },
-  {
-    "phrase": "rip it",
-    "uid_hex": "B4:51:CA:0A:B7:D6",
-    "uid_bytes": [
-      180,
-      81,
-      202,
-      10,
-      183,
-      214
-    ],
-    "sync_bytes": "0A:B7:D6",
-    "fhss_seed": 3389700050,
-    "crc_init": 46038,
-    "collision": false
-  },
-  {
-    "phrase": "ripit",
-    "uid_hex": "4C:FF:F9:53:DA:27",
-    "uid_bytes": [
-      76,
-      255,
-      249,
-      83,
-      218,
-      39
-    ],
-    "sync_bytes": "53:DA:27",
-    "fhss_seed": 4183022115,
-    "crc_init": 56871,
-    "collision": false
-  },
-  {
-    "phrase": "fullsend",
-    "uid_hex": "52:62:66:FD:A2:28",
-    "uid_bytes": [
-      82,
-      98,
-      102,
-      253,
-      162,
-      40
-    ],
-    "sync_bytes": "FD:A2:28",
-    "fhss_seed": 1727898156,
-    "crc_init": 42536,
-    "collision": false
-  },
-  {
-    "phrase": "letsfly",
-    "uid_hex": "FF:DC:AD:7A:DA:9B",
-    "uid_bytes": [
-      255,
-      220,
-      173,
-      122,
-      218,
-      155
-    ],
-    "sync_bytes": "7A:DA:9B",
-    "fhss_seed": 2910509727,
-    "crc_init": 56987,
-    "collision": false
-  },
-  {
-    "phrase": "lets fly",
-    "uid_hex": "EE:FD:03:53:28:99",
-    "uid_bytes": [
-      238,
-      253,
-      3,
-      83,
-      40,
-      153
-    ],
-    "sync_bytes": "53:28:99",
-    "fhss_seed": 55781533,
-    "crc_init": 11417,
-    "collision": false
-  },
-  {
-    "phrase": "flyfast",
-    "uid_hex": "C7:44:0F:9E:D4:60",
-    "uid_bytes": [
-      199,
-      68,
-      15,
-      158,
-      212,
-      96
-    ],
-    "sync_bytes": "9E:D4:60",
-    "fhss_seed": 262067300,
-    "crc_init": 53344,
-    "collision": false
-  },
-  {
-    "phrase": "fly fast",
-    "uid_hex": "52:78:79:42:6A:7A",
-    "uid_bytes": [
-      82,
-      120,
-      121,
-      66,
-      106,
-      122
-    ],
-    "sync_bytes": "42:6A:7A",
-    "fhss_seed": 2034395774,
-    "crc_init": 28282,
-    "collision": false
-  },
-  {
-    "phrase": "gofast",
-    "uid_hex": "6B:92:A3:C6:90:49",
-    "uid_bytes": [
-      107,
-      146,
-      163,
-      198,
-      144,
-      73
-    ],
-    "sync_bytes": "C6:90:49",
-    "fhss_seed": 2747699277,
-    "crc_init": 37961,
-    "collision": false
-  },
-  {
-    "phrase": "sendfpv",
-    "uid_hex": "A5:2B:2E:6C:D9:96",
-    "uid_bytes": [
-      165,
-      43,
-      46,
-      108,
-      217,
-      150
-    ],
-    "sync_bytes": "6C:D9:96",
-    "fhss_seed": 778885522,
-    "crc_init": 56726,
-    "collision": false
-  },
-  {
-    "phrase": "fpvdrone",
-    "uid_hex": "F4:9B:B7:48:8E:53",
-    "uid_bytes": [
-      244,
-      155,
-      183,
-      72,
-      142,
-      83
-    ],
-    "sync_bytes": "48:8E:53",
-    "fhss_seed": 3074985559,
-    "crc_init": 35411,
-    "collision": false
-  },
-  {
-    "phrase": "fpvracing",
-    "uid_hex": "5E:56:B8:D4:1E:21",
-    "uid_bytes": [
-      94,
-      86,
-      184,
-      212,
-      30,
-      33
-    ],
-    "sync_bytes": "D4:1E:21",
-    "fhss_seed": 3100909093,
-    "crc_init": 6689,
-    "collision": false
-  },
-  {
-    "phrase": "freestyle",
-    "uid_hex": "3E:1D:47:50:A1:B4",
-    "uid_bytes": [
-      62,
-      29,
-      71,
-      80,
-      161,
-      180
-    ],
-    "sync_bytes": "50:A1:B4",
-    "fhss_seed": 1196466608,
-    "crc_init": 42420,
-    "collision": false
-  },
-  {
-    "phrase": "Freestyle",
-    "uid_hex": "E4:EC:76:0F:26:30",
-    "uid_bytes": [
-      228,
-      236,
-      118,
-      15,
-      38,
-      48
-    ],
-    "sync_bytes": "0F:26:30",
-    "fhss_seed": 1980704308,
-    "crc_init": 8752,
-    "collision": false
-  },
-  {
-    "phrase": "longrange",
-    "uid_hex": "06:AB:A5:B5:DB:52",
-    "uid_bytes": [
-      6,
-      171,
-      165,
-      181,
-      219,
-      82
-    ],
-    "sync_bytes": "B5:DB:52",
-    "fhss_seed": 2780158806,
-    "crc_init": 57170,
-    "collision": false
-  },
-  {
-    "phrase": "LongRange",
-    "uid_hex": "63:FC:F5:E1:11:39",
-    "uid_bytes": [
-      99,
-      252,
-      245,
-      225,
-      17,
-      57
-    ],
-    "sync_bytes": "E1:11:39",
-    "fhss_seed": 4125167933,
-    "crc_init": 5433,
-    "collision": false
-  },
-  {
-    "phrase": "long range",
-    "uid_hex": "A8:4B:2F:B2:49:D9",
-    "uid_bytes": [
-      168,
-      75,
-      47,
-      178,
-      73,
-      217
-    ],
-    "sync_bytes": "B2:49:D9",
-    "fhss_seed": 800213469,
-    "crc_init": 19929,
-    "collision": false
-  },
-  {
-    "phrase": "tinywhoop",
-    "uid_hex": "C5:A3:75:AE:E8:D3",
-    "uid_bytes": [
-      197,
-      163,
-      117,
-      174,
-      232,
-      211
-    ],
-    "sync_bytes": "AE:E8:D3",
-    "fhss_seed": 1974397143,
-    "crc_init": 60627,
-    "collision": false
-  },
-  {
-    "phrase": "TinyWhoop",
-    "uid_hex": "77:BB:50:31:C6:A2",
-    "uid_bytes": [
-      119,
-      187,
-      80,
-      49,
-      198,
-      162
-    ],
-    "sync_bytes": "31:C6:A2",
-    "fhss_seed": 1345439398,
-    "crc_init": 49826,
-    "collision": false
-  },
-  {
-    "phrase": "whoop",
-    "uid_hex": "4B:71:EB:35:C2:F4",
-    "uid_bytes": [
-      75,
-      113,
-      235,
-      53,
-      194,
-      244
-    ],
-    "sync_bytes": "35:C2:F4",
-    "fhss_seed": 3946169072,
-    "crc_init": 50932,
-    "collision": false
-  },
-  {
-    "phrase": "whooplife",
-    "uid_hex": "8E:E0:75:D3:60:F1",
-    "uid_bytes": [
-      142,
-      224,
-      117,
-      211,
-      96,
-      241
-    ],
-    "sync_bytes": "D3:60:F1",
-    "fhss_seed": 1976787189,
-    "crc_init": 25841,
-    "collision": false
-  },
-  {
-    "phrase": "acro",
-    "uid_hex": "9C:98:91:99:2C:DC",
-    "uid_bytes": [
-      156,
-      152,
-      145,
-      153,
-      44,
-      220
-    ],
-    "sync_bytes": "99:2C:DC",
-    "fhss_seed": 2442734808,
-    "crc_init": 10460,
-    "collision": false
-  },
-  {
-    "phrase": "acromode",
-    "uid_hex": "4F:D3:E7:6C:8B:34",
-    "uid_bytes": [
-      79,
-      211,
-      231,
-      108,
-      139,
-      52
-    ],
-    "sync_bytes": "6C:8B:34",
-    "fhss_seed": 3882650416,
-    "crc_init": 36660,
-    "collision": false
-  },
-  {
-    "phrase": "runcam",
-    "uid_hex": "C9:E5:EF:60:76:1D",
-    "uid_bytes": [
-      201,
-      229,
-      239,
-      96,
-      118,
-      29
-    ],
-    "sync_bytes": "60:76:1D",
-    "fhss_seed": 4016076313,
-    "crc_init": 29213,
-    "collision": false
-  },
-  {
-    "phrase": "analog",
-    "uid_hex": "CB:DB:50:B6:AD:1F",
-    "uid_bytes": [
-      203,
-      219,
-      80,
-      182,
-      173,
-      31
-    ],
-    "sync_bytes": "B6:AD:1F",
-    "fhss_seed": 1354149147,
-    "crc_init": 43295,
-    "collision": false
-  },
-  {
-    "phrase": "digital",
-    "uid_hex": "4D:7D:3A:04:34:2E",
-    "uid_bytes": [
-      77,
-      125,
-      58,
-      4,
-      52,
-      46
-    ],
-    "sync_bytes": "04:34:2E",
-    "fhss_seed": 973354026,
-    "crc_init": 12334,
-    "collision": false
-  },
-  {
-    "phrase": "hdzero",
-    "uid_hex": "76:6F:BF:98:AE:42",
-    "uid_bytes": [
-      118,
-      111,
-      191,
-      152,
-      174,
-      66
-    ],
-    "sync_bytes": "98:AE:42",
-    "fhss_seed": 3214454342,
-    "crc_init": 43586,
-    "collision": false
-  },
-  {
-    "phrase": "HDZero",
-    "uid_hex": "01:A4:5E:54:EB:DF",
-    "uid_bytes": [
-      1,
-      164,
-      94,
-      84,
-      235,
-      223
-    ],
-    "sync_bytes": "54:EB:DF",
-    "fhss_seed": 1582623707,
-    "crc_init": 61407,
-    "collision": false
-  },
-  {
-    "phrase": "dji",
-    "uid_hex": "EF:78:71:3A:B7:60",
-    "uid_bytes": [
-      239,
-      120,
-      113,
-      58,
-      183,
-      96
-    ],
-    "sync_bytes": "3A:B7:60",
-    "fhss_seed": 1899673444,
-    "crc_init": 45920,
-    "collision": false
-  },
-  {
-    "phrase": "DJI",
-    "uid_hex": "07:87:D2:48:AF:4F",
-    "uid_bytes": [
-      7,
-      135,
-      210,
-      72,
-      175,
-      79
-    ],
-    "sync_bytes": "48:AF:4F",
-    "fhss_seed": 3527978827,
-    "crc_init": 43855,
-    "collision": false
-  },
-  {
-    "phrase": "o3",
-    "uid_hex": "E6:78:89:B6:75:B8",
-    "uid_bytes": [
-      230,
-      120,
-      137,
-      182,
-      117,
-      184
-    ],
-    "sync_bytes": "B6:75:B8",
-    "fhss_seed": 2310436284,
-    "crc_init": 29112,
-    "collision": false
-  },
-  {
-    "phrase": "O3",
-    "uid_hex": "A0:F9:42:30:D5:B2",
-    "uid_bytes": [
-      160,
-      249,
-      66,
-      48,
-      213,
-      178
-    ],
-    "sync_bytes": "30:D5:B2",
-    "fhss_seed": 1110496694,
-    "crc_init": 53682,
-    "collision": false
-  },
-  {
-    "phrase": "gorilla",
-    "uid_hex": "F3:75:95:2D:B2:2C",
-    "uid_bytes": [
-      243,
-      117,
-      149,
-      45,
-      178,
-      44
-    ],
-    "sync_bytes": "2D:B2:2C",
-    "fhss_seed": 2502799912,
-    "crc_init": 46636,
-    "collision": false
-  },
-  {
-    "phrase": "bando",
-    "uid_hex": "DC:90:C7:76:CB:CA",
-    "uid_bytes": [
-      220,
-      144,
-      199,
-      118,
-      203,
-      202
-    ],
-    "sync_bytes": "76:CB:CA",
-    "fhss_seed": 3346451406,
-    "crc_init": 53194,
-    "collision": false
-  },
-  {
-    "phrase": "bandos",
-    "uid_hex": "79:80:30:CE:81:D6",
-    "uid_bytes": [
-      121,
-      128,
-      48,
-      206,
-      129,
-      214
-    ],
-    "sync_bytes": "CE:81:D6",
-    "fhss_seed": 818840018,
-    "crc_init": 34262,
-    "collision": false
-  },
-  {
-    "phrase": "matty",
-    "uid_hex": "C8:CD:02:86:86:27",
-    "uid_bytes": [
-      200,
-      205,
-      2,
-      134,
-      134,
-      39
-    ],
-    "sync_bytes": "86:86:27",
-    "fhss_seed": 42370595,
-    "crc_init": 33319,
-    "collision": false
-  },
-  {
-    "phrase": "juicy",
-    "uid_hex": "42:C8:F4:14:84:93",
-    "uid_bytes": [
-      66,
-      200,
-      244,
-      20,
-      132,
-      147
-    ],
-    "sync_bytes": "14:84:93",
-    "fhss_seed": 4094985367,
-    "crc_init": 32915,
-    "collision": false
-  },
-  {
-    "phrase": "steele",
-    "uid_hex": "18:FB:AC:D4:EA:D0",
-    "uid_bytes": [
-      24,
-      251,
-      172,
-      212,
-      234,
-      208
-    ],
-    "sync_bytes": "D4:EA:D0",
-    "fhss_seed": 2899634900,
-    "crc_init": 61136,
-    "collision": false
-  },
-  {
-    "phrase": "bardwell",
-    "uid_hex": "A6:E4:75:92:EC:50",
-    "uid_bytes": [
-      166,
-      228,
-      117,
-      146,
-      236,
-      80
-    ],
-    "sync_bytes": "92:EC:50",
-    "fhss_seed": 1972563028,
-    "crc_init": 59472,
-    "collision": false
-  },
-  {
-    "phrase": "joshuabardwell",
-    "uid_hex": "6D:87:5F:0E:B8:67",
-    "uid_bytes": [
-      109,
-      135,
-      95,
-      14,
-      184,
-      103
-    ],
-    "sync_bytes": "0E:B8:67",
-    "fhss_seed": 1594800227,
-    "crc_init": 48231,
-    "collision": false
-  },
-  {
-    "phrase": "pilot",
-    "uid_hex": "F4:E9:E9:F4:60:9D",
-    "uid_bytes": [
-      244,
-      233,
-      233,
-      244,
-      96,
-      157
-    ],
-    "sync_bytes": "F4:60:9D",
-    "fhss_seed": 3925106841,
-    "crc_init": 25757,
-    "collision": false
-  },
-  {
-    "phrase": "pilot1",
-    "uid_hex": "A1:A6:19:4C:C5:9E",
-    "uid_bytes": [
-      161,
-      166,
-      25,
-      76,
-      197,
-      158
-    ],
-    "sync_bytes": "4C:C5:9E",
-    "fhss_seed": 424461722,
-    "crc_init": 49566,
-    "collision": false
-  },
-  {
-    "phrase": "pilot123",
-    "uid_hex": "58:1E:89:03:58:2A",
-    "uid_bytes": [
-      88,
-      30,
-      137,
-      3,
-      88,
-      42
-    ],
-    "sync_bytes": "03:58:2A",
-    "fhss_seed": 2298697774,
-    "crc_init": 23594,
-    "collision": false
-  },
-  {
-    "phrase": "drone",
-    "uid_hex": "41:70:36:BB:F7:50",
-    "uid_bytes": [
-      65,
-      112,
-      54,
-      187,
-      247,
-      80
-    ],
-    "sync_bytes": "BB:F7:50",
-    "fhss_seed": 918288212,
-    "crc_init": 62288,
-    "collision": false
-  },
-  {
-    "phrase": "drone1",
-    "uid_hex": "40:FB:38:86:13:B1",
-    "uid_bytes": [
-      64,
-      251,
-      56,
-      134,
-      19,
-      177
-    ],
-    "sync_bytes": "86:13:B1",
-    "fhss_seed": 948310965,
-    "crc_init": 6065,
-    "collision": false
-  },
-  {
-    "phrase": "drone123",
-    "uid_hex": "E7:73:3E:88:63:92",
-    "uid_bytes": [
-      231,
-      115,
-      62,
-      136,
-      99,
-      146
-    ],
-    "sync_bytes": "88:63:92",
-    "fhss_seed": 1049125782,
-    "crc_init": 26514,
-    "collision": false
-  },
-  {
-    "phrase": "quad",
-    "uid_hex": "24:75:96:FD:FB:E6",
-    "uid_bytes": [
-      36,
-      117,
-      150,
-      253,
-      251,
-      230
-    ],
-    "sync_bytes": "FD:FB:E6",
-    "fhss_seed": 2533227490,
-    "crc_init": 65510,
-    "collision": false
-  },
-  {
-    "phrase": "quad1",
-    "uid_hex": "E1:D0:93:1C:0E:10",
-    "uid_bytes": [
-      225,
-      208,
-      147,
-      28,
-      14,
-      16
-    ],
-    "sync_bytes": "1C:0E:10",
-    "fhss_seed": 2468089364,
-    "crc_init": 2576,
-    "collision": false
-  },
-  {
-    "phrase": "quad123",
-    "uid_hex": "3B:0A:CD:AC:CB:95",
-    "uid_bytes": [
-      59,
-      10,
-      205,
-      172,
-      203,
-      149
-    ],
-    "sync_bytes": "AC:CB:95",
-    "fhss_seed": 3450653585,
-    "crc_init": 53141,
-    "collision": false
-  },
-  {
-    "phrase": "myquad",
-    "uid_hex": "3B:F4:27:BA:3B:CA",
-    "uid_bytes": [
-      59,
-      244,
-      39,
-      186,
-      59,
-      202
-    ],
-    "sync_bytes": "BA:3B:CA",
-    "fhss_seed": 666516430,
-    "crc_init": 16330,
-    "collision": false
-  },
-  {
-    "phrase": "mydrone",
-    "uid_hex": "4B:BE:0F:05:28:5E",
-    "uid_bytes": [
-      75,
-      190,
-      15,
-      5,
-      40,
-      94
-    ],
-    "sync_bytes": "05:28:5E",
-    "fhss_seed": 251996250,
-    "crc_init": 11358,
-    "collision": false
-  },
-  {
-    "phrase": "myfpv",
-    "uid_hex": "18:0A:50:87:5A:9F",
-    "uid_bytes": [
-      24,
-      10,
-      80,
-      135,
-      90,
-      159
-    ],
-    "sync_bytes": "87:5A:9F",
-    "fhss_seed": 1351047835,
-    "crc_init": 24223,
-    "collision": false
-  },
-  {
-    "phrase": "fpv",
-    "uid_hex": "BE:F7:32:B3:16:A2",
-    "uid_bytes": [
-      190,
-      247,
-      50,
-      179,
-      22,
-      162
-    ],
-    "sync_bytes": "B3:16:A2",
-    "fhss_seed": 850597542,
-    "crc_init": 4770,
-    "collision": false
-  },
-  {
-    "phrase": "fpv1",
-    "uid_hex": "DE:76:BD:8D:A4:43",
-    "uid_bytes": [
-      222,
-      118,
-      189,
-      141,
-      164,
-      67
-    ],
-    "sync_bytes": "8D:A4:43",
-    "fhss_seed": 3180176455,
-    "crc_init": 41027,
-    "collision": false
-  },
-  {
-    "phrase": "fpv123",
-    "uid_hex": "5E:57:B8:66:FD:D6",
-    "uid_bytes": [
-      94,
-      87,
-      184,
-      102,
-      253,
-      214
-    ],
-    "sync_bytes": "66:FD:D6",
-    "fhss_seed": 3093757394,
-    "crc_init": 63958,
-    "collision": false
-  },
-  {
-    "phrase": "rc",
-    "uid_hex": "28:FB:8B:92:02:17",
-    "uid_bytes": [
-      40,
-      251,
-      139,
-      146,
-      2,
-      23
-    ],
-    "sync_bytes": "92:02:17",
-    "fhss_seed": 2341601811,
-    "crc_init": 1559,
-    "collision": false
-  },
-  {
-    "phrase": "rc1",
-    "uid_hex": "AE:DF:CF:3E:AF:97",
-    "uid_bytes": [
-      174,
-      223,
-      207,
-      62,
-      175,
-      151
-    ],
-    "sync_bytes": "3E:AF:97",
-    "fhss_seed": 3476991891,
-    "crc_init": 43927,
-    "collision": false
-  },
-  {
-    "phrase": "rc123",
-    "uid_hex": "1D:AF:3F:F8:C9:70",
-    "uid_bytes": [
-      29,
-      175,
-      63,
-      248,
-      201,
-      112
-    ],
-    "sync_bytes": "F8:C9:70",
-    "fhss_seed": 1073269108,
-    "crc_init": 52592,
-    "collision": false
-  },
-  {
-    "phrase": "password",
-    "uid_hex": "15:4E:B8:ED:3A:94",
-    "uid_bytes": [
-      21,
-      78,
-      184,
-      237,
-      58,
-      148
-    ],
-    "sync_bytes": "ED:3A:94",
-    "fhss_seed": 3102554768,
-    "crc_init": 16020,
-    "collision": false
-  },
-  {
-    "phrase": "password1",
-    "uid_hex": "F7:86:9D:34:75:17",
-    "uid_bytes": [
-      247,
-      134,
-      157,
-      52,
-      117,
-      23
-    ],
-    "sync_bytes": "34:75:17",
-    "fhss_seed": 2637460755,
-    "crc_init": 28951,
-    "collision": false
-  },
-  {
-    "phrase": "password123",
-    "uid_hex": "17:D7:5D:63:35:AC",
-    "uid_bytes": [
-      23,
-      215,
-      93,
-      99,
-      53,
-      172
-    ],
-    "sync_bytes": "63:35:AC",
-    "fhss_seed": 1566782888,
-    "crc_init": 12716,
-    "collision": false
-  },
-  {
-    "phrase": "12345678",
-    "uid_hex": "6A:13:13:CE:C1:1E",
-    "uid_bytes": [
-      106,
-      19,
-      19,
-      206,
-      193,
-      30
-    ],
-    "sync_bytes": "CE:C1:1E",
-    "fhss_seed": 332316954,
-    "crc_init": 50462,
-    "collision": false
-  },
-  {
-    "phrase": "123456789",
-    "uid_hex": "A0:68:C6:FE:3F:40",
-    "uid_bytes": [
-      160,
-      104,
-      198,
-      254,
-      63,
-      64
-    ],
-    "sync_bytes": "FE:3F:40",
-    "fhss_seed": 3338551108,
-    "crc_init": 15168,
-    "collision": false
-  },
-  {
-    "phrase": "1234567890",
-    "uid_hex": "C1:A8:5B:95:8E:EB",
-    "uid_bytes": [
-      193,
-      168,
-      91,
-      149,
-      142,
-      235
-    ],
-    "sync_bytes": "95:8E:EB",
-    "fhss_seed": 1536528111,
-    "crc_init": 35563,
-    "collision": false
-  },
-  {
-    "phrase": "qwerty",
-    "uid_hex": "77:80:88:40:AF:64",
-    "uid_bytes": [
-      119,
-      128,
-      136,
-      64,
-      175,
-      100
-    ],
-    "sync_bytes": "40:AF:64",
-    "fhss_seed": 2285940576,
-    "crc_init": 43876,
-    "collision": false
-  },
-  {
-    "phrase": "qwerty123",
-    "uid_hex": "4C:5A:C6:D2:E0:A9",
-    "uid_bytes": [
-      76,
-      90,
-      198,
-      210,
-      224,
-      169
-    ],
-    "sync_bytes": "D2:E0:A9",
-    "fhss_seed": 3335708845,
-    "crc_init": 58537,
-    "collision": false
-  },
-  {
-    "phrase": "letmein",
-    "uid_hex": "A3:B2:07:6F:CF:20",
-    "uid_bytes": [
-      163,
-      178,
-      7,
-      111,
-      207,
-      32
-    ],
-    "sync_bytes": "6F:CF:20",
-    "fhss_seed": 124768036,
-    "crc_init": 52000,
-    "collision": false
-  },
-  {
-    "phrase": "admin",
-    "uid_hex": "43:CE:04:30:4B:3A",
-    "uid_bytes": [
-      67,
-      206,
-      4,
-      48,
-      75,
-      58
-    ],
-    "sync_bytes": "30:4B:3A",
-    "fhss_seed": 70273854,
-    "crc_init": 20282,
-    "collision": false
-  },
-  {
-    "phrase": "admin123",
-    "uid_hex": "EB:70:8D:48:3F:56",
-    "uid_bytes": [
-      235,
-      112,
-      141,
-      72,
-      63,
-      86
-    ],
-    "sync_bytes": "48:3F:56",
-    "fhss_seed": 2370322258,
-    "crc_init": 15190,
-    "collision": false
-  },
-  {
-    "phrase": "welcome",
-    "uid_hex": "D1:30:07:09:8F:65",
-    "uid_bytes": [
-      209,
-      48,
-      7,
-      9,
-      143,
-      101
-    ],
-    "sync_bytes": "09:8F:65",
-    "fhss_seed": 118067041,
-    "crc_init": 35685,
-    "collision": false
-  },
-  {
-    "phrase": "abc123",
-    "uid_hex": "0E:91:8A:18:48:A1",
-    "uid_bytes": [
-      14,
-      145,
-      138,
-      24,
-      72,
-      161
-    ],
-    "sync_bytes": "18:48:A1",
-    "fhss_seed": 2316847269,
-    "crc_init": 19617,
-    "collision": false
-  },
-  {
-    "phrase": "monkey",
-    "uid_hex": "54:C7:0F:28:76:9A",
-    "uid_bytes": [
-      84,
-      199,
-      15,
-      40,
-      118,
-      154
-    ],
-    "sync_bytes": "28:76:9A",
-    "fhss_seed": 254310046,
-    "crc_init": 29338,
-    "collision": false
-  },
-  {
-    "phrase": "master",
-    "uid_hex": "A2:4A:B6:18:3B:E7",
-    "uid_bytes": [
-      162,
-      74,
-      182,
-      24,
-      59,
-      231
-    ],
-    "sync_bytes": "18:3B:E7",
-    "fhss_seed": 3055041507,
-    "crc_init": 16359,
-    "collision": false
-  },
-  {
-    "phrase": "dragon",
-    "uid_hex": "2E:B7:C0:11:AD:EB",
-    "uid_bytes": [
-      46,
-      183,
-      192,
-      17,
-      173,
-      235
-    ],
-    "sync_bytes": "11:AD:EB",
-    "fhss_seed": 3222384111,
-    "crc_init": 43499,
-    "collision": false
-  },
-  {
-    "phrase": "login",
-    "uid_hex": "8C:DF:25:6E:43:68",
-    "uid_bytes": [
-      140,
-      223,
-      37,
-      110,
-      67,
-      104
-    ],
-    "sync_bytes": "6E:43:68",
-    "fhss_seed": 627983212,
-    "crc_init": 18280,
-    "collision": false
-  },
-  {
-    "phrase": "princess",
-    "uid_hex": "8A:AE:C3:0E:7F:F9",
-    "uid_bytes": [
-      138,
-      174,
-      195,
-      14,
-      127,
-      249
-    ],
-    "sync_bytes": "0E:7F:F9",
-    "fhss_seed": 3272507389,
-    "crc_init": 31737,
-    "collision": false
-  },
-  {
-    "phrase": "football",
-    "uid_hex": "6E:2C:F8:10:F7:A3",
-    "uid_bytes": [
-      110,
-      44,
-      248,
-      16,
-      247,
-      163
-    ],
-    "sync_bytes": "10:F7:A3",
-    "fhss_seed": 4161861543,
-    "crc_init": 62371,
-    "collision": false
-  },
-  {
-    "phrase": "shadow",
-    "uid_hex": "12:DD:9B:3A:B1:F8",
-    "uid_bytes": [
-      18,
-      221,
-      155,
-      58,
-      177,
-      248
-    ],
-    "sync_bytes": "3A:B1:F8",
-    "fhss_seed": 2604315132,
-    "crc_init": 46584,
-    "collision": false
-  },
-  {
-    "phrase": "sunshine",
-    "uid_hex": "A4:81:5B:93:9F:3A",
-    "uid_bytes": [
-      164,
-      129,
-      91,
-      147,
-      159,
-      58
-    ],
-    "sync_bytes": "93:9F:3A",
-    "fhss_seed": 1536401214,
-    "crc_init": 39738,
-    "collision": false
-  },
-  {
-    "phrase": "trustno1",
-    "uid_hex": "0E:9E:D6:D9:7F:72",
-    "uid_bytes": [
-      14,
-      158,
-      214,
-      217,
-      127,
-      114
-    ],
-    "sync_bytes": "D9:7F:72",
-    "fhss_seed": 3604578166,
-    "crc_init": 31602,
-    "collision": false
-  },
-  {
-    "phrase": "iloveyou",
-    "uid_hex": "6F:67:F8:22:D9:EB",
-    "uid_bytes": [
-      111,
-      103,
-      248,
-      34,
-      217,
-      235
-    ],
-    "sync_bytes": "22:D9:EB",
-    "fhss_seed": 4163033583,
-    "crc_init": 56811,
-    "collision": false
-  },
-  {
-    "phrase": "batman",
-    "uid_hex": "F4:34:B7:C1:4C:C5",
-    "uid_bytes": [
-      244,
-      52,
-      183,
-      193,
-      76,
-      197
-    ],
-    "sync_bytes": "C1:4C:C5",
-    "fhss_seed": 3082898625,
-    "crc_init": 18629,
-    "collision": false
-  },
-  {
-    "phrase": "access",
-    "uid_hex": "CC:12:E1:B1:2F:AB",
-    "uid_bytes": [
-      204,
-      18,
-      225,
-      177,
-      47,
-      171
-    ],
-    "sync_bytes": "B1:2F:AB",
-    "fhss_seed": 3786485679,
-    "crc_init": 11179,
-    "collision": false
-  },
-  {
-    "phrase": "hello",
-    "uid_hex": "E2:71:28:84:2C:79",
-    "uid_bytes": [
-      226,
-      113,
-      40,
-      132,
-      44,
-      121
-    ],
-    "sync_bytes": "84:2C:79",
-    "fhss_seed": 679750781,
-    "crc_init": 10361,
-    "collision": false
-  },
-  {
-    "phrase": "charlie",
-    "uid_hex": "99:46:4C:3A:3A:1F",
-    "uid_bytes": [
-      153,
-      70,
-      76,
-      58,
-      58,
-      31
-    ],
-    "sync_bytes": "3A:3A:1F",
-    "fhss_seed": 1278884379,
-    "crc_init": 15903,
-    "collision": false
-  },
-  {
-    "phrase": "donald",
-    "uid_hex": "2D:24:BF:63:FE:EB",
-    "uid_bytes": [
-      45,
-      36,
-      191,
-      99,
-      254,
-      235
-    ],
-    "sync_bytes": "63:FE:EB",
-    "fhss_seed": 3211001583,
-    "crc_init": 64235,
-    "collision": false
-  },
-  {
-    "phrase": "passw0rd",
-    "uid_hex": "27:A7:D5:E9:CE:F7",
-    "uid_bytes": [
-      39,
-      167,
-      213,
-      233,
-      206,
-      247
-    ],
-    "sync_bytes": "E9:CE:F7",
-    "fhss_seed": 3588869875,
-    "crc_init": 51959,
-    "collision": false
-  },
-  {
-    "phrase": "asdf",
-    "uid_hex": "6C:05:9A:46:75:28",
-    "uid_bytes": [
-      108,
-      5,
-      154,
-      70,
-      117,
-      40
-    ],
-    "sync_bytes": "46:75:28",
-    "fhss_seed": 2588308780,
-    "crc_init": 28968,
-    "collision": false
-  },
-  {
-    "phrase": "asdfgh",
-    "uid_hex": "7F:11:B3:99:73:6A",
-    "uid_bytes": [
-      127,
-      17,
-      179,
-      153,
-      115,
-      106
-    ],
-    "sync_bytes": "99:73:6A",
-    "fhss_seed": 3013178222,
-    "crc_init": 30570,
-    "collision": false
-  },
-  {
-    "phrase": "asdfghjkl",
-    "uid_hex": "80:EB:CE:9F:C6:DF",
-    "uid_bytes": [
-      128,
-      235,
-      206,
-      159,
-      198,
-      223
-    ],
-    "sync_bytes": "9F:C6:DF",
-    "fhss_seed": 3466577627,
-    "crc_init": 49887,
-    "collision": false
-  },
-  {
-    "phrase": "zxcvbnm",
-    "uid_hex": "F8:1E:BC:63:C7:FB",
-    "uid_bytes": [
-      248,
-      30,
-      188,
-      99,
-      199,
-      251
-    ],
-    "sync_bytes": "63:C7:FB",
-    "fhss_seed": 3160655871,
-    "crc_init": 50171,
-    "collision": false
-  },
-  {
-    "phrase": "qwertyuiop",
-    "uid_hex": "7C:25:33:E2:CB:41",
-    "uid_bytes": [
-      124,
-      37,
-      51,
-      226,
-      203,
-      65
-    ],
-    "sync_bytes": "E2:CB:41",
-    "fhss_seed": 870501189,
-    "crc_init": 53057,
-    "collision": false
-  },
-  {
-    "phrase": "0000",
-    "uid_hex": "7B:B9:DD:99:1C:51",
-    "uid_bytes": [
-      123,
-      185,
-      221,
-      153,
-      28,
-      81
-    ],
-    "sync_bytes": "99:1C:51",
-    "fhss_seed": 3717798997,
-    "crc_init": 6225,
-    "collision": false
-  },
-  {
-    "phrase": "00000000",
-    "uid_hex": "21:E2:DF:44:02:70",
-    "uid_bytes": [
-      33,
-      226,
-      223,
-      68,
-      2,
-      112
-    ],
-    "sync_bytes": "44:02:70",
-    "fhss_seed": 3745776244,
-    "crc_init": 1648,
-    "collision": false
-  },
-  {
-    "phrase": "1111",
-    "uid_hex": "44:CD:E4:08:5D:8E",
-    "uid_bytes": [
-      68,
-      205,
-      228,
-      8,
-      93,
-      142
-    ],
-    "sync_bytes": "08:5D:8E",
-    "fhss_seed": 3825753482,
-    "crc_init": 22926,
-    "collision": false
-  },
-  {
-    "phrase": "11111111",
-    "uid_hex": "C6:10:7E:1B:B3:B7",
-    "uid_bytes": [
-      198,
-      16,
-      126,
-      27,
-      179,
-      183
-    ],
-    "sync_bytes": "1B:B3:B7",
-    "fhss_seed": 2115744691,
-    "crc_init": 47031,
-    "collision": false
-  },
-  {
-    "phrase": "1234",
-    "uid_hex": "31:06:2F:EE:8A:0A",
-    "uid_bytes": [
-      49,
-      6,
-      47,
-      238,
-      138,
-      10
-    ],
-    "sync_bytes": "EE:8A:0A",
-    "fhss_seed": 804162062,
-    "crc_init": 36362,
-    "collision": false
-  },
-  {
-    "phrase": "4321",
-    "uid_hex": "92:D8:C1:B8:B1:07",
-    "uid_bytes": [
-      146,
-      216,
-      193,
-      184,
-      177,
-      7
-    ],
-    "sync_bytes": "B8:B1:07",
-    "fhss_seed": 3250106627,
-    "crc_init": 46343,
-    "collision": false
-  },
-  {
-    "phrase": "0123456789",
-    "uid_hex": "80:63:DD:6A:29:62",
-    "uid_bytes": [
-      128,
-      99,
-      221,
-      106,
-      41,
-      98
-    ],
-    "sync_bytes": "6A:29:62",
-    "fhss_seed": 3714722150,
-    "crc_init": 11618,
-    "collision": false
-  },
-  {
-    "phrase": "9876543210",
-    "uid_hex": "B0:9D:0B:FA:04:6C",
-    "uid_bytes": [
-      176,
-      157,
-      11,
-      250,
-      4,
-      108
-    ],
-    "sync_bytes": "FA:04:6C",
-    "fhss_seed": 200934504,
-    "crc_init": 108,
-    "collision": false
-  },
-  {
-    "phrase": "696969",
-    "uid_hex": "6A:CB:98:13:87:87",
-    "uid_bytes": [
-      106,
-      203,
-      152,
-      19,
-      135,
-      135
-    ],
-    "sync_bytes": "13:87:87",
-    "fhss_seed": 2551416707,
-    "crc_init": 33671,
-    "collision": false
-  },
-  {
-    "phrase": "420420",
-    "uid_hex": "F1:BC:CE:97:5F:36",
-    "uid_bytes": [
-      241,
-      188,
-      206,
-      151,
-      95,
-      54
-    ],
-    "sync_bytes": "97:5F:36",
-    "fhss_seed": 3466026802,
-    "crc_init": 23350,
-    "collision": false
-  },
-  {
-    "phrase": "1337",
-    "uid_hex": "15:5B:A8:49:9F:7D",
-    "uid_bytes": [
-      21,
-      91,
-      168,
-      73,
-      159,
-      125
-    ],
-    "sync_bytes": "49:9F:7D",
-    "fhss_seed": 2823397241,
-    "crc_init": 39805,
-    "collision": false
-  },
-  {
-    "phrase": "",
-    "uid_hex": "D4:32:3B:A3:14:4A",
-    "uid_bytes": [
-      212,
-      50,
-      59,
-      163,
-      20,
-      74
-    ],
-    "sync_bytes": "A3:14:4A",
-    "fhss_seed": 1000543310,
-    "crc_init": 4170,
-    "collision": false
-  },
-  {
-    "phrase": " ",
-    "uid_hex": "9C:70:E7:04:86:90",
-    "uid_bytes": [
-      156,
-      112,
-      231,
-      4,
-      134,
-      144
-    ],
-    "sync_bytes": "04:86:90",
-    "fhss_seed": 3875833492,
-    "crc_init": 33424,
-    "collision": false
-  },
-  {
-    "phrase": "a",
-    "uid_hex": "F7:C9:20:62:08:18",
-    "uid_bytes": [
-      247,
-      201,
-      32,
-      98,
-      8,
-      24
-    ],
-    "sync_bytes": "62:08:18",
-    "fhss_seed": 543295516,
-    "crc_init": 3096,
-    "collision": false
-  },
-  {
-    "phrase": "aa",
-    "uid_hex": "C0:5D:E7:90:F7:55",
-    "uid_bytes": [
-      192,
-      93,
-      231,
-      144,
-      247,
-      85
-    ],
-    "sync_bytes": "90:F7:55",
-    "fhss_seed": 3885037393,
-    "crc_init": 62293,
-    "collision": false
-  },
-  {
-    "phrase": "aaa",
-    "uid_hex": "21:36:35:23:ED:2D",
-    "uid_bytes": [
-      33,
-      54,
-      53,
-      35,
-      237,
-      45
-    ],
-    "sync_bytes": "23:ED:2D",
-    "fhss_seed": 891546921,
-    "crc_init": 59693,
-    "collision": false
-  },
-  {
-    "phrase": "aaaa",
-    "uid_hex": "36:67:AE:86:AB:F0",
-    "uid_bytes": [
-      54,
-      103,
-      174,
-      134,
-      171,
-      240
-    ],
-    "sync_bytes": "86:AB:F0",
-    "fhss_seed": 2928061428,
-    "crc_init": 45040,
-    "collision": false
-  },
-  {
-    "phrase": "aaaaaaaa",
-    "uid_hex": "0D:3D:13:E5:45:70",
-    "uid_bytes": [
-      13,
-      61,
-      19,
-      229,
-      69,
-      112
-    ],
-    "sync_bytes": "E5:45:70",
-    "fhss_seed": 333792628,
-    "crc_init": 16752,
-    "collision": false
-  },
-  {
-    "phrase": "hacktheplanet",
-    "uid_hex": "0D:FB:0F:9C:6B:45",
-    "uid_bytes": [
-      13,
-      251,
-      15,
-      156,
-      107,
-      69
-    ],
-    "sync_bytes": "9C:6B:45",
-    "fhss_seed": 261909313,
-    "crc_init": 28485,
-    "collision": false
-  },
-  {
-    "phrase": "pwned",
-    "uid_hex": "73:9D:15:68:BE:11",
-    "uid_bytes": [
-      115,
-      157,
-      21,
-      104,
-      190,
-      17
-    ],
-    "sync_bytes": "68:BE:11",
-    "fhss_seed": 359185941,
-    "crc_init": 47633,
-    "collision": false
-  },
-  {
-    "phrase": "r00t",
-    "uid_hex": "4E:5D:05:A4:38:04",
-    "uid_bytes": [
-      78,
-      93,
-      5,
-      164,
-      56,
-      4
-    ],
-    "sync_bytes": "A4:38:04",
-    "fhss_seed": 94648320,
-    "crc_init": 15364,
-    "collision": false
-  },
-  {
-    "phrase": "root",
-    "uid_hex": "9E:88:91:75:24:FB",
-    "uid_bytes": [
-      158,
-      136,
-      145,
-      117,
-      36,
-      251
-    ],
-    "sync_bytes": "75:24:FB",
-    "fhss_seed": 2440373503,
-    "crc_init": 8443,
-    "collision": false
-  },
-  {
-    "phrase": "toor",
-    "uid_hex": "15:28:0B:D0:E4:42",
-    "uid_bytes": [
-      21,
-      40,
-      11,
-      208,
-      228,
-      66
-    ],
-    "sync_bytes": "D0:E4:42",
-    "fhss_seed": 198239302,
-    "crc_init": 57410,
-    "collision": false
-  },
-  {
-    "phrase": "deadbeef",
-    "uid_hex": "04:A5:EF:A1:53:85",
-    "uid_bytes": [
-      4,
-      165,
-      239,
-      161,
-      83,
-      133
-    ],
-    "sync_bytes": "A1:53:85",
-    "fhss_seed": 4020327297,
-    "crc_init": 22405,
-    "collision": false
-  },
-  {
-    "phrase": "cafebabe",
-    "uid_hex": "93:78:F1:C5:DC:EF",
-    "uid_bytes": [
-      147,
-      120,
-      241,
-      197,
-      220,
-      239
-    ],
-    "sync_bytes": "C5:DC:EF",
-    "fhss_seed": 4056276203,
-    "crc_init": 55535,
-    "collision": false
-  },
-  {
-    "phrase": "31337",
-    "uid_hex": "28:33:D4:BD:80:A0",
-    "uid_bytes": [
-      40,
-      51,
-      212,
-      189,
-      128,
-      160
-    ],
-    "sync_bytes": "BD:80:A0",
-    "fhss_seed": 3569189028,
-    "crc_init": 33952,
-    "collision": false
-  },
-  {
-    "phrase": "h4x0r",
-    "uid_hex": "C9:8C:E3:9B:8A:00",
-    "uid_bytes": [
-      201,
-      140,
-      227,
-      155,
-      138,
-      0
-    ],
-    "sync_bytes": "9B:8A:00",
-    "fhss_seed": 3818621444,
-    "crc_init": 36352,
-    "collision": false
-  },
-  {
-    "phrase": "tinyhawk3",
-    "uid_hex": "1F:AB:92:A6:D4:66",
-    "uid_bytes": [
-      31,
-      171,
-      146,
-      166,
-      212,
-      102
-    ],
-    "sync_bytes": "A6:D4:66",
-    "fhss_seed": 2460406882,
-    "crc_init": 53350,
-    "collision": false
-  },
-  {
-    "phrase": "tinyhawkiii",
-    "uid_hex": "3B:AE:12:EC:CE:61",
-    "uid_bytes": [
-      59,
-      174,
-      18,
-      236,
-      206,
-      97
-    ],
-    "sync_bytes": "EC:CE:61",
-    "fhss_seed": 317509221,
-    "crc_init": 51809,
-    "collision": false
-  },
-  {
-    "phrase": "tinyhawk III",
-    "uid_hex": "18:DB:A4:CB:5A:8D",
-    "uid_bytes": [
-      24,
-      219,
-      164,
-      203,
-      90,
-      141
-    ],
-    "sync_bytes": "CB:5A:8D",
-    "fhss_seed": 2764790409,
-    "crc_init": 24205,
-    "collision": false
-  },
-  {
-    "phrase": "babyhawk",
-    "uid_hex": "1E:C1:36:61:0C:03",
-    "uid_bytes": [
-      30,
-      193,
-      54,
-      97,
-      12,
-      3
-    ],
-    "sync_bytes": "61:0C:03",
-    "fhss_seed": 912329735,
-    "crc_init": 2051,
-    "collision": false
-  },
-  {
-    "phrase": "mobula6",
-    "uid_hex": "AC:DF:AC:FB:84:79",
-    "uid_bytes": [
-      172,
-      223,
-      172,
-      251,
-      132,
-      121
-    ],
-    "sync_bytes": "FB:84:79",
-    "fhss_seed": 2902164605,
-    "crc_init": 32889,
-    "collision": false
-  },
-  {
-    "phrase": "mobula7",
-    "uid_hex": "22:CE:B2:2F:98:81",
-    "uid_bytes": [
-      34,
-      206,
-      178,
-      47,
-      152,
-      129
-    ],
-    "sync_bytes": "2F:98:81",
-    "fhss_seed": 2989463685,
-    "crc_init": 40065,
-    "collision": false
-  },
-  {
-    "phrase": "meteor65",
-    "uid_hex": "C9:0B:26:0D:37:F7",
-    "uid_bytes": [
-      201,
-      11,
-      38,
-      13,
-      55,
-      247
-    ],
-    "sync_bytes": "0D:37:F7",
-    "fhss_seed": 638400499,
-    "crc_init": 13303,
-    "collision": false
-  },
-  {
-    "phrase": "meteor75",
-    "uid_hex": "D6:43:DC:5E:05:6A",
-    "uid_bytes": [
-      214,
-      67,
-      220,
-      94,
-      5,
-      106
-    ],
-    "sync_bytes": "5E:05:6A",
-    "fhss_seed": 3697149294,
-    "crc_init": 362,
-    "collision": false
-  },
-  {
-    "phrase": "crazybee",
-    "uid_hex": "2B:41:B7:32:32:21",
-    "uid_bytes": [
-      43,
-      65,
-      183,
-      50,
-      50,
-      33
-    ],
-    "sync_bytes": "32:32:21",
-    "fhss_seed": 3073520165,
-    "crc_init": 13857,
-    "collision": false
-  },
-  {
-    "phrase": "beta65",
-    "uid_hex": "9D:F4:4C:C4:6C:A4",
-    "uid_bytes": [
-      157,
-      244,
-      76,
-      196,
-      108,
-      164
-    ],
-    "sync_bytes": "C4:6C:A4",
-    "fhss_seed": 1287941280,
-    "crc_init": 26788,
-    "collision": false
-  },
-  {
-    "phrase": "beta75",
-    "uid_hex": "DC:28:A2:54:40:AC",
-    "uid_bytes": [
-      220,
-      40,
-      162,
-      84,
-      64,
-      172
-    ],
-    "sync_bytes": "54:40:AC",
-    "fhss_seed": 2723430568,
-    "crc_init": 17580,
-    "collision": false
-  },
-  {
-    "phrase": "ur65",
-    "uid_hex": "54:0C:32:B5:E0:40",
-    "uid_bytes": [
-      84,
-      12,
-      50,
-      181,
-      224,
-      64
-    ],
-    "sync_bytes": "B5:E0:40",
-    "fhss_seed": 850780228,
-    "crc_init": 58432,
-    "collision": false
-  },
-  {
-    "phrase": "us65",
-    "uid_hex": "B8:5C:DE:66:66:3D",
-    "uid_bytes": [
-      184,
-      92,
-      222,
-      102,
-      102,
-      61
-    ],
-    "sync_bytes": "66:66:3D",
-    "fhss_seed": 3731252793,
-    "crc_init": 25149,
-    "collision": false
-  },
-  {
-    "phrase": "moblite6",
-    "uid_hex": "95:F2:81:51:33:C5",
-    "uid_bytes": [
-      149,
-      242,
-      129,
-      81,
-      51,
-      197
-    ],
-    "sync_bytes": "51:33:C5",
-    "fhss_seed": 2169582529,
-    "crc_init": 14277,
-    "collision": false
-  },
-  {
-    "phrase": "moblite7",
-    "uid_hex": "0D:CE:06:B5:4E:96",
-    "uid_bytes": [
-      13,
-      206,
-      6,
-      181,
-      78,
-      150
-    ],
-    "sync_bytes": "B5:4E:96",
-    "fhss_seed": 112545426,
-    "crc_init": 19094,
-    "collision": false
-  },
-  {
-    "phrase": "nazgul",
-    "uid_hex": "F0:10:B4:8A:39:1D",
-    "uid_bytes": [
-      240,
-      16,
-      180,
-      138,
-      57,
-      29
-    ],
-    "sync_bytes": "8A:39:1D",
-    "fhss_seed": 3028957465,
-    "crc_init": 15645,
-    "collision": false
-  },
-  {
-    "phrase": "chimera",
-    "uid_hex": "A1:83:A6:9C:0E:B9",
-    "uid_bytes": [
-      161,
-      131,
-      166,
-      156,
-      14,
-      185
-    ],
-    "sync_bytes": "9C:0E:B9",
-    "fhss_seed": 2795245245,
-    "crc_init": 2745,
-    "collision": false
-  },
-  {
-    "phrase": "mark4",
-    "uid_hex": "B0:68:C1:01:EC:6D",
-    "uid_bytes": [
-      176,
-      104,
-      193,
-      1,
-      236,
-      109
-    ],
-    "sync_bytes": "01:EC:6D",
-    "fhss_seed": 3238128745,
-    "crc_init": 59501,
-    "collision": false
-  },
-  {
-    "phrase": "source one",
-    "uid_hex": "32:03:03:67:CE:91",
-    "uid_bytes": [
-      50,
-      3,
-      3,
-      103,
-      206,
-      145
-    ],
-    "sync_bytes": "67:CE:91",
-    "fhss_seed": 57134741,
-    "crc_init": 51857,
-    "collision": false
-  },
-  {
-    "phrase": "sourceone",
-    "uid_hex": "2D:23:BA:AF:1B:88",
-    "uid_bytes": [
-      45,
-      35,
-      186,
-      175,
-      27,
-      136
-    ],
-    "sync_bytes": "AF:1B:88",
-    "fhss_seed": 3132038028,
-    "crc_init": 8072,
-    "collision": false
-  },
-  {
-    "phrase": "2.4ghz",
-    "uid_hex": "96:2B:3F:16:00:67",
-    "uid_bytes": [
-      150,
-      43,
-      63,
-      22,
-      0,
-      103
-    ],
-    "sync_bytes": "16:00:67",
-    "fhss_seed": 1058406499,
-    "crc_init": 1127,
-    "collision": false
-  },
-  {
-    "phrase": "2.4GHz",
-    "uid_hex": "64:BE:F7:1F:A7:77",
-    "uid_bytes": [
-      100,
-      190,
-      247,
-      31,
-      167,
-      119
-    ],
-    "sync_bytes": "1F:A7:77",
-    "fhss_seed": 4146046835,
-    "crc_init": 41847,
-    "collision": false
-  },
-  {
-    "phrase": "900mhz",
-    "uid_hex": "80:C6:B2:F4:C1:F3",
-    "uid_bytes": [
-      128,
-      198,
-      178,
-      244,
-      193,
-      243
-    ],
-    "sync_bytes": "F4:C1:F3",
-    "fhss_seed": 3002384887,
-    "crc_init": 50675,
-    "collision": false
-  },
-  {
-    "phrase": "900MHz",
-    "uid_hex": "28:69:1C:77:86:A1",
-    "uid_bytes": [
-      40,
-      105,
-      28,
-      119,
-      134,
-      161
-    ],
-    "sync_bytes": "77:86:A1",
-    "fhss_seed": 477595301,
-    "crc_init": 33441,
-    "collision": false
-  },
-  {
-    "phrase": "5.8ghz",
-    "uid_hex": "69:80:5A:BE:6A:FD",
-    "uid_bytes": [
-      105,
-      128,
-      90,
-      190,
-      106,
-      253
-    ],
-    "sync_bytes": "BE:6A:FD",
-    "fhss_seed": 1522428665,
-    "crc_init": 28413,
-    "collision": false
-  },
-  {
-    "phrase": "5.8GHz",
-    "uid_hex": "AD:C1:ED:3F:B6:20",
-    "uid_bytes": [
-      173,
-      193,
-      237,
-      63,
-      182,
-      32
-    ],
-    "sync_bytes": "3F:B6:20",
-    "fhss_seed": 3980375588,
-    "crc_init": 45600,
-    "collision": false
-  }
-]
+{
+  "ota_version": 4,
+  "entries": [
+    {
+      "phrase": "default ExpressLRS binding phrase",
+      "uid_hex": "0A:B7:0C:7C:38:03",
+      "uid_bytes": [
+        10,
+        183,
+        12,
+        124,
+        56,
+        3
+      ],
+      "sync_bytes": "7C:38:03",
+      "fhss_seed": 209467399,
+      "crc_init": 15363,
+      "collision": false
+    },
+    {
+      "phrase": "expresslrs",
+      "uid_hex": "41:F5:21:E6:3A:E2",
+      "uid_bytes": [
+        65,
+        245,
+        33,
+        230,
+        58,
+        226
+      ],
+      "sync_bytes": "E6:3A:E2",
+      "fhss_seed": 568736486,
+      "crc_init": 16098,
+      "collision": false
+    },
+    {
+      "phrase": "ExpressLRS",
+      "uid_hex": "43:7F:2F:B1:D3:39",
+      "uid_bytes": [
+        67,
+        127,
+        47,
+        177,
+        211,
+        57
+      ],
+      "sync_bytes": "B1:D3:39",
+      "fhss_seed": 800183101,
+      "crc_init": 55097,
+      "collision": false
+    },
+    {
+      "phrase": "EXPRESSLRS",
+      "uid_hex": "A5:A0:C6:35:39:6A",
+      "uid_bytes": [
+        165,
+        160,
+        198,
+        53,
+        57,
+        106
+      ],
+      "sync_bytes": "35:39:6A",
+      "fhss_seed": 3325376878,
+      "crc_init": 15722,
+      "collision": false
+    },
+    {
+      "phrase": "elrs",
+      "uid_hex": "FF:77:7A:3B:34:AB",
+      "uid_bytes": [
+        255,
+        119,
+        122,
+        59,
+        52,
+        171
+      ],
+      "sync_bytes": "3B:34:AB",
+      "fhss_seed": 2050700463,
+      "crc_init": 12459,
+      "collision": false
+    },
+    {
+      "phrase": "ELRS",
+      "uid_hex": "51:FF:F3:22:69:65",
+      "uid_bytes": [
+        81,
+        255,
+        243,
+        34,
+        105,
+        101
+      ],
+      "sync_bytes": "22:69:65",
+      "fhss_seed": 4079118689,
+      "crc_init": 28005,
+      "collision": false
+    },
+    {
+      "phrase": "MyBindingPhrase",
+      "uid_hex": "EF:DE:01:4B:23:48",
+      "uid_bytes": [
+        239,
+        222,
+        1,
+        75,
+        35,
+        72
+      ],
+      "sync_bytes": "4B:23:48",
+      "fhss_seed": 21701452,
+      "crc_init": 10056,
+      "collision": false
+    },
+    {
+      "phrase": "mybindingphrase",
+      "uid_hex": "AB:8B:E7:54:43:86",
+      "uid_bytes": [
+        171,
+        139,
+        231,
+        84,
+        67,
+        134
+      ],
+      "sync_bytes": "54:43:86",
+      "fhss_seed": 3881059202,
+      "crc_init": 18310,
+      "collision": false
+    },
+    {
+      "phrase": "my binding phrase",
+      "uid_hex": "B3:C6:5F:40:FE:79",
+      "uid_bytes": [
+        179,
+        198,
+        95,
+        64,
+        254,
+        121
+      ],
+      "sync_bytes": "40:FE:79",
+      "fhss_seed": 1598094973,
+      "crc_init": 64121,
+      "collision": false
+    },
+    {
+      "phrase": "bindphrase",
+      "uid_hex": "D7:74:FE:D2:74:B7",
+      "uid_bytes": [
+        215,
+        116,
+        254,
+        210,
+        116,
+        183
+      ],
+      "sync_bytes": "D2:74:B7",
+      "fhss_seed": 4275205299,
+      "crc_init": 28855,
+      "collision": false
+    },
+    {
+      "phrase": "BindPhrase",
+      "uid_hex": "46:0E:BB:88:13:20",
+      "uid_bytes": [
+        70,
+        14,
+        187,
+        136,
+        19,
+        32
+      ],
+      "sync_bytes": "88:13:20",
+      "fhss_seed": 3146257188,
+      "crc_init": 5920,
+      "collision": false
+    },
+    {
+      "phrase": "binding",
+      "uid_hex": "9C:BF:2F:7F:03:0F",
+      "uid_bytes": [
+        156,
+        191,
+        47,
+        127,
+        3,
+        15
+      ],
+      "sync_bytes": "7F:03:0F",
+      "fhss_seed": 796853003,
+      "crc_init": 1807,
+      "collision": false
+    },
+    {
+      "phrase": "testphrase",
+      "uid_hex": "ED:87:B6:B8:58:A4",
+      "uid_bytes": [
+        237,
+        135,
+        182,
+        184,
+        88,
+        164
+      ],
+      "sync_bytes": "B8:58:A4",
+      "fhss_seed": 3065534624,
+      "crc_init": 23716,
+      "collision": false
+    },
+    {
+      "phrase": "test",
+      "uid_hex": "4F:04:FD:82:21:55",
+      "uid_bytes": [
+        79,
+        4,
+        253,
+        130,
+        33,
+        85
+      ],
+      "sync_bytes": "82:21:55",
+      "fhss_seed": 4253163857,
+      "crc_init": 9557,
+      "collision": false
+    },
+    {
+      "phrase": "test1234",
+      "uid_hex": "C2:D8:3C:9B:26:A9",
+      "uid_bytes": [
+        194,
+        216,
+        60,
+        155,
+        38,
+        169
+      ],
+      "sync_bytes": "9B:26:A9",
+      "fhss_seed": 1016800941,
+      "crc_init": 8873,
+      "collision": false
+    },
+    {
+      "phrase": "example",
+      "uid_hex": "F7:52:25:2F:9E:B5",
+      "uid_bytes": [
+        247,
+        82,
+        37,
+        47,
+        158,
+        181
+      ],
+      "sync_bytes": "2F:9E:B5",
+      "fhss_seed": 623877809,
+      "crc_init": 39605,
+      "collision": false
+    },
+    {
+      "phrase": "changeme",
+      "uid_hex": "8F:CD:1C:15:A5:8A",
+      "uid_bytes": [
+        143,
+        205,
+        28,
+        21,
+        165,
+        138
+      ],
+      "sync_bytes": "15:A5:8A",
+      "fhss_seed": 471180686,
+      "crc_init": 41354,
+      "collision": false
+    },
+    {
+      "phrase": "eyantra123",
+      "uid_hex": "85:7B:4D:AF:05:84",
+      "uid_bytes": [
+        133,
+        123,
+        77,
+        175,
+        5,
+        132
+      ],
+      "sync_bytes": "AF:05:84",
+      "fhss_seed": 1303315840,
+      "crc_init": 388,
+      "collision": false
+    },
+    {
+      "phrase": "betafpv",
+      "uid_hex": "D4:E3:5B:AC:2E:09",
+      "uid_bytes": [
+        212,
+        227,
+        91,
+        172,
+        46,
+        9
+      ],
+      "sync_bytes": "AC:2E:09",
+      "fhss_seed": 1538010637,
+      "crc_init": 10761,
+      "collision": false
+    },
+    {
+      "phrase": "BetaFPV",
+      "uid_hex": "8F:D4:2B:BD:16:87",
+      "uid_bytes": [
+        143,
+        212,
+        43,
+        189,
+        22,
+        135
+      ],
+      "sync_bytes": "BD:16:87",
+      "fhss_seed": 733812355,
+      "crc_init": 4743,
+      "collision": false
+    },
+    {
+      "phrase": "BETAFPV",
+      "uid_hex": "D1:08:EE:C8:C3:E7",
+      "uid_bytes": [
+        209,
+        8,
+        238,
+        200,
+        195,
+        231
+      ],
+      "sync_bytes": "C8:C3:E7",
+      "fhss_seed": 4006134755,
+      "crc_init": 51175,
+      "collision": false
+    },
+    {
+      "phrase": "happymodel",
+      "uid_hex": "DA:1D:24:23:7F:58",
+      "uid_bytes": [
+        218,
+        29,
+        36,
+        35,
+        127,
+        88
+      ],
+      "sync_bytes": "23:7F:58",
+      "fhss_seed": 606306140,
+      "crc_init": 31576,
+      "collision": false
+    },
+    {
+      "phrase": "HappyModel",
+      "uid_hex": "EE:08:30:B8:C0:A8",
+      "uid_bytes": [
+        238,
+        8,
+        48,
+        184,
+        192,
+        168
+      ],
+      "sync_bytes": "B8:C0:A8",
+      "fhss_seed": 817414316,
+      "crc_init": 50344,
+      "collision": false
+    },
+    {
+      "phrase": "radiomaster",
+      "uid_hex": "D3:0B:26:ED:B8:CF",
+      "uid_bytes": [
+        211,
+        11,
+        38,
+        237,
+        184,
+        207
+      ],
+      "sync_bytes": "ED:B8:CF",
+      "fhss_seed": 653113547,
+      "crc_init": 48335,
+      "collision": false
+    },
+    {
+      "phrase": "RadioMaster",
+      "uid_hex": "F1:80:2C:81:EB:1B",
+      "uid_bytes": [
+        241,
+        128,
+        44,
+        129,
+        235,
+        27
+      ],
+      "sync_bytes": "81:EB:1B",
+      "fhss_seed": 746711839,
+      "crc_init": 61211,
+      "collision": false
+    },
+    {
+      "phrase": "jumper",
+      "uid_hex": "3D:AE:CA:5D:34:B2",
+      "uid_bytes": [
+        61,
+        174,
+        202,
+        93,
+        52,
+        178
+      ],
+      "sync_bytes": "5D:34:B2",
+      "fhss_seed": 3395105974,
+      "crc_init": 12466,
+      "collision": false
+    },
+    {
+      "phrase": "Jumper",
+      "uid_hex": "42:E1:A4:16:03:ED",
+      "uid_bytes": [
+        66,
+        225,
+        164,
+        22,
+        3,
+        237
+      ],
+      "sync_bytes": "16:03:ED",
+      "fhss_seed": 2752906217,
+      "crc_init": 2029,
+      "collision": false
+    },
+    {
+      "phrase": "emax",
+      "uid_hex": "E5:1F:6E:A9:37:72",
+      "uid_bytes": [
+        229,
+        31,
+        110,
+        169,
+        55,
+        114
+      ],
+      "sync_bytes": "A9:37:72",
+      "fhss_seed": 1856583542,
+      "crc_init": 13170,
+      "collision": false
+    },
+    {
+      "phrase": "EMAX",
+      "uid_hex": "73:A8:7C:06:0B:BD",
+      "uid_bytes": [
+        115,
+        168,
+        124,
+        6,
+        11,
+        189
+      ],
+      "sync_bytes": "06:0B:BD",
+      "fhss_seed": 2080771001,
+      "crc_init": 4029,
+      "collision": false
+    },
+    {
+      "phrase": "tinyhawk",
+      "uid_hex": "F8:45:BA:15:B8:2F",
+      "uid_bytes": [
+        248,
+        69,
+        186,
+        21,
+        184,
+        47
+      ],
+      "sync_bytes": "15:B8:2F",
+      "fhss_seed": 3121985579,
+      "crc_init": 48175,
+      "collision": false
+    },
+    {
+      "phrase": "TinyHawk",
+      "uid_hex": "CE:CE:C0:50:5C:11",
+      "uid_bytes": [
+        206,
+        206,
+        192,
+        80,
+        92,
+        17
+      ],
+      "sync_bytes": "50:5C:11",
+      "fhss_seed": 3226491925,
+      "crc_init": 22545,
+      "collision": false
+    },
+    {
+      "phrase": "mobula",
+      "uid_hex": "BA:F5:B3:BD:63:76",
+      "uid_bytes": [
+        186,
+        245,
+        179,
+        189,
+        99,
+        118
+      ],
+      "sync_bytes": "BD:63:76",
+      "fhss_seed": 3015533426,
+      "crc_init": 26486,
+      "collision": false
+    },
+    {
+      "phrase": "Mobula",
+      "uid_hex": "5E:D3:46:BC:6B:ED",
+      "uid_bytes": [
+        94,
+        211,
+        70,
+        188,
+        107,
+        237
+      ],
+      "sync_bytes": "BC:6B:ED",
+      "fhss_seed": 1186753513,
+      "crc_init": 28653,
+      "collision": false
+    },
+    {
+      "phrase": "meteor",
+      "uid_hex": "EC:5C:63:6B:07:82",
+      "uid_bytes": [
+        236,
+        92,
+        99,
+        107,
+        7,
+        130
+      ],
+      "sync_bytes": "6B:07:82",
+      "fhss_seed": 1667958662,
+      "crc_init": 898,
+      "collision": false
+    },
+    {
+      "phrase": "Meteor",
+      "uid_hex": "B4:99:92:08:4E:FC",
+      "uid_bytes": [
+        180,
+        153,
+        146,
+        8,
+        78,
+        252
+      ],
+      "sync_bytes": "08:4E:FC",
+      "fhss_seed": 2450018040,
+      "crc_init": 19196,
+      "collision": false
+    },
+    {
+      "phrase": "caddx",
+      "uid_hex": "B9:87:D6:B1:5C:43",
+      "uid_bytes": [
+        185,
+        135,
+        214,
+        177,
+        92,
+        67
+      ],
+      "sync_bytes": "B1:5C:43",
+      "fhss_seed": 3601947719,
+      "crc_init": 22595,
+      "collision": false
+    },
+    {
+      "phrase": "walksnail",
+      "uid_hex": "37:AC:CA:FB:71:5A",
+      "uid_bytes": [
+        55,
+        172,
+        202,
+        251,
+        113,
+        90
+      ],
+      "sync_bytes": "FB:71:5A",
+      "fhss_seed": 3405476190,
+      "crc_init": 30042,
+      "collision": false
+    },
+    {
+      "phrase": "iflight",
+      "uid_hex": "71:3D:12:C9:B8:6F",
+      "uid_bytes": [
+        113,
+        61,
+        18,
+        201,
+        184,
+        111
+      ],
+      "sync_bytes": "C9:B8:6F",
+      "fhss_seed": 315209835,
+      "crc_init": 48239,
+      "collision": false
+    },
+    {
+      "phrase": "geprc",
+      "uid_hex": "86:8C:3A:E2:53:1C",
+      "uid_bytes": [
+        134,
+        140,
+        58,
+        226,
+        83,
+        28
+      ],
+      "sync_bytes": "E2:53:1C",
+      "fhss_seed": 987910936,
+      "crc_init": 22300,
+      "collision": false
+    },
+    {
+      "phrase": "diatone",
+      "uid_hex": "22:FD:DC:C2:A8:79",
+      "uid_bytes": [
+        34,
+        253,
+        220,
+        194,
+        168,
+        121
+      ],
+      "sync_bytes": "C2:A8:79",
+      "fhss_seed": 3703744637,
+      "crc_init": 44153,
+      "collision": false
+    },
+    {
+      "phrase": "speedybee",
+      "uid_hex": "5E:00:58:4E:40:55",
+      "uid_bytes": [
+        94,
+        0,
+        88,
+        78,
+        64,
+        85
+      ],
+      "sync_bytes": "4E:40:55",
+      "fhss_seed": 1481523281,
+      "crc_init": 17493,
+      "collision": false
+    },
+    {
+      "phrase": "flywoo",
+      "uid_hex": "D0:FE:B3:C7:41:87",
+      "uid_bytes": [
+        208,
+        254,
+        179,
+        199,
+        65,
+        135
+      ],
+      "sync_bytes": "C7:41:87",
+      "fhss_seed": 3016180099,
+      "crc_init": 17799,
+      "collision": false
+    },
+    {
+      "phrase": "foxeer",
+      "uid_hex": "DF:18:E8:B1:11:AC",
+      "uid_bytes": [
+        223,
+        24,
+        232,
+        177,
+        17,
+        172
+      ],
+      "sync_bytes": "B1:11:AC",
+      "fhss_seed": 3903918504,
+      "crc_init": 5548,
+      "collision": false
+    },
+    {
+      "phrase": "iloveflying",
+      "uid_hex": "59:9D:C5:B9:D7:59",
+      "uid_bytes": [
+        89,
+        157,
+        197,
+        185,
+        215,
+        89
+      ],
+      "sync_bytes": "B9:D7:59",
+      "fhss_seed": 3317290845,
+      "crc_init": 54105,
+      "collision": false
+    },
+    {
+      "phrase": "fpv4life",
+      "uid_hex": "27:51:A7:B8:AB:59",
+      "uid_bytes": [
+        39,
+        81,
+        167,
+        184,
+        171,
+        89
+      ],
+      "sync_bytes": "B8:AB:59",
+      "fhss_seed": 2813897565,
+      "crc_init": 44889,
+      "collision": false
+    },
+    {
+      "phrase": "fpvlife",
+      "uid_hex": "EC:58:DA:FA:0C:37",
+      "uid_bytes": [
+        236,
+        88,
+        218,
+        250,
+        12,
+        55
+      ],
+      "sync_bytes": "FA:0C:37",
+      "fhss_seed": 3673820211,
+      "crc_init": 2103,
+      "collision": false
+    },
+    {
+      "phrase": "fpvislife",
+      "uid_hex": "81:D9:16:E8:29:80",
+      "uid_bytes": [
+        129,
+        217,
+        22,
+        232,
+        41,
+        128
+      ],
+      "sync_bytes": "E8:29:80",
+      "fhss_seed": 384313732,
+      "crc_init": 11648,
+      "collision": false
+    },
+    {
+      "phrase": "sendit",
+      "uid_hex": "E0:A7:2F:09:56:22",
+      "uid_bytes": [
+        224,
+        167,
+        47,
+        9,
+        86,
+        34
+      ],
+      "sync_bytes": "09:56:22",
+      "fhss_seed": 789141030,
+      "crc_init": 21026,
+      "collision": false
+    },
+    {
+      "phrase": "send it",
+      "uid_hex": "60:6A:79:05:8D:D9",
+      "uid_bytes": [
+        96,
+        106,
+        121,
+        5,
+        141,
+        217
+      ],
+      "sync_bytes": "05:8D:D9",
+      "fhss_seed": 2030407133,
+      "crc_init": 35289,
+      "collision": false
+    },
+    {
+      "phrase": "rip it",
+      "uid_hex": "B4:51:CA:0A:B7:D6",
+      "uid_bytes": [
+        180,
+        81,
+        202,
+        10,
+        183,
+        214
+      ],
+      "sync_bytes": "0A:B7:D6",
+      "fhss_seed": 3389700050,
+      "crc_init": 46038,
+      "collision": false
+    },
+    {
+      "phrase": "ripit",
+      "uid_hex": "4C:FF:F9:53:DA:27",
+      "uid_bytes": [
+        76,
+        255,
+        249,
+        83,
+        218,
+        39
+      ],
+      "sync_bytes": "53:DA:27",
+      "fhss_seed": 4183022115,
+      "crc_init": 56871,
+      "collision": false
+    },
+    {
+      "phrase": "fullsend",
+      "uid_hex": "52:62:66:FD:A2:28",
+      "uid_bytes": [
+        82,
+        98,
+        102,
+        253,
+        162,
+        40
+      ],
+      "sync_bytes": "FD:A2:28",
+      "fhss_seed": 1727898156,
+      "crc_init": 42536,
+      "collision": false
+    },
+    {
+      "phrase": "letsfly",
+      "uid_hex": "FF:DC:AD:7A:DA:9B",
+      "uid_bytes": [
+        255,
+        220,
+        173,
+        122,
+        218,
+        155
+      ],
+      "sync_bytes": "7A:DA:9B",
+      "fhss_seed": 2910509727,
+      "crc_init": 56987,
+      "collision": false
+    },
+    {
+      "phrase": "lets fly",
+      "uid_hex": "EE:FD:03:53:28:99",
+      "uid_bytes": [
+        238,
+        253,
+        3,
+        83,
+        40,
+        153
+      ],
+      "sync_bytes": "53:28:99",
+      "fhss_seed": 55781533,
+      "crc_init": 11417,
+      "collision": false
+    },
+    {
+      "phrase": "flyfast",
+      "uid_hex": "C7:44:0F:9E:D4:60",
+      "uid_bytes": [
+        199,
+        68,
+        15,
+        158,
+        212,
+        96
+      ],
+      "sync_bytes": "9E:D4:60",
+      "fhss_seed": 262067300,
+      "crc_init": 53344,
+      "collision": false
+    },
+    {
+      "phrase": "fly fast",
+      "uid_hex": "52:78:79:42:6A:7A",
+      "uid_bytes": [
+        82,
+        120,
+        121,
+        66,
+        106,
+        122
+      ],
+      "sync_bytes": "42:6A:7A",
+      "fhss_seed": 2034395774,
+      "crc_init": 28282,
+      "collision": false
+    },
+    {
+      "phrase": "gofast",
+      "uid_hex": "6B:92:A3:C6:90:49",
+      "uid_bytes": [
+        107,
+        146,
+        163,
+        198,
+        144,
+        73
+      ],
+      "sync_bytes": "C6:90:49",
+      "fhss_seed": 2747699277,
+      "crc_init": 37961,
+      "collision": false
+    },
+    {
+      "phrase": "sendfpv",
+      "uid_hex": "A5:2B:2E:6C:D9:96",
+      "uid_bytes": [
+        165,
+        43,
+        46,
+        108,
+        217,
+        150
+      ],
+      "sync_bytes": "6C:D9:96",
+      "fhss_seed": 778885522,
+      "crc_init": 56726,
+      "collision": false
+    },
+    {
+      "phrase": "fpvdrone",
+      "uid_hex": "F4:9B:B7:48:8E:53",
+      "uid_bytes": [
+        244,
+        155,
+        183,
+        72,
+        142,
+        83
+      ],
+      "sync_bytes": "48:8E:53",
+      "fhss_seed": 3074985559,
+      "crc_init": 35411,
+      "collision": false
+    },
+    {
+      "phrase": "fpvracing",
+      "uid_hex": "5E:56:B8:D4:1E:21",
+      "uid_bytes": [
+        94,
+        86,
+        184,
+        212,
+        30,
+        33
+      ],
+      "sync_bytes": "D4:1E:21",
+      "fhss_seed": 3100909093,
+      "crc_init": 6689,
+      "collision": false
+    },
+    {
+      "phrase": "freestyle",
+      "uid_hex": "3E:1D:47:50:A1:B4",
+      "uid_bytes": [
+        62,
+        29,
+        71,
+        80,
+        161,
+        180
+      ],
+      "sync_bytes": "50:A1:B4",
+      "fhss_seed": 1196466608,
+      "crc_init": 42420,
+      "collision": false
+    },
+    {
+      "phrase": "Freestyle",
+      "uid_hex": "E4:EC:76:0F:26:30",
+      "uid_bytes": [
+        228,
+        236,
+        118,
+        15,
+        38,
+        48
+      ],
+      "sync_bytes": "0F:26:30",
+      "fhss_seed": 1980704308,
+      "crc_init": 8752,
+      "collision": false
+    },
+    {
+      "phrase": "longrange",
+      "uid_hex": "06:AB:A5:B5:DB:52",
+      "uid_bytes": [
+        6,
+        171,
+        165,
+        181,
+        219,
+        82
+      ],
+      "sync_bytes": "B5:DB:52",
+      "fhss_seed": 2780158806,
+      "crc_init": 57170,
+      "collision": false
+    },
+    {
+      "phrase": "LongRange",
+      "uid_hex": "63:FC:F5:E1:11:39",
+      "uid_bytes": [
+        99,
+        252,
+        245,
+        225,
+        17,
+        57
+      ],
+      "sync_bytes": "E1:11:39",
+      "fhss_seed": 4125167933,
+      "crc_init": 5433,
+      "collision": false
+    },
+    {
+      "phrase": "long range",
+      "uid_hex": "A8:4B:2F:B2:49:D9",
+      "uid_bytes": [
+        168,
+        75,
+        47,
+        178,
+        73,
+        217
+      ],
+      "sync_bytes": "B2:49:D9",
+      "fhss_seed": 800213469,
+      "crc_init": 19929,
+      "collision": false
+    },
+    {
+      "phrase": "tinywhoop",
+      "uid_hex": "C5:A3:75:AE:E8:D3",
+      "uid_bytes": [
+        197,
+        163,
+        117,
+        174,
+        232,
+        211
+      ],
+      "sync_bytes": "AE:E8:D3",
+      "fhss_seed": 1974397143,
+      "crc_init": 60627,
+      "collision": false
+    },
+    {
+      "phrase": "TinyWhoop",
+      "uid_hex": "77:BB:50:31:C6:A2",
+      "uid_bytes": [
+        119,
+        187,
+        80,
+        49,
+        198,
+        162
+      ],
+      "sync_bytes": "31:C6:A2",
+      "fhss_seed": 1345439398,
+      "crc_init": 49826,
+      "collision": false
+    },
+    {
+      "phrase": "whoop",
+      "uid_hex": "4B:71:EB:35:C2:F4",
+      "uid_bytes": [
+        75,
+        113,
+        235,
+        53,
+        194,
+        244
+      ],
+      "sync_bytes": "35:C2:F4",
+      "fhss_seed": 3946169072,
+      "crc_init": 50932,
+      "collision": false
+    },
+    {
+      "phrase": "whooplife",
+      "uid_hex": "8E:E0:75:D3:60:F1",
+      "uid_bytes": [
+        142,
+        224,
+        117,
+        211,
+        96,
+        241
+      ],
+      "sync_bytes": "D3:60:F1",
+      "fhss_seed": 1976787189,
+      "crc_init": 25841,
+      "collision": false
+    },
+    {
+      "phrase": "acro",
+      "uid_hex": "9C:98:91:99:2C:DC",
+      "uid_bytes": [
+        156,
+        152,
+        145,
+        153,
+        44,
+        220
+      ],
+      "sync_bytes": "99:2C:DC",
+      "fhss_seed": 2442734808,
+      "crc_init": 10460,
+      "collision": false
+    },
+    {
+      "phrase": "acromode",
+      "uid_hex": "4F:D3:E7:6C:8B:34",
+      "uid_bytes": [
+        79,
+        211,
+        231,
+        108,
+        139,
+        52
+      ],
+      "sync_bytes": "6C:8B:34",
+      "fhss_seed": 3882650416,
+      "crc_init": 36660,
+      "collision": false
+    },
+    {
+      "phrase": "runcam",
+      "uid_hex": "C9:E5:EF:60:76:1D",
+      "uid_bytes": [
+        201,
+        229,
+        239,
+        96,
+        118,
+        29
+      ],
+      "sync_bytes": "60:76:1D",
+      "fhss_seed": 4016076313,
+      "crc_init": 29213,
+      "collision": false
+    },
+    {
+      "phrase": "analog",
+      "uid_hex": "CB:DB:50:B6:AD:1F",
+      "uid_bytes": [
+        203,
+        219,
+        80,
+        182,
+        173,
+        31
+      ],
+      "sync_bytes": "B6:AD:1F",
+      "fhss_seed": 1354149147,
+      "crc_init": 43295,
+      "collision": false
+    },
+    {
+      "phrase": "digital",
+      "uid_hex": "4D:7D:3A:04:34:2E",
+      "uid_bytes": [
+        77,
+        125,
+        58,
+        4,
+        52,
+        46
+      ],
+      "sync_bytes": "04:34:2E",
+      "fhss_seed": 973354026,
+      "crc_init": 12334,
+      "collision": false
+    },
+    {
+      "phrase": "hdzero",
+      "uid_hex": "76:6F:BF:98:AE:42",
+      "uid_bytes": [
+        118,
+        111,
+        191,
+        152,
+        174,
+        66
+      ],
+      "sync_bytes": "98:AE:42",
+      "fhss_seed": 3214454342,
+      "crc_init": 43586,
+      "collision": false
+    },
+    {
+      "phrase": "HDZero",
+      "uid_hex": "01:A4:5E:54:EB:DF",
+      "uid_bytes": [
+        1,
+        164,
+        94,
+        84,
+        235,
+        223
+      ],
+      "sync_bytes": "54:EB:DF",
+      "fhss_seed": 1582623707,
+      "crc_init": 61407,
+      "collision": false
+    },
+    {
+      "phrase": "dji",
+      "uid_hex": "EF:78:71:3A:B7:60",
+      "uid_bytes": [
+        239,
+        120,
+        113,
+        58,
+        183,
+        96
+      ],
+      "sync_bytes": "3A:B7:60",
+      "fhss_seed": 1899673444,
+      "crc_init": 45920,
+      "collision": false
+    },
+    {
+      "phrase": "DJI",
+      "uid_hex": "07:87:D2:48:AF:4F",
+      "uid_bytes": [
+        7,
+        135,
+        210,
+        72,
+        175,
+        79
+      ],
+      "sync_bytes": "48:AF:4F",
+      "fhss_seed": 3527978827,
+      "crc_init": 43855,
+      "collision": false
+    },
+    {
+      "phrase": "o3",
+      "uid_hex": "E6:78:89:B6:75:B8",
+      "uid_bytes": [
+        230,
+        120,
+        137,
+        182,
+        117,
+        184
+      ],
+      "sync_bytes": "B6:75:B8",
+      "fhss_seed": 2310436284,
+      "crc_init": 29112,
+      "collision": false
+    },
+    {
+      "phrase": "O3",
+      "uid_hex": "A0:F9:42:30:D5:B2",
+      "uid_bytes": [
+        160,
+        249,
+        66,
+        48,
+        213,
+        178
+      ],
+      "sync_bytes": "30:D5:B2",
+      "fhss_seed": 1110496694,
+      "crc_init": 53682,
+      "collision": false
+    },
+    {
+      "phrase": "gorilla",
+      "uid_hex": "F3:75:95:2D:B2:2C",
+      "uid_bytes": [
+        243,
+        117,
+        149,
+        45,
+        178,
+        44
+      ],
+      "sync_bytes": "2D:B2:2C",
+      "fhss_seed": 2502799912,
+      "crc_init": 46636,
+      "collision": false
+    },
+    {
+      "phrase": "bando",
+      "uid_hex": "DC:90:C7:76:CB:CA",
+      "uid_bytes": [
+        220,
+        144,
+        199,
+        118,
+        203,
+        202
+      ],
+      "sync_bytes": "76:CB:CA",
+      "fhss_seed": 3346451406,
+      "crc_init": 53194,
+      "collision": false
+    },
+    {
+      "phrase": "bandos",
+      "uid_hex": "79:80:30:CE:81:D6",
+      "uid_bytes": [
+        121,
+        128,
+        48,
+        206,
+        129,
+        214
+      ],
+      "sync_bytes": "CE:81:D6",
+      "fhss_seed": 818840018,
+      "crc_init": 34262,
+      "collision": false
+    },
+    {
+      "phrase": "matty",
+      "uid_hex": "C8:CD:02:86:86:27",
+      "uid_bytes": [
+        200,
+        205,
+        2,
+        134,
+        134,
+        39
+      ],
+      "sync_bytes": "86:86:27",
+      "fhss_seed": 42370595,
+      "crc_init": 33319,
+      "collision": false
+    },
+    {
+      "phrase": "juicy",
+      "uid_hex": "42:C8:F4:14:84:93",
+      "uid_bytes": [
+        66,
+        200,
+        244,
+        20,
+        132,
+        147
+      ],
+      "sync_bytes": "14:84:93",
+      "fhss_seed": 4094985367,
+      "crc_init": 32915,
+      "collision": false
+    },
+    {
+      "phrase": "steele",
+      "uid_hex": "18:FB:AC:D4:EA:D0",
+      "uid_bytes": [
+        24,
+        251,
+        172,
+        212,
+        234,
+        208
+      ],
+      "sync_bytes": "D4:EA:D0",
+      "fhss_seed": 2899634900,
+      "crc_init": 61136,
+      "collision": false
+    },
+    {
+      "phrase": "bardwell",
+      "uid_hex": "A6:E4:75:92:EC:50",
+      "uid_bytes": [
+        166,
+        228,
+        117,
+        146,
+        236,
+        80
+      ],
+      "sync_bytes": "92:EC:50",
+      "fhss_seed": 1972563028,
+      "crc_init": 59472,
+      "collision": false
+    },
+    {
+      "phrase": "joshuabardwell",
+      "uid_hex": "6D:87:5F:0E:B8:67",
+      "uid_bytes": [
+        109,
+        135,
+        95,
+        14,
+        184,
+        103
+      ],
+      "sync_bytes": "0E:B8:67",
+      "fhss_seed": 1594800227,
+      "crc_init": 48231,
+      "collision": false
+    },
+    {
+      "phrase": "pilot",
+      "uid_hex": "F4:E9:E9:F4:60:9D",
+      "uid_bytes": [
+        244,
+        233,
+        233,
+        244,
+        96,
+        157
+      ],
+      "sync_bytes": "F4:60:9D",
+      "fhss_seed": 3925106841,
+      "crc_init": 25757,
+      "collision": false
+    },
+    {
+      "phrase": "pilot1",
+      "uid_hex": "A1:A6:19:4C:C5:9E",
+      "uid_bytes": [
+        161,
+        166,
+        25,
+        76,
+        197,
+        158
+      ],
+      "sync_bytes": "4C:C5:9E",
+      "fhss_seed": 424461722,
+      "crc_init": 49566,
+      "collision": false
+    },
+    {
+      "phrase": "pilot123",
+      "uid_hex": "58:1E:89:03:58:2A",
+      "uid_bytes": [
+        88,
+        30,
+        137,
+        3,
+        88,
+        42
+      ],
+      "sync_bytes": "03:58:2A",
+      "fhss_seed": 2298697774,
+      "crc_init": 23594,
+      "collision": false
+    },
+    {
+      "phrase": "drone",
+      "uid_hex": "41:70:36:BB:F7:50",
+      "uid_bytes": [
+        65,
+        112,
+        54,
+        187,
+        247,
+        80
+      ],
+      "sync_bytes": "BB:F7:50",
+      "fhss_seed": 918288212,
+      "crc_init": 62288,
+      "collision": false
+    },
+    {
+      "phrase": "drone1",
+      "uid_hex": "40:FB:38:86:13:B1",
+      "uid_bytes": [
+        64,
+        251,
+        56,
+        134,
+        19,
+        177
+      ],
+      "sync_bytes": "86:13:B1",
+      "fhss_seed": 948310965,
+      "crc_init": 6065,
+      "collision": false
+    },
+    {
+      "phrase": "drone123",
+      "uid_hex": "E7:73:3E:88:63:92",
+      "uid_bytes": [
+        231,
+        115,
+        62,
+        136,
+        99,
+        146
+      ],
+      "sync_bytes": "88:63:92",
+      "fhss_seed": 1049125782,
+      "crc_init": 26514,
+      "collision": false
+    },
+    {
+      "phrase": "quad",
+      "uid_hex": "24:75:96:FD:FB:E6",
+      "uid_bytes": [
+        36,
+        117,
+        150,
+        253,
+        251,
+        230
+      ],
+      "sync_bytes": "FD:FB:E6",
+      "fhss_seed": 2533227490,
+      "crc_init": 65510,
+      "collision": false
+    },
+    {
+      "phrase": "quad1",
+      "uid_hex": "E1:D0:93:1C:0E:10",
+      "uid_bytes": [
+        225,
+        208,
+        147,
+        28,
+        14,
+        16
+      ],
+      "sync_bytes": "1C:0E:10",
+      "fhss_seed": 2468089364,
+      "crc_init": 2576,
+      "collision": false
+    },
+    {
+      "phrase": "quad123",
+      "uid_hex": "3B:0A:CD:AC:CB:95",
+      "uid_bytes": [
+        59,
+        10,
+        205,
+        172,
+        203,
+        149
+      ],
+      "sync_bytes": "AC:CB:95",
+      "fhss_seed": 3450653585,
+      "crc_init": 53141,
+      "collision": false
+    },
+    {
+      "phrase": "myquad",
+      "uid_hex": "3B:F4:27:BA:3B:CA",
+      "uid_bytes": [
+        59,
+        244,
+        39,
+        186,
+        59,
+        202
+      ],
+      "sync_bytes": "BA:3B:CA",
+      "fhss_seed": 666516430,
+      "crc_init": 16330,
+      "collision": false
+    },
+    {
+      "phrase": "mydrone",
+      "uid_hex": "4B:BE:0F:05:28:5E",
+      "uid_bytes": [
+        75,
+        190,
+        15,
+        5,
+        40,
+        94
+      ],
+      "sync_bytes": "05:28:5E",
+      "fhss_seed": 251996250,
+      "crc_init": 11358,
+      "collision": false
+    },
+    {
+      "phrase": "myfpv",
+      "uid_hex": "18:0A:50:87:5A:9F",
+      "uid_bytes": [
+        24,
+        10,
+        80,
+        135,
+        90,
+        159
+      ],
+      "sync_bytes": "87:5A:9F",
+      "fhss_seed": 1351047835,
+      "crc_init": 24223,
+      "collision": false
+    },
+    {
+      "phrase": "fpv",
+      "uid_hex": "BE:F7:32:B3:16:A2",
+      "uid_bytes": [
+        190,
+        247,
+        50,
+        179,
+        22,
+        162
+      ],
+      "sync_bytes": "B3:16:A2",
+      "fhss_seed": 850597542,
+      "crc_init": 4770,
+      "collision": false
+    },
+    {
+      "phrase": "fpv1",
+      "uid_hex": "DE:76:BD:8D:A4:43",
+      "uid_bytes": [
+        222,
+        118,
+        189,
+        141,
+        164,
+        67
+      ],
+      "sync_bytes": "8D:A4:43",
+      "fhss_seed": 3180176455,
+      "crc_init": 41027,
+      "collision": false
+    },
+    {
+      "phrase": "fpv123",
+      "uid_hex": "5E:57:B8:66:FD:D6",
+      "uid_bytes": [
+        94,
+        87,
+        184,
+        102,
+        253,
+        214
+      ],
+      "sync_bytes": "66:FD:D6",
+      "fhss_seed": 3093757394,
+      "crc_init": 63958,
+      "collision": false
+    },
+    {
+      "phrase": "rc",
+      "uid_hex": "28:FB:8B:92:02:17",
+      "uid_bytes": [
+        40,
+        251,
+        139,
+        146,
+        2,
+        23
+      ],
+      "sync_bytes": "92:02:17",
+      "fhss_seed": 2341601811,
+      "crc_init": 1559,
+      "collision": false
+    },
+    {
+      "phrase": "rc1",
+      "uid_hex": "AE:DF:CF:3E:AF:97",
+      "uid_bytes": [
+        174,
+        223,
+        207,
+        62,
+        175,
+        151
+      ],
+      "sync_bytes": "3E:AF:97",
+      "fhss_seed": 3476991891,
+      "crc_init": 43927,
+      "collision": false
+    },
+    {
+      "phrase": "rc123",
+      "uid_hex": "1D:AF:3F:F8:C9:70",
+      "uid_bytes": [
+        29,
+        175,
+        63,
+        248,
+        201,
+        112
+      ],
+      "sync_bytes": "F8:C9:70",
+      "fhss_seed": 1073269108,
+      "crc_init": 52592,
+      "collision": false
+    },
+    {
+      "phrase": "password",
+      "uid_hex": "15:4E:B8:ED:3A:94",
+      "uid_bytes": [
+        21,
+        78,
+        184,
+        237,
+        58,
+        148
+      ],
+      "sync_bytes": "ED:3A:94",
+      "fhss_seed": 3102554768,
+      "crc_init": 16020,
+      "collision": false
+    },
+    {
+      "phrase": "password1",
+      "uid_hex": "F7:86:9D:34:75:17",
+      "uid_bytes": [
+        247,
+        134,
+        157,
+        52,
+        117,
+        23
+      ],
+      "sync_bytes": "34:75:17",
+      "fhss_seed": 2637460755,
+      "crc_init": 28951,
+      "collision": false
+    },
+    {
+      "phrase": "password123",
+      "uid_hex": "17:D7:5D:63:35:AC",
+      "uid_bytes": [
+        23,
+        215,
+        93,
+        99,
+        53,
+        172
+      ],
+      "sync_bytes": "63:35:AC",
+      "fhss_seed": 1566782888,
+      "crc_init": 12716,
+      "collision": false
+    },
+    {
+      "phrase": "12345678",
+      "uid_hex": "6A:13:13:CE:C1:1E",
+      "uid_bytes": [
+        106,
+        19,
+        19,
+        206,
+        193,
+        30
+      ],
+      "sync_bytes": "CE:C1:1E",
+      "fhss_seed": 332316954,
+      "crc_init": 50462,
+      "collision": false
+    },
+    {
+      "phrase": "123456789",
+      "uid_hex": "A0:68:C6:FE:3F:40",
+      "uid_bytes": [
+        160,
+        104,
+        198,
+        254,
+        63,
+        64
+      ],
+      "sync_bytes": "FE:3F:40",
+      "fhss_seed": 3338551108,
+      "crc_init": 15168,
+      "collision": false
+    },
+    {
+      "phrase": "1234567890",
+      "uid_hex": "C1:A8:5B:95:8E:EB",
+      "uid_bytes": [
+        193,
+        168,
+        91,
+        149,
+        142,
+        235
+      ],
+      "sync_bytes": "95:8E:EB",
+      "fhss_seed": 1536528111,
+      "crc_init": 35563,
+      "collision": false
+    },
+    {
+      "phrase": "qwerty",
+      "uid_hex": "77:80:88:40:AF:64",
+      "uid_bytes": [
+        119,
+        128,
+        136,
+        64,
+        175,
+        100
+      ],
+      "sync_bytes": "40:AF:64",
+      "fhss_seed": 2285940576,
+      "crc_init": 43876,
+      "collision": false
+    },
+    {
+      "phrase": "qwerty123",
+      "uid_hex": "4C:5A:C6:D2:E0:A9",
+      "uid_bytes": [
+        76,
+        90,
+        198,
+        210,
+        224,
+        169
+      ],
+      "sync_bytes": "D2:E0:A9",
+      "fhss_seed": 3335708845,
+      "crc_init": 58537,
+      "collision": false
+    },
+    {
+      "phrase": "letmein",
+      "uid_hex": "A3:B2:07:6F:CF:20",
+      "uid_bytes": [
+        163,
+        178,
+        7,
+        111,
+        207,
+        32
+      ],
+      "sync_bytes": "6F:CF:20",
+      "fhss_seed": 124768036,
+      "crc_init": 52000,
+      "collision": false
+    },
+    {
+      "phrase": "admin",
+      "uid_hex": "43:CE:04:30:4B:3A",
+      "uid_bytes": [
+        67,
+        206,
+        4,
+        48,
+        75,
+        58
+      ],
+      "sync_bytes": "30:4B:3A",
+      "fhss_seed": 70273854,
+      "crc_init": 20282,
+      "collision": false
+    },
+    {
+      "phrase": "admin123",
+      "uid_hex": "EB:70:8D:48:3F:56",
+      "uid_bytes": [
+        235,
+        112,
+        141,
+        72,
+        63,
+        86
+      ],
+      "sync_bytes": "48:3F:56",
+      "fhss_seed": 2370322258,
+      "crc_init": 15190,
+      "collision": false
+    },
+    {
+      "phrase": "welcome",
+      "uid_hex": "D1:30:07:09:8F:65",
+      "uid_bytes": [
+        209,
+        48,
+        7,
+        9,
+        143,
+        101
+      ],
+      "sync_bytes": "09:8F:65",
+      "fhss_seed": 118067041,
+      "crc_init": 35685,
+      "collision": false
+    },
+    {
+      "phrase": "abc123",
+      "uid_hex": "0E:91:8A:18:48:A1",
+      "uid_bytes": [
+        14,
+        145,
+        138,
+        24,
+        72,
+        161
+      ],
+      "sync_bytes": "18:48:A1",
+      "fhss_seed": 2316847269,
+      "crc_init": 19617,
+      "collision": false
+    },
+    {
+      "phrase": "monkey",
+      "uid_hex": "54:C7:0F:28:76:9A",
+      "uid_bytes": [
+        84,
+        199,
+        15,
+        40,
+        118,
+        154
+      ],
+      "sync_bytes": "28:76:9A",
+      "fhss_seed": 254310046,
+      "crc_init": 29338,
+      "collision": false
+    },
+    {
+      "phrase": "master",
+      "uid_hex": "A2:4A:B6:18:3B:E7",
+      "uid_bytes": [
+        162,
+        74,
+        182,
+        24,
+        59,
+        231
+      ],
+      "sync_bytes": "18:3B:E7",
+      "fhss_seed": 3055041507,
+      "crc_init": 16359,
+      "collision": false
+    },
+    {
+      "phrase": "dragon",
+      "uid_hex": "2E:B7:C0:11:AD:EB",
+      "uid_bytes": [
+        46,
+        183,
+        192,
+        17,
+        173,
+        235
+      ],
+      "sync_bytes": "11:AD:EB",
+      "fhss_seed": 3222384111,
+      "crc_init": 43499,
+      "collision": false
+    },
+    {
+      "phrase": "login",
+      "uid_hex": "8C:DF:25:6E:43:68",
+      "uid_bytes": [
+        140,
+        223,
+        37,
+        110,
+        67,
+        104
+      ],
+      "sync_bytes": "6E:43:68",
+      "fhss_seed": 627983212,
+      "crc_init": 18280,
+      "collision": false
+    },
+    {
+      "phrase": "princess",
+      "uid_hex": "8A:AE:C3:0E:7F:F9",
+      "uid_bytes": [
+        138,
+        174,
+        195,
+        14,
+        127,
+        249
+      ],
+      "sync_bytes": "0E:7F:F9",
+      "fhss_seed": 3272507389,
+      "crc_init": 31737,
+      "collision": false
+    },
+    {
+      "phrase": "football",
+      "uid_hex": "6E:2C:F8:10:F7:A3",
+      "uid_bytes": [
+        110,
+        44,
+        248,
+        16,
+        247,
+        163
+      ],
+      "sync_bytes": "10:F7:A3",
+      "fhss_seed": 4161861543,
+      "crc_init": 62371,
+      "collision": false
+    },
+    {
+      "phrase": "shadow",
+      "uid_hex": "12:DD:9B:3A:B1:F8",
+      "uid_bytes": [
+        18,
+        221,
+        155,
+        58,
+        177,
+        248
+      ],
+      "sync_bytes": "3A:B1:F8",
+      "fhss_seed": 2604315132,
+      "crc_init": 46584,
+      "collision": false
+    },
+    {
+      "phrase": "sunshine",
+      "uid_hex": "A4:81:5B:93:9F:3A",
+      "uid_bytes": [
+        164,
+        129,
+        91,
+        147,
+        159,
+        58
+      ],
+      "sync_bytes": "93:9F:3A",
+      "fhss_seed": 1536401214,
+      "crc_init": 39738,
+      "collision": false
+    },
+    {
+      "phrase": "trustno1",
+      "uid_hex": "0E:9E:D6:D9:7F:72",
+      "uid_bytes": [
+        14,
+        158,
+        214,
+        217,
+        127,
+        114
+      ],
+      "sync_bytes": "D9:7F:72",
+      "fhss_seed": 3604578166,
+      "crc_init": 31602,
+      "collision": false
+    },
+    {
+      "phrase": "iloveyou",
+      "uid_hex": "6F:67:F8:22:D9:EB",
+      "uid_bytes": [
+        111,
+        103,
+        248,
+        34,
+        217,
+        235
+      ],
+      "sync_bytes": "22:D9:EB",
+      "fhss_seed": 4163033583,
+      "crc_init": 56811,
+      "collision": false
+    },
+    {
+      "phrase": "batman",
+      "uid_hex": "F4:34:B7:C1:4C:C5",
+      "uid_bytes": [
+        244,
+        52,
+        183,
+        193,
+        76,
+        197
+      ],
+      "sync_bytes": "C1:4C:C5",
+      "fhss_seed": 3082898625,
+      "crc_init": 18629,
+      "collision": false
+    },
+    {
+      "phrase": "access",
+      "uid_hex": "CC:12:E1:B1:2F:AB",
+      "uid_bytes": [
+        204,
+        18,
+        225,
+        177,
+        47,
+        171
+      ],
+      "sync_bytes": "B1:2F:AB",
+      "fhss_seed": 3786485679,
+      "crc_init": 11179,
+      "collision": false
+    },
+    {
+      "phrase": "hello",
+      "uid_hex": "E2:71:28:84:2C:79",
+      "uid_bytes": [
+        226,
+        113,
+        40,
+        132,
+        44,
+        121
+      ],
+      "sync_bytes": "84:2C:79",
+      "fhss_seed": 679750781,
+      "crc_init": 10361,
+      "collision": false
+    },
+    {
+      "phrase": "charlie",
+      "uid_hex": "99:46:4C:3A:3A:1F",
+      "uid_bytes": [
+        153,
+        70,
+        76,
+        58,
+        58,
+        31
+      ],
+      "sync_bytes": "3A:3A:1F",
+      "fhss_seed": 1278884379,
+      "crc_init": 15903,
+      "collision": false
+    },
+    {
+      "phrase": "donald",
+      "uid_hex": "2D:24:BF:63:FE:EB",
+      "uid_bytes": [
+        45,
+        36,
+        191,
+        99,
+        254,
+        235
+      ],
+      "sync_bytes": "63:FE:EB",
+      "fhss_seed": 3211001583,
+      "crc_init": 64235,
+      "collision": false
+    },
+    {
+      "phrase": "passw0rd",
+      "uid_hex": "27:A7:D5:E9:CE:F7",
+      "uid_bytes": [
+        39,
+        167,
+        213,
+        233,
+        206,
+        247
+      ],
+      "sync_bytes": "E9:CE:F7",
+      "fhss_seed": 3588869875,
+      "crc_init": 51959,
+      "collision": false
+    },
+    {
+      "phrase": "asdf",
+      "uid_hex": "6C:05:9A:46:75:28",
+      "uid_bytes": [
+        108,
+        5,
+        154,
+        70,
+        117,
+        40
+      ],
+      "sync_bytes": "46:75:28",
+      "fhss_seed": 2588308780,
+      "crc_init": 28968,
+      "collision": false
+    },
+    {
+      "phrase": "asdfgh",
+      "uid_hex": "7F:11:B3:99:73:6A",
+      "uid_bytes": [
+        127,
+        17,
+        179,
+        153,
+        115,
+        106
+      ],
+      "sync_bytes": "99:73:6A",
+      "fhss_seed": 3013178222,
+      "crc_init": 30570,
+      "collision": false
+    },
+    {
+      "phrase": "asdfghjkl",
+      "uid_hex": "80:EB:CE:9F:C6:DF",
+      "uid_bytes": [
+        128,
+        235,
+        206,
+        159,
+        198,
+        223
+      ],
+      "sync_bytes": "9F:C6:DF",
+      "fhss_seed": 3466577627,
+      "crc_init": 49887,
+      "collision": false
+    },
+    {
+      "phrase": "zxcvbnm",
+      "uid_hex": "F8:1E:BC:63:C7:FB",
+      "uid_bytes": [
+        248,
+        30,
+        188,
+        99,
+        199,
+        251
+      ],
+      "sync_bytes": "63:C7:FB",
+      "fhss_seed": 3160655871,
+      "crc_init": 50171,
+      "collision": false
+    },
+    {
+      "phrase": "qwertyuiop",
+      "uid_hex": "7C:25:33:E2:CB:41",
+      "uid_bytes": [
+        124,
+        37,
+        51,
+        226,
+        203,
+        65
+      ],
+      "sync_bytes": "E2:CB:41",
+      "fhss_seed": 870501189,
+      "crc_init": 53057,
+      "collision": false
+    },
+    {
+      "phrase": "0000",
+      "uid_hex": "7B:B9:DD:99:1C:51",
+      "uid_bytes": [
+        123,
+        185,
+        221,
+        153,
+        28,
+        81
+      ],
+      "sync_bytes": "99:1C:51",
+      "fhss_seed": 3717798997,
+      "crc_init": 6225,
+      "collision": false
+    },
+    {
+      "phrase": "00000000",
+      "uid_hex": "21:E2:DF:44:02:70",
+      "uid_bytes": [
+        33,
+        226,
+        223,
+        68,
+        2,
+        112
+      ],
+      "sync_bytes": "44:02:70",
+      "fhss_seed": 3745776244,
+      "crc_init": 1648,
+      "collision": false
+    },
+    {
+      "phrase": "1111",
+      "uid_hex": "44:CD:E4:08:5D:8E",
+      "uid_bytes": [
+        68,
+        205,
+        228,
+        8,
+        93,
+        142
+      ],
+      "sync_bytes": "08:5D:8E",
+      "fhss_seed": 3825753482,
+      "crc_init": 22926,
+      "collision": false
+    },
+    {
+      "phrase": "11111111",
+      "uid_hex": "C6:10:7E:1B:B3:B7",
+      "uid_bytes": [
+        198,
+        16,
+        126,
+        27,
+        179,
+        183
+      ],
+      "sync_bytes": "1B:B3:B7",
+      "fhss_seed": 2115744691,
+      "crc_init": 47031,
+      "collision": false
+    },
+    {
+      "phrase": "1234",
+      "uid_hex": "31:06:2F:EE:8A:0A",
+      "uid_bytes": [
+        49,
+        6,
+        47,
+        238,
+        138,
+        10
+      ],
+      "sync_bytes": "EE:8A:0A",
+      "fhss_seed": 804162062,
+      "crc_init": 36362,
+      "collision": false
+    },
+    {
+      "phrase": "4321",
+      "uid_hex": "92:D8:C1:B8:B1:07",
+      "uid_bytes": [
+        146,
+        216,
+        193,
+        184,
+        177,
+        7
+      ],
+      "sync_bytes": "B8:B1:07",
+      "fhss_seed": 3250106627,
+      "crc_init": 46343,
+      "collision": false
+    },
+    {
+      "phrase": "0123456789",
+      "uid_hex": "80:63:DD:6A:29:62",
+      "uid_bytes": [
+        128,
+        99,
+        221,
+        106,
+        41,
+        98
+      ],
+      "sync_bytes": "6A:29:62",
+      "fhss_seed": 3714722150,
+      "crc_init": 11618,
+      "collision": false
+    },
+    {
+      "phrase": "9876543210",
+      "uid_hex": "B0:9D:0B:FA:04:6C",
+      "uid_bytes": [
+        176,
+        157,
+        11,
+        250,
+        4,
+        108
+      ],
+      "sync_bytes": "FA:04:6C",
+      "fhss_seed": 200934504,
+      "crc_init": 108,
+      "collision": false
+    },
+    {
+      "phrase": "696969",
+      "uid_hex": "6A:CB:98:13:87:87",
+      "uid_bytes": [
+        106,
+        203,
+        152,
+        19,
+        135,
+        135
+      ],
+      "sync_bytes": "13:87:87",
+      "fhss_seed": 2551416707,
+      "crc_init": 33671,
+      "collision": false
+    },
+    {
+      "phrase": "420420",
+      "uid_hex": "F1:BC:CE:97:5F:36",
+      "uid_bytes": [
+        241,
+        188,
+        206,
+        151,
+        95,
+        54
+      ],
+      "sync_bytes": "97:5F:36",
+      "fhss_seed": 3466026802,
+      "crc_init": 23350,
+      "collision": false
+    },
+    {
+      "phrase": "1337",
+      "uid_hex": "15:5B:A8:49:9F:7D",
+      "uid_bytes": [
+        21,
+        91,
+        168,
+        73,
+        159,
+        125
+      ],
+      "sync_bytes": "49:9F:7D",
+      "fhss_seed": 2823397241,
+      "crc_init": 39805,
+      "collision": false
+    },
+    {
+      "phrase": "",
+      "uid_hex": "D4:32:3B:A3:14:4A",
+      "uid_bytes": [
+        212,
+        50,
+        59,
+        163,
+        20,
+        74
+      ],
+      "sync_bytes": "A3:14:4A",
+      "fhss_seed": 1000543310,
+      "crc_init": 4170,
+      "collision": false
+    },
+    {
+      "phrase": " ",
+      "uid_hex": "9C:70:E7:04:86:90",
+      "uid_bytes": [
+        156,
+        112,
+        231,
+        4,
+        134,
+        144
+      ],
+      "sync_bytes": "04:86:90",
+      "fhss_seed": 3875833492,
+      "crc_init": 33424,
+      "collision": false
+    },
+    {
+      "phrase": "a",
+      "uid_hex": "F7:C9:20:62:08:18",
+      "uid_bytes": [
+        247,
+        201,
+        32,
+        98,
+        8,
+        24
+      ],
+      "sync_bytes": "62:08:18",
+      "fhss_seed": 543295516,
+      "crc_init": 3096,
+      "collision": false
+    },
+    {
+      "phrase": "aa",
+      "uid_hex": "C0:5D:E7:90:F7:55",
+      "uid_bytes": [
+        192,
+        93,
+        231,
+        144,
+        247,
+        85
+      ],
+      "sync_bytes": "90:F7:55",
+      "fhss_seed": 3885037393,
+      "crc_init": 62293,
+      "collision": false
+    },
+    {
+      "phrase": "aaa",
+      "uid_hex": "21:36:35:23:ED:2D",
+      "uid_bytes": [
+        33,
+        54,
+        53,
+        35,
+        237,
+        45
+      ],
+      "sync_bytes": "23:ED:2D",
+      "fhss_seed": 891546921,
+      "crc_init": 59693,
+      "collision": false
+    },
+    {
+      "phrase": "aaaa",
+      "uid_hex": "36:67:AE:86:AB:F0",
+      "uid_bytes": [
+        54,
+        103,
+        174,
+        134,
+        171,
+        240
+      ],
+      "sync_bytes": "86:AB:F0",
+      "fhss_seed": 2928061428,
+      "crc_init": 45040,
+      "collision": false
+    },
+    {
+      "phrase": "aaaaaaaa",
+      "uid_hex": "0D:3D:13:E5:45:70",
+      "uid_bytes": [
+        13,
+        61,
+        19,
+        229,
+        69,
+        112
+      ],
+      "sync_bytes": "E5:45:70",
+      "fhss_seed": 333792628,
+      "crc_init": 16752,
+      "collision": false
+    },
+    {
+      "phrase": "hacktheplanet",
+      "uid_hex": "0D:FB:0F:9C:6B:45",
+      "uid_bytes": [
+        13,
+        251,
+        15,
+        156,
+        107,
+        69
+      ],
+      "sync_bytes": "9C:6B:45",
+      "fhss_seed": 261909313,
+      "crc_init": 28485,
+      "collision": false
+    },
+    {
+      "phrase": "pwned",
+      "uid_hex": "73:9D:15:68:BE:11",
+      "uid_bytes": [
+        115,
+        157,
+        21,
+        104,
+        190,
+        17
+      ],
+      "sync_bytes": "68:BE:11",
+      "fhss_seed": 359185941,
+      "crc_init": 47633,
+      "collision": false
+    },
+    {
+      "phrase": "r00t",
+      "uid_hex": "4E:5D:05:A4:38:04",
+      "uid_bytes": [
+        78,
+        93,
+        5,
+        164,
+        56,
+        4
+      ],
+      "sync_bytes": "A4:38:04",
+      "fhss_seed": 94648320,
+      "crc_init": 15364,
+      "collision": false
+    },
+    {
+      "phrase": "root",
+      "uid_hex": "9E:88:91:75:24:FB",
+      "uid_bytes": [
+        158,
+        136,
+        145,
+        117,
+        36,
+        251
+      ],
+      "sync_bytes": "75:24:FB",
+      "fhss_seed": 2440373503,
+      "crc_init": 8443,
+      "collision": false
+    },
+    {
+      "phrase": "toor",
+      "uid_hex": "15:28:0B:D0:E4:42",
+      "uid_bytes": [
+        21,
+        40,
+        11,
+        208,
+        228,
+        66
+      ],
+      "sync_bytes": "D0:E4:42",
+      "fhss_seed": 198239302,
+      "crc_init": 57410,
+      "collision": false
+    },
+    {
+      "phrase": "deadbeef",
+      "uid_hex": "04:A5:EF:A1:53:85",
+      "uid_bytes": [
+        4,
+        165,
+        239,
+        161,
+        83,
+        133
+      ],
+      "sync_bytes": "A1:53:85",
+      "fhss_seed": 4020327297,
+      "crc_init": 22405,
+      "collision": false
+    },
+    {
+      "phrase": "cafebabe",
+      "uid_hex": "93:78:F1:C5:DC:EF",
+      "uid_bytes": [
+        147,
+        120,
+        241,
+        197,
+        220,
+        239
+      ],
+      "sync_bytes": "C5:DC:EF",
+      "fhss_seed": 4056276203,
+      "crc_init": 55535,
+      "collision": false
+    },
+    {
+      "phrase": "31337",
+      "uid_hex": "28:33:D4:BD:80:A0",
+      "uid_bytes": [
+        40,
+        51,
+        212,
+        189,
+        128,
+        160
+      ],
+      "sync_bytes": "BD:80:A0",
+      "fhss_seed": 3569189028,
+      "crc_init": 33952,
+      "collision": false
+    },
+    {
+      "phrase": "h4x0r",
+      "uid_hex": "C9:8C:E3:9B:8A:00",
+      "uid_bytes": [
+        201,
+        140,
+        227,
+        155,
+        138,
+        0
+      ],
+      "sync_bytes": "9B:8A:00",
+      "fhss_seed": 3818621444,
+      "crc_init": 36352,
+      "collision": false
+    },
+    {
+      "phrase": "tinyhawk3",
+      "uid_hex": "1F:AB:92:A6:D4:66",
+      "uid_bytes": [
+        31,
+        171,
+        146,
+        166,
+        212,
+        102
+      ],
+      "sync_bytes": "A6:D4:66",
+      "fhss_seed": 2460406882,
+      "crc_init": 53350,
+      "collision": false
+    },
+    {
+      "phrase": "tinyhawkiii",
+      "uid_hex": "3B:AE:12:EC:CE:61",
+      "uid_bytes": [
+        59,
+        174,
+        18,
+        236,
+        206,
+        97
+      ],
+      "sync_bytes": "EC:CE:61",
+      "fhss_seed": 317509221,
+      "crc_init": 51809,
+      "collision": false
+    },
+    {
+      "phrase": "tinyhawk III",
+      "uid_hex": "18:DB:A4:CB:5A:8D",
+      "uid_bytes": [
+        24,
+        219,
+        164,
+        203,
+        90,
+        141
+      ],
+      "sync_bytes": "CB:5A:8D",
+      "fhss_seed": 2764790409,
+      "crc_init": 24205,
+      "collision": false
+    },
+    {
+      "phrase": "babyhawk",
+      "uid_hex": "1E:C1:36:61:0C:03",
+      "uid_bytes": [
+        30,
+        193,
+        54,
+        97,
+        12,
+        3
+      ],
+      "sync_bytes": "61:0C:03",
+      "fhss_seed": 912329735,
+      "crc_init": 2051,
+      "collision": false
+    },
+    {
+      "phrase": "mobula6",
+      "uid_hex": "AC:DF:AC:FB:84:79",
+      "uid_bytes": [
+        172,
+        223,
+        172,
+        251,
+        132,
+        121
+      ],
+      "sync_bytes": "FB:84:79",
+      "fhss_seed": 2902164605,
+      "crc_init": 32889,
+      "collision": false
+    },
+    {
+      "phrase": "mobula7",
+      "uid_hex": "22:CE:B2:2F:98:81",
+      "uid_bytes": [
+        34,
+        206,
+        178,
+        47,
+        152,
+        129
+      ],
+      "sync_bytes": "2F:98:81",
+      "fhss_seed": 2989463685,
+      "crc_init": 40065,
+      "collision": false
+    },
+    {
+      "phrase": "meteor65",
+      "uid_hex": "C9:0B:26:0D:37:F7",
+      "uid_bytes": [
+        201,
+        11,
+        38,
+        13,
+        55,
+        247
+      ],
+      "sync_bytes": "0D:37:F7",
+      "fhss_seed": 638400499,
+      "crc_init": 13303,
+      "collision": false
+    },
+    {
+      "phrase": "meteor75",
+      "uid_hex": "D6:43:DC:5E:05:6A",
+      "uid_bytes": [
+        214,
+        67,
+        220,
+        94,
+        5,
+        106
+      ],
+      "sync_bytes": "5E:05:6A",
+      "fhss_seed": 3697149294,
+      "crc_init": 362,
+      "collision": false
+    },
+    {
+      "phrase": "crazybee",
+      "uid_hex": "2B:41:B7:32:32:21",
+      "uid_bytes": [
+        43,
+        65,
+        183,
+        50,
+        50,
+        33
+      ],
+      "sync_bytes": "32:32:21",
+      "fhss_seed": 3073520165,
+      "crc_init": 13857,
+      "collision": false
+    },
+    {
+      "phrase": "beta65",
+      "uid_hex": "9D:F4:4C:C4:6C:A4",
+      "uid_bytes": [
+        157,
+        244,
+        76,
+        196,
+        108,
+        164
+      ],
+      "sync_bytes": "C4:6C:A4",
+      "fhss_seed": 1287941280,
+      "crc_init": 26788,
+      "collision": false
+    },
+    {
+      "phrase": "beta75",
+      "uid_hex": "DC:28:A2:54:40:AC",
+      "uid_bytes": [
+        220,
+        40,
+        162,
+        84,
+        64,
+        172
+      ],
+      "sync_bytes": "54:40:AC",
+      "fhss_seed": 2723430568,
+      "crc_init": 17580,
+      "collision": false
+    },
+    {
+      "phrase": "ur65",
+      "uid_hex": "54:0C:32:B5:E0:40",
+      "uid_bytes": [
+        84,
+        12,
+        50,
+        181,
+        224,
+        64
+      ],
+      "sync_bytes": "B5:E0:40",
+      "fhss_seed": 850780228,
+      "crc_init": 58432,
+      "collision": false
+    },
+    {
+      "phrase": "us65",
+      "uid_hex": "B8:5C:DE:66:66:3D",
+      "uid_bytes": [
+        184,
+        92,
+        222,
+        102,
+        102,
+        61
+      ],
+      "sync_bytes": "66:66:3D",
+      "fhss_seed": 3731252793,
+      "crc_init": 25149,
+      "collision": false
+    },
+    {
+      "phrase": "moblite6",
+      "uid_hex": "95:F2:81:51:33:C5",
+      "uid_bytes": [
+        149,
+        242,
+        129,
+        81,
+        51,
+        197
+      ],
+      "sync_bytes": "51:33:C5",
+      "fhss_seed": 2169582529,
+      "crc_init": 14277,
+      "collision": false
+    },
+    {
+      "phrase": "moblite7",
+      "uid_hex": "0D:CE:06:B5:4E:96",
+      "uid_bytes": [
+        13,
+        206,
+        6,
+        181,
+        78,
+        150
+      ],
+      "sync_bytes": "B5:4E:96",
+      "fhss_seed": 112545426,
+      "crc_init": 19094,
+      "collision": false
+    },
+    {
+      "phrase": "nazgul",
+      "uid_hex": "F0:10:B4:8A:39:1D",
+      "uid_bytes": [
+        240,
+        16,
+        180,
+        138,
+        57,
+        29
+      ],
+      "sync_bytes": "8A:39:1D",
+      "fhss_seed": 3028957465,
+      "crc_init": 15645,
+      "collision": false
+    },
+    {
+      "phrase": "chimera",
+      "uid_hex": "A1:83:A6:9C:0E:B9",
+      "uid_bytes": [
+        161,
+        131,
+        166,
+        156,
+        14,
+        185
+      ],
+      "sync_bytes": "9C:0E:B9",
+      "fhss_seed": 2795245245,
+      "crc_init": 2745,
+      "collision": false
+    },
+    {
+      "phrase": "mark4",
+      "uid_hex": "B0:68:C1:01:EC:6D",
+      "uid_bytes": [
+        176,
+        104,
+        193,
+        1,
+        236,
+        109
+      ],
+      "sync_bytes": "01:EC:6D",
+      "fhss_seed": 3238128745,
+      "crc_init": 59501,
+      "collision": false
+    },
+    {
+      "phrase": "source one",
+      "uid_hex": "32:03:03:67:CE:91",
+      "uid_bytes": [
+        50,
+        3,
+        3,
+        103,
+        206,
+        145
+      ],
+      "sync_bytes": "67:CE:91",
+      "fhss_seed": 57134741,
+      "crc_init": 51857,
+      "collision": false
+    },
+    {
+      "phrase": "sourceone",
+      "uid_hex": "2D:23:BA:AF:1B:88",
+      "uid_bytes": [
+        45,
+        35,
+        186,
+        175,
+        27,
+        136
+      ],
+      "sync_bytes": "AF:1B:88",
+      "fhss_seed": 3132038028,
+      "crc_init": 8072,
+      "collision": false
+    },
+    {
+      "phrase": "2.4ghz",
+      "uid_hex": "96:2B:3F:16:00:67",
+      "uid_bytes": [
+        150,
+        43,
+        63,
+        22,
+        0,
+        103
+      ],
+      "sync_bytes": "16:00:67",
+      "fhss_seed": 1058406499,
+      "crc_init": 1127,
+      "collision": false
+    },
+    {
+      "phrase": "2.4GHz",
+      "uid_hex": "64:BE:F7:1F:A7:77",
+      "uid_bytes": [
+        100,
+        190,
+        247,
+        31,
+        167,
+        119
+      ],
+      "sync_bytes": "1F:A7:77",
+      "fhss_seed": 4146046835,
+      "crc_init": 41847,
+      "collision": false
+    },
+    {
+      "phrase": "900mhz",
+      "uid_hex": "80:C6:B2:F4:C1:F3",
+      "uid_bytes": [
+        128,
+        198,
+        178,
+        244,
+        193,
+        243
+      ],
+      "sync_bytes": "F4:C1:F3",
+      "fhss_seed": 3002384887,
+      "crc_init": 50675,
+      "collision": false
+    },
+    {
+      "phrase": "900MHz",
+      "uid_hex": "28:69:1C:77:86:A1",
+      "uid_bytes": [
+        40,
+        105,
+        28,
+        119,
+        134,
+        161
+      ],
+      "sync_bytes": "77:86:A1",
+      "fhss_seed": 477595301,
+      "crc_init": 33441,
+      "collision": false
+    },
+    {
+      "phrase": "5.8ghz",
+      "uid_hex": "69:80:5A:BE:6A:FD",
+      "uid_bytes": [
+        105,
+        128,
+        90,
+        190,
+        106,
+        253
+      ],
+      "sync_bytes": "BE:6A:FD",
+      "fhss_seed": 1522428665,
+      "crc_init": 28413,
+      "collision": false
+    },
+    {
+      "phrase": "5.8GHz",
+      "uid_hex": "AD:C1:ED:3F:B6:20",
+      "uid_bytes": [
+        173,
+        193,
+        237,
+        63,
+        182,
+        32
+      ],
+      "sync_bytes": "3F:B6:20",
+      "fhss_seed": 3980375588,
+      "crc_init": 45600,
+      "collision": false
+    }
+  ]
+}

