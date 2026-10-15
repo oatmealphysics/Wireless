@@ -1,5 +1,10 @@
 # E8 hardware identity and serial evidence
 
+**Subsequent connected-device session:** [USB characterization](research/E8-USB-CHARACTERIZATION.md)
+records the new COM4 endpoint, unsuccessful read-only queries, recovered vendor
+read-request semantics, and the unresolved variant/power/serial-mode prerequisites.
+The observations below describe the earlier discovery session.
+
 Reviewed 2026-10-14 on the Windows home workspace. No device settings were read
 or written, no serial port was opened, and no firmware was selected or flashed.
 
