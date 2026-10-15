@@ -43,7 +43,8 @@ def check_artifacts(root):
     register = json.loads((root / "firmware/artifact-register.json").read_text(encoding="utf-8"))
     artifacts = register["artifacts"]
     by_path = {item["path"]: item for item in artifacts}
-    if len(by_path) != len(artifacts) or set(entries) != set(by_path):
+    committed = {p for p, item in by_path.items() if item.get("committed", True)}
+    if len(by_path) != len(artifacts) or set(entries) != committed:
         errors.append("Artifact register must cover every manifest entry exactly once")
     for name, digest in entries.items():
         path = root / name
