@@ -4,5 +4,6 @@
 /firmware/reference/** -text
 /firmware/src/*.tar.gz -text
 /firmware/ardupilot/** -text
+/firmware/px4/** -text
 /firmware/tello/*.tar.gz -text
 /firmware/SHA256SUMS text eol=lf

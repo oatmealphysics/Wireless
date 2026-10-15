@@ -351,6 +351,40 @@
       "e8_specific": false,
       "evidence": "Official DJI Tello SDK (1450 stars). 29 MB (mostly a Windows video DLL). Protocol files extracted to firmware/tello/dji-sdk-protocol/. Not committed to git.",
       "committed": false
+    },
+    {
+      "path": "firmware/px4/px4_fmu-v5_default_1.18.0-rc1.px4",
+      "sha256": "d561181122481d735a14dac248a0e51fa18f4455f842fb5ae89de31bc1e63bf3",
+      "size_bytes": 1880891,
+      "artifact_kind": "downloaded-binary",
+      "declared_version": "1.18.0-rc1",
+      "declared_target": "px4_fmu-v5",
+      "source_project": "https://github.com/PX4/PX4-Autopilot",
+      "original_download_url": "https://github.com/PX4/PX4-Autopilot/releases/download/v1.18.0-rc1/px4_fmu-v5_default.px4",
+      "upstream_commit": "fca3df86",
+      "collection_date": "2026-10-15",
+      "hardware_match": "reference-autopilot-target",
+      "e8_specific": false,
+      "evidence": "PX4 .px4 container (JSON+base64). board_id=50 (FMU-v5/Pixhawk4), image_size=1992316. For MAVLink protocol comparison with ArduPilot.",
+      "board_mcu": "STM32F765",
+      "px4_board_id": 50
+    },
+    {
+      "path": "firmware/px4/cubepilot_cubeorange_default_1.18.0-rc1.px4",
+      "sha256": "efa4f2f7cabd81bfd2eb2881c2bcddf58ba71fff97e5f35a38b9c7e5d942f419",
+      "size_bytes": 1813369,
+      "artifact_kind": "downloaded-binary",
+      "declared_version": "1.18.0-rc1",
+      "declared_target": "cubepilot_cubeorange",
+      "source_project": "https://github.com/PX4/PX4-Autopilot",
+      "original_download_url": "https://github.com/PX4/PX4-Autopilot/releases/download/v1.18.0-rc1/cubepilot_cubeorange_default.px4",
+      "upstream_commit": "fca3df86",
+      "collection_date": "2026-10-15",
+      "hardware_match": "reference-autopilot-target",
+      "e8_specific": false,
+      "evidence": "PX4 .px4 container (JSON+base64). board_id=140 (CubeOrange, same board as ArduPilot CubeOrange artifact), image_size=1901588. Cross-stack MAVLink comparison.",
+      "board_mcu": "STM32H743",
+      "px4_board_id": 140
     }
   ]
 }

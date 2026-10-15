@@ -62,6 +62,17 @@ those evidence gaps. None of the eleven samples is confirmed E8-specific.
 
 All ArduPilot artifacts: version 4.7.2, commit `fb773567`, released 2026-10-14.
 
+### PX4 / MAVLink (autopilot — cross-stack MAVLink comparison)
+
+| File | Description |
+|---|---|
+| `px4/px4_fmu-v5_default_1.18.0-rc1.px4` | PX4 v1.18.0-rc1 for FMU-v5/Pixhawk4 (STM32F765, board_id 50). PX4 `.px4` = JSON+base64 container. |
+| `px4/cubepilot_cubeorange_default_1.18.0-rc1.px4` | PX4 v1.18.0-rc1 for CubeOrange (STM32H743, board_id 140 — same board as ArduPilot CubeOrange). |
+
+**PX4 `.px4` format:** JSON envelope with `board_id`, `description`, `git_identity`, and a base64-encoded firmware image. Extract the raw binary for Ghidra with: `python3 -c "import json,base64,sys; d=json.load(open(sys.argv[1])); open(sys.argv[2],'wb').write(base64.b64decode(d['image']))" input.px4 output.bin`
+
+All PX4 artifacts: version 1.18.0-rc1, git identity `fca3df86`.
+
 ### Tello / Wi-Fi drone (Wi-Fi attack path)
 
 | File | Description |
@@ -222,6 +233,8 @@ d8cd98b9e2ed256a03253f5abc818de6f023f45df70768f4cdee43f49851bc86  ardupilot/ardu
 c74d088b28c21dad6447d9c7ee1147d234c2d64db59da7e8cb5b7c142d5af2b9  ardupilot/arducopter_Pixhawk1_4.7.2.elf
 caed35e4cb796ec06cac40b09566a18251771486b1cbac5e2bf16b7a5ed5045d  ardupilot/arducopter_SITL_x86_64_4.7.2
 bba1e43f89a435d8e8e5949795155119e5a0812a8353de99cef89cc4259f265d  tello/djitellopy.tar.gz
+d561181122481d735a14dac248a0e51fa18f4455f842fb5ae89de31bc1e63bf3  px4/px4_fmu-v5_default_1.18.0-rc1.px4
+efa4f2f7cabd81bfd2eb2881c2bcddf58ba71fff97e5f35a38b9c7e5d942f419  px4/cubepilot_cubeorange_default_1.18.0-rc1.px4
 ```
 
 ---
@@ -237,5 +250,7 @@ bba1e43f89a435d8e8e5949795155119e5a0812a8353de99cef89cc4259f265d  tello/djitello
 - SPI ELRS receivers (Betaflight integration): <https://www.expresslrs.org/hardware/spi-receivers/>
 - ArduPilot Copter firmware: <https://firmware.ardupilot.org/Copter/stable/>
 - ArduPilot source: <https://github.com/ArduPilot/ardupilot>
+- PX4 Autopilot releases: <https://github.com/PX4/PX4-Autopilot/releases>
+- PX4 Autopilot source: <https://github.com/PX4/PX4-Autopilot>
 - DJI Tello SDK (official): <https://github.com/dji-sdk/Tello-Python>
 - DJITelloPy (community): <https://github.com/damiafuentes/DJITelloPy>
