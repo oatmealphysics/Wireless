@@ -12,6 +12,13 @@
 > project's authorization posture; this doc is the offensive analysis pipeline
 > inside that boundary.
 >
+> **Platform scope:** the TinyHawk III is an owned lab test article and a
+> concrete worked example—not the assumed CTF target or the limit of this
+> workflow. Start every candidate platform (Wi-Fi drone, MAVLink/autopilot,
+> ELRS/RC system, BLE device, GCS, or another authorized target) at Gate 0 and
+> follow the branch supported by its actual firmware, interfaces, rules, and
+> flag condition.
+>
 > **The three major wickets** the owner named — *firmware analysis*, *vuln
 > analysis*, *PoC development* — are Wickets 3–5 and 8–9 here. The doc covers
 > everything between "downloaded blob" and "validated PoC," including the
