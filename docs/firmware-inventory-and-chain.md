@@ -4,7 +4,7 @@
 > andeds (orchestrator), 2026-10-15.
 >
 > This is the **operational companion** to
-> [`docs/firmware-to-poc-methodology.md`](docs/firmware-to-poc-methodology.md).
+> [`firmware-to-poc-methodology.md`](firmware-to-poc-methodology.md).
 > That doc is the *methodology* (the ten wickets, the gates). This doc is the
 > **inventory** (every firmware we know we need, what we have, what we need to
 > download) + the **chain to run** against each one, so a teammate can pick up
