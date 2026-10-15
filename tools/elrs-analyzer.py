@@ -2,14 +2,12 @@
 """
 ELRS OTA Packet Analyzer
 
-Passive analysis of ExpressLRS over-the-air traffic captured via SDR.
-Identifies SYNC packets and extracts the two UID bytes carried by OTA_Sync_s.
-Two bytes are insufficient for an unambiguous rainbow-table match or FHSS
-reconstruction; those remain candidate-generation steps until more identity
-information is recovered.
+Analysis of *pre-decoded* ExpressLRS packet bytes. This tool does not demodulate
+raw IQ. Its current packet parser uses the vendored v4-oriented layout; do not
+use its SYNC/UID output as a validated decode of the Betaflight 4.4.2 v3 pair.
+For receive-only raw-IQ symbol extraction, see elrs-iq-symbols.py.
 
 Input sources:
-  - Raw IQ file (SX1280 LoRa demodulated)
   - Pre-decoded packet log (hex lines or JSON)
   - Simulated mode for testing without SDR hardware
 

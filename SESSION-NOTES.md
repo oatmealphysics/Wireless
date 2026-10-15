@@ -1339,7 +1339,31 @@ This source-to-capture agreement substantially advances Gate 1. Exact-pair
 attribution would benefit from a separate pair-off control capture.
 
 Only candidate LoRa payload **symbols** have been extracted. The project has
-no SX1280 long-interleaving 4/7 byte decoder, so no real packet bytes, UID
+no validated SX1280 long-interleaving `0x07` byte decoder, so no real packet bytes, UID
 fragment, nonce, FHSS index, or CRC have been validated. Gate 2 remains open;
 do not describe the packet forger as live-validated. No E8 access or RF TX
 was involved.
+
+---
+
+## 22. Offline capture intake and symbol front end (Codex, 2026-10-15)
+
+Added read-only `tools/elrs-capture-intake.py` for sidecar/filename metadata,
+sample alignment, digital channel coverage, and streaming SHA-256 manifest
+checks. On the 320 MB capture it reproduced the recorded hash, 80 million
+complex samples, and 20-second duration. Added `tools/elrs-iq-symbols.py`, a
+bounded sc16le SF7/BW812.5 kHz LoRa synchronizer and candidate symbol
+extractor. It found 12/12 consistent preamble bins and both expected sync
+offsets in seven independently selected packets across four channel-41
+visits; a quiet control window had 0/12 consistent preamble bins. Three
+offline unit tests passed. See the updated passive-IQ report for details.
+
+**Do not call this a packet-byte decoder yet.** Betaflight 4.4.2 selects SX1280
+coding-mode value `0x07`. Its old header calls this `4/7 LI`, but Semtech's
+corrected datasheet calls `0x07` **4/8 long interleaving**. The LI permutation,
+scrambling, and FEC path remain unvalidated; no captured packet has passed a
+v3 CRC. The next step is to obtain a trustworthy LI reference or known-
+plaintext hardware vector, then validate multiple real frames. The 2026-10
+GitHub draft release was still being uploaded at last check; its assets were
+not available in this local checkout. Keep new raw data and symbol outputs
+under ignored `work/`.

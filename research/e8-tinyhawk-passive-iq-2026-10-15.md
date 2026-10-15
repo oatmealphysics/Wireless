@@ -65,16 +65,31 @@ inspection, one channel-41 packet was mixed toward baseband, resampled by
 reference before FFT peak selection. The preamble/sync observations are from
 the recording, not a synthetic packet round-trip.
 
-The existing `tools/elrs-analyzer.py` accepts **already decoded packet
-bytes**; despite its introductory wording it has no raw-IQ LoRa demodulator.
-The project also lacks an SX1280 long-interleaving 4/7 decoder. We therefore
-do **not** have validated SYNC or RC payload bytes, UID fragments, FHSS index,
-or CRC matches from this capture. Source-to-capture agreement on PHY and
-timing substantially advances Gate 1 of `SESSION-NOTES.md` §20, while Gate 2
-remains open. It establishes no forged-packet acceptance or exploitability.
+`tools/elrs-iq-symbols.py` now performs bounded, receive-only synchronization
+and candidate symbol extraction from raw sc16le IQ. It found a 12/12 consistent
+preamble and both expected sync-symbol offsets in four packets of the first
+channel-41 visit and in three later visits. A quiet control window had 0/12
+consistent preamble symbols. These are PHY observations, **not packet bytes**.
+`tools/elrs-capture-intake.py` checks file/sample alignment, metadata, digital
+frequency coverage, and streaming SHA-256 against an optional manifest. It
+reproduced the capture hash above. Both tools have offline tests in
+`tools/tests/test_elrs_offline.py`.
 
-The next offline step is to implement or adapt an SX1280-compatible
-deinterleaver/FEC/whitening decoder and require several independent frames
-to pass the Betaflight 4.4.2 v3 CRC before reporting packet fields. An
-owner-assisted pair-off control capture would separately strengthen RF
-attribution, without touching the E8 serial interface.
+The 150 Hz Betaflight 4.4.2 source selects SX1280 modulation value `0x07`,
+named `SX1280_LORA_CR_LI_4_7` in its older header. The corrected Semtech
+datasheet identifies `0x07` as **4/8 long interleaving**, not 4/7; the symbol
+tool uses the numeric source setting and does not pretend the legacy LoRa
+interleaver is equivalent. See the [Semtech SX1280 Rev 3.3 datasheet, Table
+14-49](https://shop.richardsonrfpd.com/docs/rfpd/DS_SX1280-1_V3_3.pdf).
+
+The existing `tools/elrs-analyzer.py` accepts **already decoded packet bytes**;
+it does not demodulate raw IQ. We still lack a validated SX1280 long-
+interleaving deinterleaver/scrambler and FEC path. Thus there are **no**
+validated SYNC or RC bytes, UID fragments, FHSS indices, or CRC matches from
+this capture. Source-to-capture agreement on PHY and timing advances Gate 1 of
+`SESSION-NOTES.md` §20, while Gate 2 remains open. It establishes no forged-
+packet acceptance or exploitability. The next decoder step needs an independent
+long-interleaver reference or hardware-generated known-plaintext vectors,
+then CRC validation across several captured frames. An owner-assisted pair-off
+control capture would separately strengthen RF attribution without accessing
+the E8 serial interface.
