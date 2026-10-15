@@ -116,7 +116,7 @@ This means:
 
 - FHSS sequence is 256 entries, seeded by `OtaGetUidSeed()` which uses UID[2:6]
 - For 2.4 GHz ISM: 80 channels from 2400.4 MHz to 2479.4 MHz
-- Sync channel is always `freq_count / 2` = channel 40
+- Sync channel = `(freq_count / 2) + 1` = channel 41 for v3; `freq_count / 2` = channel 40 for v4
 - Sequence is deterministic from the seed — know the UID, know every hop
 
 ### OTA Packet CRC
@@ -178,7 +178,7 @@ struct OTA_Sync_s {
 
 ```
 1. Passive capture on 2.4 GHz (SDR or SX1280 sniffer)
-   → Identify SYNC packets on the sync channel (channel 40 of 80)
+   → Identify SYNC packets on the sync channel (channel 41 of 80 for OTA v3)
    → Extract UID[4], UID[5] from SYNC payload
 
 2. Brute-force binding phrase (offline)

@@ -166,3 +166,154 @@ whether acknowledgements are emitted reliably.
 **Finding:** MSP-over-ELRS remains the primary 4.4.2 candidate.
 Evidence class: **SOURCE-DERIVED / SELF-CONSISTENT**, pending live validation.
 RC-data injection remains the fallback, not the primary path.
+
+## Full ELRS driver diff: 4.4.2 vs 2026.6.2 (source-derived, 2026-10-15)
+
+Complete comparison of all `src/main/rx/expresslrs*` files between the installed
+Betaflight 4.4.2 and the corpus 2026.6.2. Changes totalling ~550 lines across
+7 files. Only security-relevant and attack-chain-relevant differences are
+recorded here; whitespace normalization and code style changes are omitted.
+
+### 1. Rate table restructuring (expresslrs_common.c)
+
+**4.4.2 (installed):** 4 entries for SX1280, all LoRa:
+- Index 0: LoRa 500Hz (SF5, BW800)
+- Index 1: LoRa 250Hz (SF6, BW800)
+- Index 2: LoRa 150Hz (SF7, BW800)
+- Index 3: LoRa 50Hz (SF8, BW800)
+
+**2026.6.2 (corpus):** 6 entries — 2 FLRC + 4 LoRa:
+- Index 0: FLRC 1000Hz
+- Index 1: FLRC 500Hz
+- Index 2–5: LoRa (same as 4.4.2 index 0–3)
+
+**Attack impact:** The live `expresslrs_rate_index = 2` maps to **LoRa 150Hz
+(SF7, BW800, CR_LI_4_7)** on 4.4.2. On 2026.6.2, index 2 is LoRa 500Hz.
+The rate table index is not portable between versions — the FHSS hop interval
+(6666 μs for 4.4.2 rate 2) is version-dependent. The SDR demod and TX emulator
+must use the 4.4.2 rate table, not the 2026.6.2 one.
+
+### 2. CRC initializer computation (expresslrs.c)
+
+**4.4.2:** Inline in `expressLrsSpiInit()` and `unpackBindPacket()`:
+```c
+crcInitializer = (receiver.UID[4] << 8) | receiver.UID[5];
+crcInitializer ^= ELRS_OTA_VERSION_ID;  // XOR to low byte (v3: XOR 3)
+```
+
+**2026.6.2:** Extracted to `OtaUpdateCrcInitFromUid()` with v3/v4 branching:
+- v3: `crcInitializer ^= ELRS_OTA_VERSION_ID` (same as 4.4.2)
+- v4: `crcInitializer ^= (uint16_t)ELRS_OTA_VERSION_ID << 8` (shifted to high byte)
+- Binding: v3 uses `crcInitializer = 0`, v4 uses `crcInitializer = ELRS_OTA_VERSION_ID`
+
+**Attack impact:** CRC computation is identical for v3. The `elrs_core` library's
+v3 CRC init formula is confirmed: `((UID[4] << 8) | UID[5]) ^ 3`.
+
+### 3. FHSS seed computation (expresslrs_common.c)
+
+**4.4.2:** Inline in `fhssGenSequence()`:
+```c
+seed = (((long)UID[2] << 24) + ((long)UID[3] << 16) + ((long)UID[4] << 8) + UID[5]) ^ ELRS_OTA_VERSION_ID;
+```
+
+**2026.6.2:** Extracted to `elrsUidToSeed()`:
+```c
+return ((uint32_t)UID[2] << 24) + ((uint32_t)UID[3] << 16) +
+    ((uint32_t)UID[4] << 8) + (UID[5] ^ ELRS_OTA_VERSION_ID);
+```
+
+**Subtle difference:** In 4.4.2, the XOR applies to the full 32-bit seed. In
+2026.6.2, the XOR applies only to UID[5] (the low byte) before assembly. For
+`ELRS_OTA_VERSION_ID = 3`, the result is identical because `3 ^ seed` and
+`seed_with_uid5_xored` produce the same low byte, and the XOR of 3 with the
+upper bytes is always zero. This equivalence holds only because the version ID
+fits in one byte. **No attack impact for v3.**
+
+### 4. Sync channel offset (expresslrs_common.c)
+
+**4.4.2:** `syncChannel = (fhssConfig->freqCount / 2) + 1;`
+**2026.6.2 (v3):** Same formula: `(freqCount / 2) + 1`
+**2026.6.2 (v4):** `(freqCount / 2)` (no +1)
+
+**Attack impact:** Sync channel for 2.4 GHz is channel 41 (80/2 + 1) on v3.
+The sniffer must listen on channel 41 (2440.4 MHz), not channel 40 as stated
+in `firmware/README.md` line 109. **This is an error in our documentation.**
+
+### 5. CRC validation with nonce (expresslrs.c)
+
+**4.4.2:** `calcCrc14((uint8_t *) otaPktPtr, 7, crcInitializer)` — nonce not
+included in CRC init for standard packets.
+
+**2026.6.2 (v3):** Same — `nonceValidator = 0`, so CRC init is unchanged.
+**2026.6.2 (v4):** `crcInitializer ^ receiver.nonceRX` for non-SYNC packets.
+
+**Attack impact:** v3 CRC does not include the nonce. Forged packets only need
+the static CRC initializer derived from the UID. This simplifies the injection
+attack — no need to track the nonce for CRC purposes (though it is still needed
+for FHSS hop tracking).
+
+### 6. SYNC packet UID verification (expresslrs.c)
+
+**4.4.2:** `otaPktPtr->sync.UID3 != receiver.UID[3] || otaPktPtr->sync.UID4 != receiver.UID[4]`
+**2026.6.2 (v3):** Same check.
+**2026.6.2 (v4):** Only checks `UID4`, drops `UID3` check.
+
+**Attack impact:** None for v3. The 4.4.2 SYNC packet exposes UID[4] and UID[5]
+(the SYNC struct fields `UID4` and `UID5` in `OTA.h`), and the receiver validates
+UID[3] and UID[4] against its stored UID. A passive listener gets 16 bits (UID[4:5])
+from every SYNC packet.
+
+### 7. MSP handling differences (expresslrs.c)
+
+**4.4.2 `processRFMspPacket()`:** After `receiveMspData()`, checks if
+`getCurrentMspConfirm()` value flipped and if so sets `nextTelemetryType =
+ELRS_TELEMETRY_TYPE_LINK` to send the new confirm bit back.
+
+**2026.6.2 (v3):** Same behavior.
+**2026.6.2 (v4):** The confirm-bit-flipped telemetry logic is removed (v4 has a
+different confirm mechanism).
+
+**Attack impact:** None for v3. The MSP receive path is functionally identical.
+The 65-byte buffer, 5-byte chunking, `processRFMspPacket()` → `processMspPacket()`
+→ `handleCrsfMspFrameBuffer()` → `mspFcProcessCommand()` chain is unchanged
+between versions. The MSP-over-ELRS attack surface is the same on both.
+
+### 8. Switch mode handling (expresslrs.c)
+
+**4.4.2:** Switch mode (`SM_WIDE`/`SM_HYBRID`) read from `rxExpressLrsSpiConfig()->switchMode`
+(NVM-stored config). Updated from SYNC packets and persisted to config.
+
+**2026.6.2:** Moved to `receiver.switchMode` (runtime state). No longer persisted
+to config on every SYNC receive.
+
+**Attack impact:** Minor. The switch mode determines how RC channel data is packed
+in `ELRS_RC_DATA_PACKET` payloads. For injection, the attacker must match the
+target's switch mode. The live config shows `HYBRID` mode (the default).
+
+### 9. Telemetry response CRC (expresslrs.c)
+
+**4.4.2:** `calcCrc14((uint8_t *) &otaPkt, 7, crcInitializer)` with no nonce XOR.
+**2026.6.2 (v4):** `calcCrc14(..., crcInitializer ^ nonceValidator)` with
+`nonceValidator = receiver.nonceRX + offset`.
+
+**Attack impact:** On 4.4.2, both uplink and downlink CRC use the same static
+`crcInitializer` with no nonce component. Downlink (telemetry) packets can be
+decoded with the same CRC init as uplink — useful for passive interception of
+telemetry data.
+
+### Summary: 4.4.2 attack parameters (confirmed from source)
+
+| Parameter | 4.4.2 value | Source |
+|---|---|---|
+| OTA version | 3 | `ELRS_OTA_VERSION_ID 3` in `expresslrs_common.h` |
+| PHY | LoRa only (no FLRC) | Rate table in `expresslrs_common.c` |
+| Rate index 2 | LoRa 150Hz, SF7, BW800, CR_LI_4_7, hop interval 6666 μs | Same |
+| CRC init | `((UID[4] << 8) | UID[5]) ^ 3` | `expressLrsSpiInit()` |
+| CRC nonce XOR | None (v3) | `validatePacketCrcStd()` — `nonceValidator = 0` |
+| FHSS seed | `(UID[2]<<24 + UID[3]<<16 + UID[4]<<8 + UID[5]) ^ 3` | `fhssGenSequence()` |
+| Sync channel | `(freqCount / 2) + 1` = channel 41 for 2.4 GHz | `fhssGenSequence()` |
+| SYNC UID leak | UID[4] and UID[5] in every SYNC packet | `OTA_Sync_s` struct |
+| MSP buffer | 65 bytes, 5-byte chunks | `ELRS_MSP_BUFFER_SIZE`, `processRFMspPacket()` |
+| MSP reachable | Yes, even with `feature -TELEMETRY` | See MSP reachability review above |
+| Model match | `model_id = 255` → XOR = 0x00 → always satisfied | Live CLI observation |
+| Switch mode | HYBRID | Live CLI observation |
