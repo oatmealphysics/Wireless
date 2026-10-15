@@ -80,14 +80,39 @@ Configurator/CLI version and connection mode.
    disables the `TELEMETRY` feature. Neither fact alone establishes reachability
    of an MSP-over-air path in the live 4.4.2 binary.
 
-## Next safe actions
+## Version comparison: 4.4.2 vs 2026.6.2 ELRS differences (source-derived)
 
-1. Save the raw CLI transcript privately, with the UID redacted from any shared
-   excerpt.
-2. Obtain the matching 4.4.2 release/source/configuration artifacts without
-   changing the flight controller; add their hashes and provenance to the
-   firmware register.
-3. Diff the 4.4.2 target configuration and source against the existing 2026.6.2
-   corpus before promoting any existing finding to the live test article.
-4. Keep the controller in read-only configuration mode. No firmware flash,
-   reset, settings write, or RF test is authorized by this observation.
+Diffed `src/main/rx/expresslrs_common.h` between 4.4.2 and 2026.6.2:
+
+| Feature | 4.4.2 (installed) | 2026.6.2 (corpus) |
+|---|---|---|
+| OTA version | **v3 only** (`ELRS_OTA_VERSION_ID 3`, no `USE_ELRSV4`) | v3 or v4 (conditional `USE_ELRSV4`) |
+| Rate max | 4 rates | 6 rates (+ FLRC/FSK) |
+| Binding rate | Index 3 | Index 5 |
+| FLRC/FSK modes | **Not present** | Present (RATE_FLRC_2G4_*, RATE_FSK_2G4_*) |
+| Arm channel | Not v4-aware | v3 channel 4 / v4 channel 13 |
+
+**Impact on the attack chain:**
+- CRC init formula is definitively v3: `(UID[4] << 8) | UID[5]` XOR `(3 << 8)`
+- PHY is LoRa only — FLRC is not available on this firmware
+- The `rate_index = 2` observed in CLI maps to the 4.4.2 rate table (LoRa)
+- The `model_id = 255` (0xFF) means `modelXor = 0x00` — model-match is effectively always satisfied
+- Our `elrs_core` vendored library must be parameterized for v3, not v4
+
+## Completed acquisition steps (2026-10-15)
+
+1. Raw CLI transcript saved privately under `work/tinyhawk-live-2026-10-15/`.
+2. Betaflight 4.4.2 artifacts acquired and registered:
+   - `firmware/betaflight/betaflight_4.4.2_STM32F411.hex` — official release (SHA256 verified)
+   - `firmware/betaflight/betaflight_4.4.2_STM32F411.bin` — converted for Ghidra (0x08000000, 455 KB)
+   - `firmware/src/betaflight-4.4.2.tar.gz` — version-matched source (18 MB)
+3. Source diff confirms OTA v3 only, LoRa only, no FLRC.
+4. Controller remains in read-only mode. No flash, reset, or settings write performed.
+
+## Remaining actions
+
+1. Full source diff of the ELRS RX driver (`expresslrs.c`, `expresslrs_common.c`) between
+   4.4.2 and 2026.6.2 to verify MSP handler and buffer sizes are unchanged.
+2. Ghidra analysis of the 4.4.2 binary to cross-check the source-derived findings.
+3. Re-qualify all W5 vuln candidates against the 4.4.2 source (not 2026.6.2).
+4. Update `elrs_core` usage to explicitly parameterize for OTA v3.

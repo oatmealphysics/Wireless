@@ -28,13 +28,17 @@ those evidence gaps. None of the eleven samples is confirmed E8-specific.
 
 ### Betaflight Firmware (TinyHawk III — drone side)
 
+**Live device runs 4.4.2** (confirmed via CLI `version` on 2026-10-15). The 2026.6.2 corpus remains as a related sample; 4.4.2 is the version-matched analysis target. See `research/TINYHAWK-III-LIVE-CONFIG-2026-10-15.md`.
+
 | File | Description |
 |---|---|
-| `betaflight/betaflight_2026.6.2_STM32F411_CRAZYBEEF4SX1280.hex` | Prebuilt firmware for STM32F411 + SPI SX1280 ELRS boards (Intel HEX) |
-| `betaflight/betaflight_CRAZYBEEF4SX1280.bin` | Same firmware converted to raw binary for Ghidra/IDA analysis |
-| `betaflight/betaflight_2026.6.2_STM32F411.hex` | Base STM32F411 unified firmware (Intel HEX) |
-| `betaflight/betaflight_STM32F411.bin` | Same, raw binary |
-| `betaflight/EMAX_TINYHAWKF4SX1280.config` | EMAX unified target config (pin mappings, SPI bus assignments, SX1280 GPIO) |
+| `betaflight/betaflight_4.4.2_STM32F411.hex` | **Version-matched** official release (commit `23d066d08`, Nov 30 2023). OTA v3 only. |
+| `betaflight/betaflight_4.4.2_STM32F411.bin` | Same, raw binary for Ghidra (0x08000000, 455 KB, ARM Cortex-M4F). |
+| `betaflight/betaflight_2026.6.2_STM32F411_CRAZYBEEF4SX1280.hex` | 2026.6.2 related sample (Intel HEX). Not installed on the live drone. |
+| `betaflight/betaflight_CRAZYBEEF4SX1280.bin` | Same, raw binary. |
+| `betaflight/betaflight_2026.6.2_STM32F411.hex` | Base STM32F411 unified firmware, 2026.6.2 (Intel HEX). |
+| `betaflight/betaflight_STM32F411.bin` | Same, raw binary. |
+| `betaflight/EMAX_TINYHAWKF4SX1280.config` | EMAX unified target config (pin mappings, SPI bus assignments, SX1280 GPIO). |
 
 ### ExpressLRS Source (E8 controller — TX side)
 
@@ -203,6 +207,8 @@ retain LF. Existing checkouts made before this rule may still contain converted
 text files; compare with a fresh checkout before treating a mismatch as corruption.
 
 ```
+bed2ed630acf8301b966ed6ac9fadea53ad0337535856ff8d05e45f852ea9729  betaflight/betaflight_4.4.2_STM32F411.hex
+33830bda10262ebc2b3a8c337de611a6f5c9f4b3560bf1b0997f1d1081ffbf3d  betaflight/betaflight_4.4.2_STM32F411.bin
 f06b053564ab37a18f5fd74c2e08cf9997434ef10a2b5d5785274a6cffeff5b2  betaflight/betaflight_2026.6.2_STM32F411_CRAZYBEEF4SX1280.hex
 22463809f4172fcb7003b8fd9ea6528dfa14c9d1f98e530c6c5ffa3926a929d0  betaflight/betaflight_2026.6.2_STM32F411.hex
 d98f2569e4fba71a3c3054fd798c6329c64b7ee4b686384a2a1abc9e28d9ad0e  betaflight/betaflight_CRAZYBEEF4SX1280.bin
