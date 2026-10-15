@@ -7,6 +7,7 @@ Start with [the detailed home lab handoff](HOME-LAB-HANDOFF.md) for current evid
 - [Wireless vulnerability reference](drone-wireless-vuln-reference.md)
 - [Research plan](attack-research-plan.md)
 - [Firmware corpus](firmware/README.md)
+- [Live TinyHawk III configuration summary (2026-10-15)](research/TINYHAWK-III-LIVE-CONFIG-2026-10-15.md)
 - [Firmware → Vulnerability Analysis → PoC methodology](docs/firmware-to-poc-methodology.md)
 - [Firmware inventory & development chain](docs/firmware-inventory-and-chain.md)
 - [Claude's companion session notes](SESSION-NOTES.md)
