@@ -2,6 +2,11 @@
 
 ## THE WAY AHEAD — read this first
 
+**Current owner decision (2026-10-15): §20 supersedes earlier WiFi-first and
+multi-chain priority statements.** The first benchmark is the owned E8–TinyHawk
+ELRS pair, without a WiFi entry step. Earlier sections remain as historical
+research and must not be treated as active task assignments.
+
 **From the orchestrator (andeds), 2026-10-15.** I have now done a full code-level
 review of this repo (all 82 files, all 8 differential-review findings verified in
 the actual code, both runnable test suites re-executed). This section is the
@@ -1208,7 +1213,7 @@ comparison remains the W8 gate.
 
 ---
 
-## 18. Layer 2 wireless attack program — owner direction (2026-10-15)
+## 18. Layer 2 wireless attack program — earlier direction (superseded by §20)
 
 The owner committed to a Layer 2 / chipset-level wireless attack research
 program. The full analysis is in
@@ -1281,3 +1286,36 @@ The ELRS chain's former `--arm` path sent placeholder IQ samples, not LoRa.
 It now fails closed before opening a TX stream; the dry-run packet preview remains
 available. A real LoRa PHY and bench validation remain Phase C work. Offline
 source-conformance checks do not establish live acceptance by the TinyHawk.
+
+---
+
+## 20. First benchmark: the owned E8–TinyHawk ELRS pair (owner direction, 2026-10-15)
+
+The owner moved the active path away from WiFi. **Benchmark the ELRS control
+link between the existing EMAX E8 and TinyHawk III first.** Do not make WiFi
+entry, RF link disruption, MAVLink/WiFi, or DJI/BLE prerequisites for this
+benchmark. The earlier §18 plan is paused, not silently deleted.
+
+### Evidence gates, in order
+
+| Gate | Deliverable | Pass condition |
+|---|---|---|
+| 0. Ground truth | Reconcile the private, read-only E8 config response with the observed TinyHawk Betaflight 4.4.2 settings; record provenance without publishing the pairing UID. | Each claim is tagged device-observed, source-derived, or still unknown. E8 installed firmware/MCU are not guessed from related EMAX products. |
+| 1. Passive RF | Obtain or locate IQ/packet captures of **this pair** during normal operation; preserve raw files under ignored `work/`. Re-evaluate the older T1-8 capture's FLRC label because the version-matched 4.4.2 source maps the live rate index to LoRa. | The PHY, rate, and hopping observations are measured, not inferred from a filename or newer firmware. |
+| 2. OTA conformance | Decode multiple real SYNC and data frames, including nonzero packet counters, and compare v3 frequency mapping, FHSS sequence, packet fields, and CRC against the 4.4.2 source and private E8 UID. | A reproducible offline report explains matching and nonmatching frames. Synthetic round-trips alone do not pass. |
+| 3. PHY integration | Coordinate the v3 correction in the companion `elrs-sdr` core, re-vendor with an updated provenance pin, and validate a real LoRa modulation path offline. | A separate review confirms the PHY and version-specific packet bytes; `elrs_chain.py --arm` remains blocked until then. |
+| 4. Owned bench | Only after a separately approved bench protocol, check whether the disarmed, propeller-free TinyHawk accepts the generated signal. | Device-observed acceptance or rejection is recorded; no success is claimed from SDR output alone. |
+
+**Assignments:** Codex owns integration, source/capture comparison, and the
+evidence ledger. Claude provides independent review of packet/PHY claims and
+can coordinate the companion-core change; do not let two processes access the
+E8 serial port concurrently. The owner controls physical setup, any capture
+handoff, and authorization for later active RF testing. The first two gates
+are receive-only or offline; no E8 flash, settings write, reset/bootloader
+sequence, live fuzzing, or RF transmission is authorized by this plan.
+
+**Current handoff:** This Windows checkout has no passive IQ capture under
+`work/` as checked on 2026-10-15. Locate the existing private capture or make
+a new receive-only recording before labeling the packet tools validated on
+the pair. Keep raw UID/config bytes and captures out of Git. Existing public
+notes that contain a live pairing value require a separate exposure review.

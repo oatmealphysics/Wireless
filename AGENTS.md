@@ -78,15 +78,18 @@ Serial/USB access is available for lab development and debugging. All attacks mu
 
 ### ELRS Binding Phrase Security Model
 
-The binding phrase is the sole shared secret between TX and RX. It is not encryption — it is anti-collision. The attack chain is fully documented in `firmware/README.md`:
+The binding phrase derives the pairing UID; it is not encryption. For the live
+Betaflight 4.4.2 v3 receiver, the source-derived model is:
 
 1. Binding phrase → MD5 hash → first 6 bytes = UID
-2. UID[3:5] are sent **in plaintext** in every SYNC packet
-3. UID seeds the FHSS hopping sequence (deterministic, 256-entry, 80 channels for 2.4 GHz)
+2. UID[4] and UID[5] are visible in every SYNC packet; this is only 16 bits of
+   the six-byte UID, not the full pairing value
+3. UID seeds the FHSS hopping sequence (240 entries for the 80-channel 2.4 GHz domain)
 4. UID seeds the CRC initializer (CRC14 or CRC16)
 5. No encryption on any OTA packet
 
-Know the binding phrase → know every hop → forge valid packets → override the legitimate TX.
+Knowing the complete UID permits a source-derived packet candidate. Whether
+the live receiver accepts it remains a separate bench-validation question.
 
 ### Betaflight Target for TinyHawk III
 
@@ -146,24 +149,19 @@ firmware image. See `HARDWARE-IDENTITY.md` before selecting a device target.
 
 > **The way ahead is in [`SESSION-NOTES.md`](SESSION-NOTES.md).** Read §1–§7
 > for the orchestrator's code-level review and P1 defect list, §16–§17 for the
-> 4.4.2 rewire and vendored-tool fixes, **§19 for the v3 correction and RF-TX
-> safety gate**, and **§18 for the Layer 2 wireless
-> attack program** (owner-directed, 2026-10-15). The Layer 2 research is in
-> [`research/layer2-wireless-attack-research.md`](research/layer2-wireless-attack-research.md).
+> 4.4.2 rewire and vendored-tool fixes, §19 for the v3 correction and RF-TX
+> safety gate, and **§20 for the current owner-directed ELRS pair benchmark**.
+> §18 and [`research/layer2-wireless-attack-research.md`](research/layer2-wireless-attack-research.md)
+> are earlier exploratory work, not the active path.
 
-### Owner direction (2026-10-15): ELRS first, ~1 month timeline
+### Owner direction (2026-10-15): benchmark the owned ELRS pair first
 
-The owner committed to an attack path without waiting for all Q1–Q9 answers:
-**prove the ELRS chain end-to-end on the TinyHawk III + E8 first**, then
-expand to DJI and other targets. Target completion: mid-November 2026.
-
-The program has three chains. Chain 1 (ELRS) is the active priority:
-1. **Chain 1 — ELRS WiFi mode exploitation** (P1, active): Force TX into WiFi
-   mode → extract binding phrase → derive FHSS/CRC → forge ELRS packets → drone control
-2. **Chain 2 — WiFi → MAVLink injection** (P1, parallel): Evil twin / rogue AP
-   → network access → MAVLink command injection. Uses SITL, no hw acquisition.
-3. **Chain 3 — DJI BLE exploitation** (P2, after Chain 1 proven): CVE-2026-78306
-   BLE command injection. Requires DJI hardware acquisition.
+The owner redirected the first benchmark to the **EMAX E8 controller and
+TinyHawk III ELRS drone as a pair**, without a WiFi entry step. The previous
+WiFi-first Chain 1 plan is paused. Establish measured, version-matched ELRS
+behavior before making any claim about forged-packet acceptance. MAVLink/WiFi,
+DJI/BLE, and RF disruption are deferred from this benchmark. The month-scale
+target remains a planning horizon, not evidence that any stage is operational.
 
 ### Done
 - Vulnerability reference document covering WiFi, BLE, ELRS, MAVLink, GPS, chipset exploitation (~1555 lines)
@@ -175,24 +173,28 @@ The program has three chains. Chain 1 (ELRS) is the active priority:
 - Differential review + orchestrator re-verification (SESSION-NOTES §1–§3)
 - Live TinyHawk III firmware identification: Betaflight 4.4.2 (not 2026.6.2)
 - Complete ELRS 4.4.2 vs 2026.6.2 source diff (attack parameters confirmed for v3)
-- ELRS vendored-tool OTA v3 fixes (§16–§17): analyzer, forger, chain default to v3
+- ELRS consumer-tool OTA v3 corrections (§19); the vendored core remains v4-oriented
 - Layer 2 wireless attack surface analysis and target landscape mapping
 
-### In Progress (Chain 1 — ELRS WiFi mode exploitation)
-- **Week 1:** ELRS WiFi mode recon on E8 — confirm WiFi mode entry, document AP behavior
-- **Week 1–2:** WiFi config extractor tool — connect to ELRS AP, extract binding phrase/UID
-- **Week 2:** RF disruption feasibility — characterize methods to force WiFi mode timeout
-- **Week 2–3:** End-to-end Chain 1 dry run (simulation, no TX)
-- **Week 3–4:** Live RF validation with SDR (B205/B210)
-- **Week 4:** Game-day playbook as timed operator checklist
+### In Progress (E8–TinyHawk ELRS pair benchmark)
+- Preserve the known read-only device configuration and source-matched
+  Betaflight 4.4.2 facts; keep raw UID and captures private under `work/`.
+- Obtain or locate a passive capture of this exact pair during normal operation.
+  Re-check older FLRC labels against the source-derived LoRa configuration.
+- Decode real frames and compare PHY, FHSS, CRC, and nonzero-nonce behavior
+  against the version-matched source; do not treat synthetic round-trips as proof.
+- Resolve v3 behavior in the companion ELRS core and re-vendor with provenance.
+- Keep ELRS RF transmission disabled until a real LoRa PHY and a separately
+  authorized, safe bench-validation plan exist.
 
-### In Progress (Chain 2 — parallel)
-- Evil twin / rogue AP automation tool
-- MAVLink MitM proxy
-- MAVLink injection over WiFi (SITL validation)
+### Paused or deferred
+- E8 WiFi-mode exploitation, RF disruption/jamming, and WiFi config extraction.
+- MAVLink/WiFi and DJI/BLE work while the first ELRS pair benchmark is active.
 
-### In Progress (other)
-- Serial testing of EMAX E8 over USB (needs battery power) — read-only, no-flash
+### Other device evidence
+- A native, read-only E8 configuration read has been reported and documented
+  in `research/e8-protocol-reconstruction.md`; it does not identify the
+  installed firmware version or authorize additional serial operations.
 
 ### Not Yet Started
 - Chain 3: DJI BLE exploitation (after Chain 1 proven + DJI hw acquired)
@@ -202,8 +204,10 @@ The program has three chains. Chain 1 (ELRS) is the active priority:
 
 ### Open Questions (partially resolved — see SESSION-NOTES §4 and §18)
 - CTF target platform(s) → **Q1** (ELRS path chosen regardless; still informs Chain 2/3 priority)
-- Is RF jamming allowed? → **Q4** (affects Chain 1 WiFi mode forcing method)
+- RF rule details → **Q4** (needed before any later active RF bench stage;
+  no jamming is part of the first benchmark)
 - Scoring model — commandeering vs DoS? → **Q5**
 - Physical layout / proximity? → **Q7**
-- E8 WiFi mode trigger — safe within no-write constraint? → needs owner confirmation
+- E8 installed firmware version and radio details remain unconfirmed; no
+  WiFi capability is assumed for this benchmark
 - (plus Q2, Q3, Q6, Q8, Q9 in SESSION-NOTES §4)
