@@ -223,3 +223,122 @@ of P1-2) happened in the first place.
 *— andeds, orchestrator, 2026-10-15. This section is the current way ahead.
 When the owner answers §4, we update §2 (path commitment) and §5 (the active
 phase) in place.*
+
+---
+
+## 8. `elrs-sdr` integration assessment (Claude, 2026-10-15)
+
+The owner asked for a review of the companion repo (`~/Drone_Project/elrs-sdr-transfer`,
+`git@github-personal:oatmealphysics/research-project.git` on the laptop vs.
+`gitlab01.an.dd:andeds-agent/elrs-sdr-transfer` on the enclave) to identify what
+should be pulled into this CTF research project. This section is the inventory
+and recommendation — **no code was merged, no files were copied**. The owner
+decides what to act on.
+
+### 8.1. Repo overview
+
+875 files. A Python package (`elrs_sdr/`) implementing SDR-based ELRS detect →
+identify → (gated) execute pipeline, plus a WaveRaider web dashboard, an
+OpenDroneID decoder, E8 protocol reconstruction, and a DroneSecurity reference
+corpus. ~13,000 lines in the core package. Real IQ captures from the owned
+TinyHawk III. Self-test suite (29 checks) validates the protocol layers without
+hardware.
+
+### 8.2. Tier 1 — High value, directly applicable to CTF game day
+
+These are the items that solve open problems in this repo or replace
+single-version reimplementations with validated exact ports.
+
+| # | Item | `elrs-sdr` location | Lines | What it does | What it fixes in this repo |
+|---|---|---|---|---|---|
+| **T1-1** | **ELRS core protocol library** | `elrs_sdr/core/{crc,ota,fhss,lora,lora_payload,lora_ref,lora_sync}.py` | ~2,350 | Exact Python ports of CRC-14/16, OTA packet model (build/validate/pack/unpack), FHSS LCG sequence, LoRa PHY. Self-tested against the C source, encode↔decode round-trip proven. | Replaces the hand-rolled crypto in `tools/elrs-packet-forger.py`, `tools/elrs-analyzer.py`, `tools/elrs-uid-rainbow.py`. Eliminates **P1-2** (hardcoded OTA v4) — the core is version-parameterized (v2–v6). This is the structural fix §5 Phase B step 4 calls for. |
+| **T1-2** | **GFSK/FLRC demodulator** | `elrs_sdr/core/gfsk.py` | 456 | SX1280 FLRC PHY: soft-Viterbi convolutional decode (K=7, CR 1/2), CRC-24 (poly 0x0186), UID-seeded 32-bit sync word. 100% byte-exact round-trip at ~20 dB on random payloads. | **Critical discovery from the elrs-sdr project:** the TinyHawk III's default air rate (`rate_index=2`) is **FLRC/GFSK, not LoRa**. The poc-research tools assume LoRa modulation. Without this PHY, passive capture and decode of the actual target drone's signal will not work. `elrs-tx-emulator.py`'s fixed-SF6 chirp prototype (P2-5) is building the wrong modulation entirely. |
+| **T1-3** | **FHSS seed recovery** | `elrs_sdr/core/fhss_seed.py` | 541 | Recovers the 31-bit FHSS LCG seed from observed hop positions using vectorized numpy brute-force (progressive filtering: first constraint keeps ~1/80 of 2^31 candidates; ~5 observations pin the seed uniquely). Validated against `fhss.build_sequence`. | This is the Fox-IT attack path implemented in code. Capture a few hop positions → recover the full FHSS sequence → follow every hop → full link hijack. Described in this repo's research but not implemented. Combined with T1-2 (decode the FLRC bursts to identify hop channels) this closes the "passive UID recovery" problem. |
+| **T1-4** | **ELRS air-state identifier** | `elrs_sdr/core/identify.py` | 581 | Version-agnostic classifier: sweeps OTA versions 2–6 × all 6 air rates × both PHY modes (LoRa + FLRC), gates on CRC validity. Recovers UID from the sync word without operator-supplied UID. Returns structured `AirState` (version, mode, rate, UID, channel, freq_offset, CRC valid, confidence). | The "identify the target's ELRS version, rate, and UID from passive SDR capture" tool. Goes from IQ capture to actionable attack parameters (UID, FHSS seed, CRC init, OTA version) in one step. This is the reconnaissance layer `tools/elrs-analyzer.py` was supposed to be — but version-agnostic and PHY-agnostic. |
+| **T1-5** | **UHD radio wrapper** | `elrs_sdr/radio.py` | 1,047 | B210/B205mini UHD device driver: symmetric RX+TX, multi-UHD-version compatibility (4.2/4.9/4.11), `.complex8` file I/O, automatic subdev/antenna selection. Tested on the laptop's B205mini. | The poc-research SDR scripts (`tools/sdr_common.py`, `tools/elrs-tx-emulator.py`) use a SoapySDR abstraction. `radio.py` is UHD-native and already proven on the owned B205mini on this laptop. If the ELRS path is chosen, this is the hardware driver. |
+| **T1-6** | **E8 native reader** | `tools/e8_read.py` | 85 | **Confirmed** E8 serial protocol: send 64 bytes (`02 01` + 62 zeros at 115200 8N1), receive 17-byte config response (`02 c5 <rate> <power> <tlm> <UID:6> <padding:6>`). Validated on live hardware with byte-for-byte match. | The poc-research `tools/e8-read-config.py` (Codex) was written without the confirmed protocol. `e8_read.py` is the working, validated reader. **Entry procedure:** power-on holding RIGHT on the right d-pad → center LED flashing green → `/dev/ttyACM0` is live. No Wine, no vendor tool needed. |
+| **T1-7** | **E8 protocol reconstruction** | `references/e8_protocol_reconstruction.md` | ~200 | Full reverse-engineering log: confirmed Read command format, CRC-16/XMODEM (poly 0x1021, init 0x0000) over 60-byte body, rate/power/UID byte layout, Write command TX layout (02 02 header), Update multi-stage framing. | Completes this repo's E8 characterization work. The confirmed protocol answers every open question in `E8-SERIAL-CHARACTERIZATION.md` and `research/E8-USB-CHARACTERIZATION.md`. |
+| **T1-8** | **IQ capture of the owned drone** | `captures/fhss_20261010_113103/` | 480 MB | `.complex8` IQ capture at 2440.4 MHz, ~10 MS/s, 12 seconds — the owned TinyHawk III transmitting FLRC at rate_index=2. Includes `.meta.txt` with center freq, sample rate, timestamp. | **Real test data from our actual target.** The poc-research repo has no RF captures. This is ground truth for validating any decoder, and it already demonstrates what the real signal looks like (FLRC, not LoRa). |
+
+### 8.3. Tier 2 — Game-day situational awareness
+
+These are useful for recon and target identification during the competition
+but not directly part of an attack chain.
+
+| # | Item | `elrs-sdr` location | Lines | What it does |
+|---|---|---|---|---|
+| **T2-1** | Multi-band drone scanner | `elrs_sdr/dronescan.py` | 989 | Sweeps 2.4 GHz / 5.8 GHz / sub-1G / 433 MHz on the B205/B210, classifies energy by PHY signature (LoRa chirp, OFDM/WiFi, FHSS, analog video). Game-day recon: "what protocols are the CTF drones using?" |
+| **T2-2** | Protocol catalog + detection levels | `elrs_sdr/protocol_catalog.py` | 366 | 16-protocol detection matrix with honest confidence levels (NONE → PRESENCE → FAMILY → SPECIFIC → IDENTIFIED). Quick reference for what the SDR can and can't distinguish. |
+| **T2-3** | OpenDroneID decoder | `elrs_sdr/opendroneid.py` | 453 | ASTM F3411 Remote ID: serial number, operator ID, position from BLE/WiFi beacons. If CTF drones broadcast Remote ID (regulatory requirement on newer hardware), this reads identity for free — no attack needed. |
+| **T2-4** | Sensor fusion layer | `elrs_sdr/fusion.py` | 349 | Merges events from RemoteID + SDR scan + DJI DroneID into one identity-keyed track table. "Every drone around me, protocol, identity" in one view. |
+| **T2-5** | WaveRaider web dashboard | `waveraider/` | ~6,300 | Live web UI: drone tracks, spectrum overlay, ELRS Find, protocol classification. Real-time situational awareness during competition. |
+| **T2-6** | ELRS burst classifier | `elrs_sdr/core/bursts.py` + `positivedet.py` | ~600 | PHY-level burst detection and LoRa chirp / GFSK / OFDM / analog classification. Feeds the protocol scanner. |
+
+### 8.4. Tier 3 — Reference documentation
+
+| Item | Location | Value |
+|---|---|---|
+| TinyHawk FLRC discovery | `docs/FLRC_GFSK_DECODE.md` | Documents that rate_index=2 is FLRC, not LoRa — the root cause of "the decoder can't see the drone." Essential context. |
+| LoRa sync template spec | `docs/ELRS_LORA_SYNC_SPEC.md` | Exact sync detection parameters extracted from a commercial C-UAS SDR's firmware. |
+| FHSS test plan | `docs/WAVERAIDER_FHSS_TEST_PLAN.md` | Methodology for validating FHSS sequence recovery against real captures. |
+| Counter-UAS SDR deep dive | `docs/COUNTER_UAS_SDR_FIRMWARE_DEEP_DIVE.md` | Analysis of a production counter-UAS SDR detection pipeline — architecture reference. |
+| DroneSecurity IQ samples | `DroneSecurity/samples/` | DJI Mavic Air 2 and Mini 2 IQ captures + QPSK/Gold-code demodulators for DJI DroneID. Useful if CTF includes DJI targets. |
+| Drone RF architecture doc | `docs/DRONE_RF_ARCHITECTURE.md` | How the multi-source detection pipeline was designed to generalize across protocols. |
+
+### 8.5. What to skip
+
+| Item | Why |
+|---|---|
+| Session logs, conversation summaries, agent handoff notes (`docs/CONVERSATION_*.md`, `docs/*NOTES*.md`) | Process artifacts, not deliverables. |
+| WaveRaider Docker/CI infrastructure | Different deployment context. |
+| DroneSecurity as a whole (except samples) | Third-party reference code, already vendored there. |
+| `AGENTS.md`, `SECURITY.md` from that repo | Different scope/rules. This repo has its own. |
+| `waveraider/` tests, release notes, changelogs | Only relevant if importing the full WaveRaider package. |
+
+### 8.6. Critical finding — the FLRC problem
+
+The single most important thing from the `elrs-sdr` repo is a **hardware fact**:
+
+> **The TinyHawk III at its default air rate (`rate_index=2`) transmits FLRC/GFSK,
+> not LoRa.** The `elrs-sdr` team discovered this empirically — their LoRa-only
+> decoder was completely blind to the signal. The FLRC modulation uses a different
+> PHY entirely: GFSK with Gaussian BT=1, convolutional coding CR 1/2 (K=7),
+> CRC-24 (not CRC-14/16), and a 32-bit UID-seeded sync word (not the LoRa sync).
+
+The poc-research tools (`elrs-analyzer.py`, `elrs-tx-emulator.py`,
+`elrs-packet-forger.py`) all assume LoRa modulation. The `elrs-tx-emulator.py`
+builds a fixed-SF6 LoRa chirp (P2-5). **If the CTF target runs a FLRC rate
+(common default), these tools produce a signal the receiver cannot parse.**
+
+The fix is T1-2 (`gfsk.py`) + T1-4 (`identify.py` — which auto-detects LoRa vs
+FLRC). This aligns with the orchestrator's §5 Phase B recommendation to import
+`elrs_sdr/core` as a library rather than maintaining separate reimplementations.
+
+### 8.7. Integration recommendation
+
+**If the ELRS path is chosen (per §2):**
+
+1. Add `elrs-sdr-transfer` as a git submodule or copy `elrs_sdr/core/` into
+   `tools/elrs_sdr_core/` (submodule preferred — keeps provenance, avoids
+   drift, matches the orchestrator's "import, don't duplicate" directive in §6).
+2. Rewrite `tools/elrs-analyzer.py` to call `elrs_sdr.core.identify` instead of
+   its own single-version decode. Fixes P1-2.
+3. Rewrite `tools/elrs-tx-emulator.py` to use `elrs_sdr.core.gfsk` for FLRC
+   modulation and `elrs_sdr.radio` for UHD TX. Fixes P2-5.
+4. Replace `tools/elrs-packet-forger.py`'s CRC/FHSS/OTA with calls to
+   `elrs_sdr.core.{crc,fhss,ota}`. Removes the re-implementation risk.
+5. Copy `tools/e8_read.py` into `tools/` — it's the confirmed E8 reader.
+6. Copy the IQ capture to a local analysis directory (not in git — 480 MB).
+7. Import T2-1 (`dronescan.py`) as the game-day protocol scanner.
+
+**If the MAVLink path is chosen:** T1-1 through T1-5 are not needed immediately.
+T2-1/T2-2 are still useful for game-day recon. The E8 reader (T1-6) is useful
+regardless of path.
+
+**If both paths are needed:** the above ELRS integration plus the MAVLink P1
+fixes (§3 items 1 and 3) from the orchestrator's review.
+
+---
+
+*— Claude, 2026-10-15. Assessment only — no files were merged or copied.
+Awaiting owner's path commitment (§2) before acting on any integration.*
