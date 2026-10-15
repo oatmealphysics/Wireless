@@ -705,6 +705,62 @@ B210 (SDR), ALFA cards (Wi-Fi path), Ubuntu platform.
 on the bench and the B205 is wired up. If so, Codex does Step 1 (~1 day) and
 we run Step 2 together on the bench.
 
+### 12.4a. Corrections from the full notes read (andeds, after re-reading Codex §11/§12 + the evening notes)
+
+My initial §12.4 was written before I'd fully re-read Codex's HOME-LAB-HANDOFF
+§11/§12 and the evening session notes. Three corrections, all in Codex's favor:
+
+1. **Do NOT assume OTA v4 for the TinyHawk.** Codex §11.3: the OTA version is a
+   **compile-time feature** (`USE_ELRSV4` present → v4, absent → v3) in
+   Betaflight's `expresslrs_common.h`. The pinned config header says "Betaflight
+   4.3.1 / 2022 build" but the corpus binaries are labeled 2026.6.2 — Codex
+   explicitly says "do not infer the OTA version from the file name, release
+   family, or the lookup script's comment." **Correction to Step 2.6:** the
+   version must be **measured from the capture** (the `elrs_core.ota` decode
+   reports which version's CRC validates) or read from the E8's rate field —
+   then the forger is run with *that* version, not a hardcoded 4. The
+   `--ota-version` CLI param (Step 1.1) exists precisely so we can set it from
+   the measurement, not assume it.
+
+2. **The SYNC layout discrepancy is unresolved — don't use the rainbow lookup
+   as an equivalent observation.** Codex §11.4: ELRS 4.1.0's `OTA_Sync_s`
+   exposes `UID4`+`UID5` (two bytes), but the rainbow tool's `sync_bytes` /
+   `--lookup` assumes three bytes (UID3-5). Codex: "Do not invent the missing
+   byte." **Correction:** Step 2.6 (forger output vs. real capture) is the
+   valid check. The rainbow-table `--lookup` path is **not** a valid
+   equivalent observation until the two-vs-three-byte discrepancy is resolved
+   by release. Label any rainbow match as a *candidate* (Codex §11.5: 16 bits
+   of partial identity can collide across phrases).
+
+3. **"Match = protocol layer VALIDATED" is milestone 2→3, not milestone 5.**
+   Codex §11.6 requires five separate milestones: (1) source-derived behavior,
+   (2) observed packets with defined version/format, (3) candidate identity
+   match with documented ambiguity, (4) validated receiver state + timing in a
+   controlled lab, (5) demonstrated receiver behavior. My Step 2.6
+   (forger bytes match a real capture) is milestone **2→3** — it validates the
+   protocol layer against observed air, but it is **not** milestone 5
+   (demonstrated takeover). Codex §11.5 is explicit: "deterministic frequency
+   hopping and a UID-derived CRC do not by themselves demonstrate accepted
+   packet injection or control takeover," and "higher power wins" is not a
+   reliable result. **Correction:** Step 2 passing does NOT mean the exploit
+   works. It means the forger emits the right bytes for the measured version.
+   Milestone 5 (demonstrated receiver behavior) is Step 3.12 — the live
+   end-to-end TX test. Do not let Step 2's success read as "exploit works."
+
+4. **The E8 live read is not yet proven.** The evening session notes record
+   that Codex's vendor reads **received no bytes**, including after the
+   documented serial-mode startup. The confirmed 64B/17B protocol is in the
+   merged `e8-read-config.py`, but a **live successful read has not happened in
+   this project yet**. **Correction to §12.4 step 1:** the air-recovery path
+   (`elrs-sdr` `fhss_seed.py` — recover the FHSS seed from observed hops) is
+   the **primary** UID source for Step 2. The E8 read is a **secondary**
+   confirmation, not a dependency. Do not block Step 2 on the E8 read
+   working.
+
+These corrections do not change the step sequence (1→2→3→4). They change what
+each step *claims* and which measurement feeds the forger's version param.
+The honest milestone labels matter more than the step numbers.
+
 ### 12.5. What is explicitly NOT next
 
 - **Do not start Phase 2 (PHY) before Step 2 (live protocol check) passes.**
