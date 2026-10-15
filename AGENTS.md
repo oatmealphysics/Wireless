@@ -144,27 +144,40 @@ firmware image. See `HARDWARE-IDENTITY.md` before selecting a device target.
 
 ## Current State and Open Work
 
+> **The way ahead is in [`SESSION-NOTES.md`](SESSION-NOTES.md), §1–§7
+> (andeds, orchestrator, 2026-10-15).** Read that first. It records the full
+> code-level review, the three P1 protocol defects (re-verified in code), the
+> CTF facts the owner must gather before we commit to an attack path, and the
+> execution plan for once the path is chosen. The "Open Questions" below are
+> re-scoped there as §4 (Q1–Q9) and are the real blocker, not the code.
+
 ### Done
 - Vulnerability reference document covering WiFi, BLE, ELRS, MAVLink, GPS, chipset exploitation (~1555 lines)
 - 7-phase attack research plan with lab exercises
-- Firmware corpus: Betaflight hex/bin, ELRS source, unified target configs
-- ELRS binding phrase rainbow table generator (193 phrases, reverse SYNC lookup)
+- Firmware corpus: Betaflight hex/bin, ELRS source, unified target configs (11 artifacts, SHA256-verified)
+- ELRS binding phrase rainbow table generator (723 phrases, reverse SYNC lookup)
 - CRSF serial probe tool for USB-connected ELRS devices
+- 5 exploit chains (ELRS / MAVLink / Wi-Fi-Tello / multi-recon) + supporting tools
+- Differential review (`Harness_DIFFERENTIAL_REVIEW_2026-10-15.md`) + orchestrator re-verification (SESSION-NOTES §1–§3)
 
 ### In Progress
-- Serial testing of EMAX E8 over USB (needs battery power)
-- Layer 2 / chipset-level attack research program design
+- **Path commitment** — owner to answer the CTF facts (SESSION-NOTES §4, Q1–Q9), then we pick one attack path
+- Serial testing of EMAX E8 over USB (needs battery power) — read-only, no-flash
 
-### Not Started
-- Attack scripts listed in the research plan (`tools/` — 15 scripts outlined)
+### Blocked on owner (do not start tool work until these are answered)
+- The CTF target platform(s), flag location, exposed interfaces, rules (allowed/disallowed), scoring model, recon window, proximity, game-day hardware, UID recoverability — see SESSION-NOTES §4
+
+### Not Started (sequenced in SESSION-NOTES §5 after path commitment)
+- Phase B: protocol conformance fixes on the chosen path (P1-1/2/3 + P2-7 + P2-8) against the reference implementation
+- Phase C: real LoRa PHY + bench RF validation (ELRS path only)
+- Phase D: game-day playbook re-grounded in Phase C output + home-lab dry-run
 - Firmware binary analysis in Ghidra
-- Lab exercises from the plan (WiFi deauth, PMKID, Tello takeover, MAVLink injection, etc.)
 - Additional hardware acquisition (Tello, Pixhawk, ESP32 dev board, etc.)
-- Game-day playbook automation
 
-### Open Questions
-- What drones/protocols will the CTF use? (Unknown target platforms)
-- Is RF jamming allowed? Is GPS spoofing allowed?
-- Scoring model — is commandeering worth more than DoS?
-- Physical layout — how close can attackers get to targets?
-- Is there a flag format or submission API?
+### Open Questions (re-scoped — see SESSION-NOTES §4)
+- What drones/protocols will the CTF use? → **Q1** (blocks path commitment)
+- Is RF jamming allowed? Is GPS spoofing allowed? → **Q4**
+- Scoring model — is commandeering worth more than DoS? → **Q5**
+- Physical layout — how close can attackers get to targets? → **Q7**
+- Is there a flag format or submission API? → **Q2**
+- (plus Q3, Q6, Q8, Q9 in SESSION-NOTES §4)

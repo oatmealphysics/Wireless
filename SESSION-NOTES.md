@@ -1,344 +1,225 @@
-# Session Notes — 2026-10-14
+# Session Notes — 2026-10-15 (andeds, orchestrator)
 
-## What This Session Accomplished
+## THE WAY AHEAD — read this first
 
-This was a full research session covering firmware acquisition, protocol analysis, tool development, and lab setup. Everything is committed and pushed to `origin/main`.
+**From the orchestrator (andeds), 2026-10-15.** I have now done a full code-level
+review of this repo (all 82 files, all 8 differential-review findings verified in
+the actual code, both runnable test suites re-executed). This section is the
+authoritative way forward. It supersedes the "Open Questions" at the bottom of
+`AGENTS.md` — those are now answered or re-scoped below.
 
----
-
-## 1. Repository State
-
-**Repo:** `git@github-personal:oatmealphysics/research-project.git` (private)
-**Branch:** `main` — 11 commits, all pushed
-**Working tree:** clean (no uncommitted changes)
-
-### Commit History (newest first)
-```
-93578f3 Add CRSF serial probe tool for USB-connected ELRS devices
-7bf484a Add AGENTS.md with project context for multi-agent workflow
-bcc565d Add ELRS binding phrase rainbow table generator and pre-computed table
-368b0f0 Add Betaflight and ExpressLRS firmware corpus for TinyHawk III / E8
-dd5f5a7 Add EMAX E8 ELRS firmware research corpus
-d3f7aba Expand advanced wireless chipset exploitation research
-207bc9a Add advanced chipset exploitation techniques section
-cc88c7a Add Layer 2 / chipset attack research and implementation plan
-b856f26 Expand drone wireless vulnerability reference
-e9fbd6a Merge branch 'main' of github-personal:oatmealphysics/research-project
-2385353 Add drone wireless chipset vulnerability reference
-d54892e Initial commit
-```
-
-### File Inventory
-```
-AGENTS.md                          — Multi-agent project rules, repo structure, technical context
-attack-research-plan.md            — 7-phase attack plan (~506 lines)
-drone-wireless-vuln-reference.md   — CVE/chipset/attack reference (~1555 lines)
-firmware/
-  README.md                        — Hardware→chipset mapping, ELRS attack surface analysis
-  SHA256SUMS                       — Hashes for firmware files
-  betaflight/
-    betaflight_2026.6.2_STM32F411_CRAZYBEEF4SX1280.hex   — TinyHawk III firmware (Intel HEX)
-    betaflight_CRAZYBEEF4SX1280.bin                       — Same, raw binary for Ghidra
-    betaflight_2026.6.2_STM32F411.hex                     — Base F411 firmware (Intel HEX)
-    betaflight_STM32F411.bin                              — Same, raw binary
-    EMAX_TINYHAWKF4SX1280.config                         — Unified target config (pin map)
-  reference/
-    targets.json                — ELRS target registry (confirms EMAX = ESP32 + SX1280)
-    ExpressLRS-master.tar.gz    — ELRS master snapshot
-    ExpressLRS-targets-master.tar.gz
-    elrs-4.1.0.lua              — Lua config script (not firmware)
-  src/
-    expresslrs-4.1.0.tar.gz     — ELRS 4.1.0 tagged release source
-    betaflight-2026.6.2.tar.gz  — Betaflight source (22 MB)
-    .gitignore                  — Excludes extracted trees from git
-tools/
-  elrs-uid-rainbow.py           — Binding phrase → UID rainbow table generator
-  elrs-rainbow-table.csv        — Pre-computed table (193 entries)
-  elrs-rainbow-table.json       — Same, JSON
-  elrs-serial-probe.py          — CRSF serial probe for USB-connected ELRS devices
-```
+**The one-sentence state:** the research is complete and honest, but the
+operational attack tools are **not yet a working CTF capability set** — the three
+P1 protocol defects mean the headline tools (ELRS takeover, MAVLink command
+injection, signing replay) would **not work against a correctly-implemented
+target on game day**. The fix is not to patch all eight findings in parallel. It
+is to **pick one attack path and drive it to end-to-end validity**, using the
+validated ELRS core from the companion `elrs-sdr` repo instead of the
+single-version re-implementations in this repo.
 
 ---
 
-## 2. Extracted Source Trees (LOCAL ONLY — not in git)
+## 1. What the orchestrator verified (evidence class: VALIDATED, ran on 2026-10-15)
 
-These exist on the lab machine but are `.gitignore`d. Re-extract at home with:
-```bash
-cd ~/Harness/firmware/src
-tar xzf expresslrs-4.1.0.tar.gz     # → ExpressLRS-4.1.0/
-tar xzf betaflight-2026.6.2.tar.gz  # → betaflight-2026.6.2/
-```
+| Check | Result |
+|---|---|
+| `python3 -B tools/validate-project.py` | PASS (syntax, JSON, 11 firmware hashes + register, rainbow CSV/JSON, CVE index, local links) |
+| `python3 -B -m unittest discover -s tools/tests` | 33 passed |
+| Root `tests/` (pytest) | 90 passed (per `Harness_DIFFERENTIAL_REVIEW_2026-10-15.md` after `3737029`; not re-runnable on the enclave — no pytest, no egress) |
+| All 8 findings in `Harness_DIFFERENTIAL_REVIEW_2026-10-15.md` | **Re-confirmed in code** — see §3 below for the exact locations I re-verified |
 
-### Critical source files for attack research (paths after extraction):
-
-**ELRS binding phrase → UID derivation:**
-```
-firmware/src/ExpressLRS-4.1.0/src/python/build_flags.py:40
-    UID = hashlib.md5('-DMY_BINDING_PHRASE="<phrase>"'.encode()).digest()[0:6]
-```
-
-**ELRS OTA packet format, CRC, nonce:**
-```
-firmware/src/ExpressLRS-4.1.0/src/lib/OTA/OTA.h      — Packet structs, SYNC format
-firmware/src/ExpressLRS-4.1.0/src/lib/OTA/OTA.cpp     — CRC init, validation, channel packing
-```
-
-**FHSS hopping sequence generation:**
-```
-firmware/src/ExpressLRS-4.1.0/src/lib/FHSS/FHSS.h    — Sequence structure, freq calcs
-firmware/src/ExpressLRS-4.1.0/src/lib/FHSS/FHSS.cpp   — Seed → 256-entry hop table
-```
-
-**SX1280 radio driver:**
-```
-firmware/src/ExpressLRS-4.1.0/src/lib/SX1280Driver/SX1280.cpp      — Radio config, TX/RX
-firmware/src/ExpressLRS-4.1.0/src/lib/SX1280Driver/SX1280_Regs.h   — Register map
-firmware/src/ExpressLRS-4.1.0/src/lib/SX1280Driver/SX1280_hal.cpp  — SPI HAL
-```
-
-**Betaflight SPI ELRS RX driver (runs on TinyHawk III's STM32):**
-```
-firmware/src/betaflight-2026.6.2/src/main/rx/expresslrs.c           — ELRS protocol handler
-firmware/src/betaflight-2026.6.2/src/main/rx/expresslrs_common.c    — Shared ELRS code
-firmware/src/betaflight-2026.6.2/src/main/drivers/rx/rx_sx1280.c    — SX1280 SPI driver
-firmware/src/betaflight-2026.6.2/src/main/drivers/rx/rx_sx1280.h
-```
+The differential review is accurate. I did not find additional P1s, and I did
+not find any of the P1s to be false. The review's own caveat stands: it covered
+the focused paths (serial, ELRS analyzer/forger/emulator, MAVLink signing/raw
+command, passive interceptor, dashboard, E8 evidence); the **Wi-Fi/Tello chain
+and the GPS-spoof / BLE-recon tools were not in that focused set** and have not
+yet had an equivalent code-level pass.
 
 ---
 
-## 3. ELRS Security Model (Summary of Key Findings)
+## 2. The decision the owner must make (blocks everything else)
 
-This is the most important research output from the session. Fully documented in `firmware/README.md`.
+**Which attack path will the CTF actually test?** This is the single question
+that determines the entire work sequence. The three paths are at very different
+levels of readiness:
 
-### The Attack Chain
+| Path | What's real | What's broken | Effort to make it game-day-real |
+|---|---|---|---|
+| **ELRS (drone RF takeover)** | Analyzer, forger, TX emulator, UID rainbow (723 phrases), full chain, firmware corpus | P1-2 (hardcoded OTA v4), P2-4/5 (SDR = magnitude-threshold / chirp-prototype), P2-7 (rainbow loader drops all 723 entries) | **HIGH** — needs the real LoRa PHY (demod + encode). This is the same work the `elrs-sdr` repo has been doing. |
+| **MAVLink (GCS / autopilot)** | Fuzzer, injector, recon, signing-replay, command builders, full chain | P1-1 (signing bypass doesn't bypass), P1-3 (COMMAND_LONG wire order wrong), P2-6 (replay viability = clock age) | **MEDIUM** — pure protocol conformance, no RF, no hardware, fixable offline against pymavlink. Fastest path to a working tool. |
+| **Wi-Fi / Tello** | Tello takeover, video capture, Wi-Fi recon script | **Not yet reviewed** — needs its own code-level pass before we can estimate | **UNKNOWN** |
 
-```
-Binding phrase (human-chosen string)
-    ↓ MD5('-DMY_BINDING_PHRASE="<phrase>"')[0:6]
-6-byte UID
-    ↓ UID[2:5] → OtaGetUidSeed()
-FHSS seed (deterministic, 256-entry, 80 channels for 2.4 GHz ISM)
-    ↓ UID[4:5] → OtaUpdateCrcInitFromUid()
-CRC initializer (CRC14 or CRC16)
-    ↓
-Packet validation (CRC only, NO encryption)
-```
-
-### What's exposed over the air
-
-- **SYNC packets broadcast UID[4] and UID[5] in plaintext** (every SYNC, sent periodically)
-- **Sync channel is deterministic:** channel 40 of 80, frequency ~2440 MHz — always the same regardless of UID
-- **Fox-IT (2022) demonstrated:** capture 1 SYNC packet → get 3 of 4 UID bytes → brute-force the 4th (only 128 unique sequences due to RNG weakness) → full link hijack
-
-### What this means for CTF
-
-1. **Passive capture + rainbow table** = instant UID recovery if they used a common binding phrase
-2. **Even without the phrase**, 1 SYNC packet + timing analysis = full hijack (Fox-IT method)
-3. **No UID needed at all** for pure DoS (jam the sync channel or wideband)
-4. **No UID needed** to exploit firmware bugs in the Betaflight SPI ELRS driver (if any exist)
+**Do not start work until the owner names the path.** If the owner does not know
+yet, the owner should gather §4 (the CTF facts) from the competition organizers
+before spending agent-hours.
 
 ---
 
-## 4. Hardware Details Confirmed
+## 3. The P1 defects, re-verified in code (so you don't re-derive them)
 
-### TinyHawk III (drone)
-- **MCU:** STM32F411CEU6 (ARM Cortex-M4, 100 MHz, 512K flash, 128K RAM)
-- **Gyro:** MPU6000 on SPI bus 1
-- **ELRS RX:** SX1280 on SPI bus 3 (CS=PA15, EXTI=PC14, RESET=PA8, BUSY=PA13)
-- **Betaflight target:** `EMAX_TINYHAWKF4SX1280` (unified target on `CRAZYBEEF4SX1280` base)
-- **Key detail:** SPI ELRS — the ELRS stack is compiled INTO Betaflight, not a separate ESP chip. No separate update path for the receiver; you flash the entire FC.
+These are the three that make the headline tools non-functional. Exact locations
+I re-confirmed on 2026-10-15:
 
-### EMAX E8 Controller (TX)
-- **MCU:** ESP32 (main) + likely ESP8285 (WiFi backpack, based on similar EMAX modules)
-- **RF:** SX1280 (2.4 GHz ELRS)
-- **ELRS targets (closest match):** `EMAX_2400_TX` or `EMAX_NANO_2400_TX` — both `Unified_ESP32_2400_TX`
-- **No E8-specific target** in the official ELRS registry
-- **Upload methods:** UART, WiFi (WiFi mode = attack surface)
-- **USB:** Shows as `/dev/ttyACM0` with VID:PID `8888:2001` ("Your Company USB Serial")
-- **Serial status:** Connected but no CRSF response at any baud rate tested (115200, 230400, 400000, 420000, 460800, 500000, 921600). **Likely needs a battery installed and power switch on** — USB probably only charges.
+1. **P1-1 — MAVLink signing "bypass" does not bypass.**
+   `tools/mavlink-signing-replay.py:202` (`rebuild_with_link_id`) and `:230`
+   (`rebuild_with_timestamp`). Both mutate authenticated fields (link_id /
+   timestamp) and **retain the old signature** when no `secret_key` is supplied.
+   Both CLI mutation paths call them keyless. The MAVLink v2 signature covers
+   header + payload + link_id + timestamp — mutating any of those without
+   re-signing produces a packet a correctly-validating receiver rejects. The
+   module docstring's claim of "cross-link replay (change link_id to bypass
+   timestamp tracking)" is **not what the spec allows**. The signing spec's
+   anti-replay is per-stream state, not a 60-second clock window (that is P2-6).
+
+2. **P1-2 — ELRS analyzer hardcodes the OTA version.**
+   `tools/elrs-analyzer.py:39` sets `OTA_VERSION_ID = 4` as a constant and
+   `uid_to_crc_init()` XORs `uid[5] ^ 4`. The version must come **from the
+   packet**, not a module constant. A v3 or v5/v6 target decodes with the wrong
+   CRC init and silently produces garbage. This is the "measure, don't assume"
+   violation the `elrs-sdr` repo's `elrs_sdr/core/ota.py` (v2–v6 parameterized)
+   already solved.
+
+3. **P1-3 — COMMAND_LONG builder has the wrong wire field order.**
+   `tools/exploit_chains/mavlink_chain.py:391` packs
+   `struct.pack("<BBHBfffffff", target_sys, target_comp, command, confirmation, *params)`.
+   MAVLink v2 applies **size-based field reordering** — the seven `float` fields
+   serialize *before* the small `B/B/H/B` fields. The review's in-memory
+   reproduction (command=512 → decodes as command=0, target=0) is correct. The
+   same defect is in `tools/mavlink-signing-replay.py:591`. **The advertised
+   commands do not deliver the command they claim to.** The `pymavlink`-based
+   injector/fuzzer use a different (correct) serialization path and are not
+   implicated.
+
+The five P2s (S/IQ demod is magnitude-threshold, TX emulator is a fixed-SF6
+chirp with a 3-vs-3.125 samples/chip timing error, replay-viability = clock age,
+rainbow-table loader drops all 723 entries on a key-name mismatch, CI omits the
+90-test root suite) are real but secondary — fix them *on the chosen path*, not
+across all paths.
 
 ---
 
-## 5. Tools Installed on Lab Machine
+## 4. INFORMATION TO GATHER — the CTF facts (owner, from the organizers)
 
-### In the repo (portable)
-| Tool | Location | Purpose |
+The "Open Questions" in `AGENTS.md` are the real blocker, not the code. Until
+these are answered we are building in the dark. **The owner should get these
+from the competition organizers / rules packet before we commit to a path:**
+
+| # | Question | Why it matters |
 |---|---|---|
-| `elrs-uid-rainbow.py` | `tools/` | Rainbow table: phrase → UID → FHSS seed → CRC init |
-| `elrs-serial-probe.py` | `tools/` | USB serial CRSF probe for E8 controller |
+| Q1 | **Exact target platform(s):** drone firmware + version, GCS software + version, autopilot (if any) + firmware, radio link (ELRS? which version? which rate? Crossfire? Wi-Fi? MAVLink over what transport?) | Determines which of the three paths is in scope, and whether our firmware corpus (Betaflight 2026.6.2 / ELRS 4.1.0) matches the real target. A version mismatch is a silent no-op. |
+| Q2 | **What is the flag, and where does it live?** (RF-captured telemetry? GCS UI? serial console? a file on the aircraft? a command the aircraft executes?) | Determines the *success criterion* — we build toward "flag captured", not "packet accepted". A packet the receiver accepts is not a flag. |
+| Q3 | **What RF / network interfaces are actually exposed on game day?** (2.4 GHz RC link? 5.8 GHz analog FPV? Wi-Fi? BLE? GPS? a ground-station Ethernet/Wi-Fi network?) | Scopes the attack surface. If the GCS is on a Wi-Fi LAN, the Wi-Fi path may be the real target, not the RF link. |
+| Q4 | **What is allowed / disallowed?** (jamming? GPS spoofing? active injection? deauth? physical proximity limits? rate limits on TX power?) | Some of our tools (GPS spoof, Wi-Fi deauth, ELRS TX) may be rule-excluded. Don't build what you're not allowed to use. |
+| Q5 | **Scoring model:** is commandeering (RCE / command execution) worth more than DoS (denial / disruption)? Is partial credit for "receiver accepted our frame" a thing? | Determines whether we optimize for the full RCE chain or a lighter DoS that's easier to make reliable under time pressure. |
+| Q6 | **Do we get a pre-game recon window?** (can we capture the target's RF / network before the timed round? can we read the binding phrase / UID from a pre-game observation?) | If yes, the "air-recovery of UID" problem (the hard part of ELRS identify) may be solvable offline before game day, which de-risks the ELRS path substantially. |
+| Q7 | **Physical layout + proximity:** how close can we get to the target? Line-of-sight? What's our position relative to the drone and the GCS? | Affects RF feasibility (a B205 at 50 m is a different problem than at 5 m) and whether a close-range / short-range attack is viable. |
+| Q8 | **Hardware we get to use on game day** vs. hardware we only have in the lab. (Can we bring the B210? The ALFA cards? A rogue GCS? A second TX?) | The lab list in `AGENTS.md` is what we *have*, not necessarily what we can *bring*. |
+| Q9 | **Is the target's binding phrase / UID known or recoverable before the round?** (Did the organizers publish it? Is the drone freshly bound? Can we observe the bind?) | The ELRS attack chain's first step is UID recovery. If the phrase is published or the bind is observable, the whole chain gets easier. If not, we need the air-recovery path, which is the hardest open problem in the `elrs-sdr` repo. |
 
-### System-level (lab machine only — reinstall at home)
-| Tool | Location | Install Command |
+**Until Q1–Q5 are answered, do not write attack code.** Gather these facts, then
+re-convene to pick the path.
+
+---
+
+## 5. IF ALL THE INFORMATION IS THERE — the steps (the execution plan)
+
+Assume Q1–Q9 are answered and a path is chosen. The sequence, with owners:
+
+### Phase A — Path commitment (owner + andeds, 1 session)
+1. Owner answers Q1–Q9 (above).
+2. We pick **one** primary path. Record it here and in `AGENTS.md` "Current
+   State". The other two paths are parked, not deleted — they stay as
+   research, not as parallel workstreams.
+3. andeds confirms the chosen path's target version matches our firmware corpus
+   (Betaflight / ELRS / GCS versions). If it doesn't, the corpus needs a
+   refresh before any tool work.
+
+### Phase B — Protocol conformance (Codex implements, Claude QCs, 1–2 weeks)
+4. **Fix the P1s on the chosen path against the reference implementation.**
+   - MAVLink path → against `pymavlink` (the generated serializers are the
+     reference; the hand-rolled `struct.pack` builders are the defect).
+   - ELRS path → against the pinned `firmware/src/expresslrs-4.1.0` source
+     **and** the `elrs-sdr` repo's `elrs_sdr/core/` (the validated,
+     version-parameterized CRC/FHSS/OTA/LoRa). The poc-research tools should
+     **consume `elrs_sdr/core` as a library**, not re-implement the protocol
+     layer. This one structural move eliminates P1-2 and most of the ELRS P2s.
+5. **Add the missing regression tests.** The review noted "no direct tests of
+   these raw builders" for each P1. Every fixed builder gets a test that
+   round-trips against the reference (encode with our tool, decode with
+   pymavlink / the pinned ELRS struct, assert equality).
+6. **Close P2-8:** add the 90-test root suite to `.github/workflows/validate.yml`
+   so a green CI badge actually covers the protocol tests.
+7. **Fix P2-7** (rainbow-table schema mismatch) if the ELRS path is in scope —
+   the loader reads `uid_3_5` but the JSON has `uid_hex`/`uid_bytes`/
+   `sync_bytes`; it silently indexes zero of the 723 entries.
+
+### Phase C — RF / hardware validation (laptop + SDR, 2–4 weeks, ELRS path only)
+8. Wire the TX/forge side to a **real LoRa PHY** — either the `elrs-sdr`
+   validated demod/encode or a build from the pinned ELRS 4.1.0 source. The
+   current `elrs-tx-emulator.py` SoapySDR backend is a fixed-SF6 chirp
+   prototype with a timing error; it is not SX1280-compatible and must not be
+   treated as a working transmitter.
+9. **Bench-test against the owned TinyHawk + E8** (read-only first, per the
+   no-flash constraint in `AGENTS.md`). Confirm: our forged frame is accepted by
+   the owned receiver, the command executes, the positive-command (throttle=1000)
+   case works.
+10. **End-to-end:** forge → transmit → receiver accepts → command executes →
+    (if Q2 says so) flag captured. Document the exact command sequence and its
+    output.
+
+### Phase D — Game-day prep
+11. Update `docs/game_day_playbook.md` with the **actual working tool**, its
+    exact invocation, its limitations, and the failure modes. The current
+    playbook describes tools that don't yet work — it must be re-grounded in
+    Phase C output.
+12. **Dry-run the full chain in the home lab** under the time limit the CTF
+    will impose. Record where it breaks under pressure.
+13. **Document what does not work** (honesty contract). A playbook that claims
+    a capability the tool doesn't have is worse than no playbook — it wastes
+    game-day minutes.
+
+---
+
+## 6. Division of labor (who does what)
+
+| Agent | Machine | Owns |
 |---|---|---|
-| **Ghidra 12.1.4** | `/opt/ghidra/` | Already installed, symlinked to `ghidra` and `analyzeHeadless` |
-| **OpenJDK 21** | system | `sudo apt install openjdk-21-jdk` |
-| **pyserial 3.5** | pip | `pip3 install pyserial` |
-| **objcopy** | system (binutils) | `sudo apt install binutils` |
-| **REA** | MCP server | `npx rea-agents@latest setup` (run manually, needs approval) |
+| **andeds** (orchestrator) | enclave (no SDR, no egress, no internet) | This notes file, code review, offline analysis of uploaded captures, the `elrs-sdr` companion repo, integration decisions, the "pick one path" gate |
+| **Codex** | laptop `borealis` (SDR, E8, internet) | Primary implementation — Phase B protocol conformance, Phase C RF work |
+| **Claude** | laptop `borealis` | Adversarial QC + research — verify Codex's fixes in the actual code (not just the notes), independent test fixtures, CVE/evidence audit |
 
-### At home you'll need to:
-```bash
-# 1. Clone the repo
-git clone git@github-personal:oatmealphysics/research-project.git Harness
+**Standing rules (unchanged):** every commit includes the notes entry in the
+same commit (code + notes together); verify the other agent's claimed fixes in
+the code, not the notes; label every finding with its evidence class
+(VALIDATED / SELF-CONSISTENT / SYNTHETIC); one branch (`main`); no force-push;
+the E8 no-flash constraint is absolute.
 
-# 2. Extract source trees
-cd Harness/firmware/src
-tar xzf expresslrs-4.1.0.tar.gz
-tar xzf betaflight-2026.6.2.tar.gz
-
-# 3. Install Ghidra (download from ghidra-sre.org, needs JDK 21+)
-sudo apt install openjdk-21-jdk
-# unzip ghidra, move to /opt/ghidra, symlink ghidraRun
-
-# 4. Install Python deps
-pip3 install pyserial
-
-# 5. Install REA (for Claude Code firmware analysis)
-npx rea-agents@latest setup
-```
+**The `elrs-sdr` integration:** the companion repo (`gitlab01.an.dd:
+andeds-agent/elrs-sdr-transfer`) is the validated ELRS decode/identify stack.
+The poc-research repo should **import from it**, not duplicate it. andeds owns
+keeping the two consistent. Codex + Claude should not fork `elrs_sdr/core`
+into this repo — that's how the single-version re-implementations (the source
+of P1-2) happened in the first place.
 
 ---
 
-## 6. Ghidra Quick-Start for Firmware Analysis
+## 7. What is explicitly NOT to be done
 
-### Loading the TinyHawk III firmware
-1. Launch: `ghidra`
-2. File → New Project → Non-Shared → pick a directory, name it `DroneResearch`
-3. File → Import File → select `firmware/betaflight/betaflight_CRAZYBEEF4SX1280.bin`
-4. Language: **ARM:LE:32:Cortex** (ARM Cortex little-endian)
-5. Options → Base Address: **0x08000000** (STM32 flash start)
-6. Click OK, then double-click the file to open CodeBrowser
-7. When prompted to analyze, click Yes with defaults
-
-### What to look for
-- **ELRS packet handler:** Search for the CRC polynomial constants `0x2E57` (CRC14) or `0x3D65` (CRC16) — these locate the ELRS OTA validation code
-- **SX1280 SPI driver:** Search for SX1280 register values from `SX1280_Regs.h` (e.g., `0x0944` for `REG_LR_SYNCWORDBASEADDRESS1`)
-- **Buffer handling in RX path:** Look at how received packet buffers are sized and bounded — potential overflow targets
-- **Failsafe behavior:** Find what happens when the link is lost — this tells you what DoS achieves (land? hover? RTH?)
-
-### Using REA instead (if installed)
-REA can analyze the binary through Claude Code without launching the Ghidra GUI:
-```
-# In Claude Code, the skill "reverse-engineer-anything" is available
-# It can open the .bin, decompile functions, search strings, etc.
-```
+- **Do not fix all eight findings in parallel across all three paths.** That
+  produces three half-working tools, not one working tool.
+- **Do not build attack code before Q1–Q5 are answered.** We are building in
+  the dark until the target is known.
+- **Do not treat the `elrs-tx-emulator.py` or the passive-interceptor SDR path
+  as operational.** They are prototypes. Label them as such in the CLI output,
+  not just in a source comment (P2-4/P2-5).
+- **Do not flash the E8.** Absolute. No exceptions, no "just to test".
+- **Do not commit secrets.** The binding UID is a pairing secret, not a
+  constant in code/fixtures/logs. (The AGENTS.md "GitHub PAT leak" note is the
+  reminder.)
+- **Do not force-push or rewrite history.**
 
 ---
 
-## 7. Serial Testing of the E8 (INCOMPLETE — Next Step)
-
-### What we tried
-- Connected E8 via USB → shows as `/dev/ttyACM0` (VID `8888`, PID `2001`)
-- Probed at 8 different baud rates (9600 through 921600)
-- Sent CRSF pings (type `0x28` broadcast and targeted)
-- No response at any baud rate, no passive data captured
-
-### Why it didn't respond
-The E8 almost certainly needs a **battery installed and the power switch turned on**. USB provides charging only, not system power to the ESP32. The USB CDC serial interface is registered by the ESP32's USB stack, which enumerates even in low-power/charging mode, but the ELRS application firmware isn't running.
-
-### Next steps for serial testing
-1. **Install an 18650 battery** and turn on the E8
-2. Re-run the probe: `python3 tools/elrs-serial-probe.py --dump-params`
-3. Expected results:
-   - Device info response with firmware version, hardware ID
-   - Parameter entries including: binding phrase status, TX power, packet rate, WiFi settings
-   - Possibly the UID bytes (check if they're exposed via CRSF parameters)
-4. **WiFi attack surface test:** Use the probe to read the auto-WiFi-on interval, then trigger WiFi mode and scan for the AP
-
-### What to test once it's powered
-```bash
-# Basic probe with parameter dump
-python3 tools/elrs-serial-probe.py --dump-params
-
-# Listen-only mode to see what the E8 sends unprompted
-python3 tools/elrs-serial-probe.py --listen-only --timeout 10
-
-# If WiFi mode activates, scan for the AP:
-sudo iwlist wlan0 scan | grep -A5 "ExpressLRS\|elrs\|EMAX"
-```
-
----
-
-## 8. Attack Paths to Explore Next
-
-### A. UID-based attacks (need binding phrase or passive capture)
-1. **Rainbow table lookup** — `tools/elrs-uid-rainbow.py --lookup XX:YY:ZZ` after capturing SYNC bytes
-2. **Fox-IT method** — capture 1 SYNC, brute-force the 4th UID byte (128 candidates), match via timing
-3. **Full link hijack** — with known UID, craft valid packets and follow the FHSS sequence
-
-### B. Chipset-level attacks (NO UID needed)
-1. **SX1280 wideband jamming** — Ettus B210 transmits across 2400-2480 MHz, breaks link, drone failsafes
-2. **Sync channel targeted DoS** — jam only channel 40 (~2440 MHz) to prevent re-sync after link loss
-3. **Betaflight SPI ELRS driver bugs** — audit `expresslrs.c` for buffer overflows in packet parsing; a malformed OTA packet could crash the FC
-4. **ESP32 WiFi backdoor on E8** — when WiFi mode activates, connect to the AP, push malicious config or firmware
-
-### C. Scripts from the research plan still to build
-```
-tools/recon-wifi-drone.sh       — Automated WiFi drone scanner
-tools/wifi-dos.py               — Targeted deauth with BSSID detection
-tools/tello-takeover.py         — Tello WiFi SDK command injection
-tools/mavlink-injector.py       — MAVLink packet injection
-tools/px4-shell.py              — PX4 shell exploit (CVE-2026-1579)
-tools/sik-analyzer.py           — SiK radio analysis
-tools/elrs-analyzer.py          — ELRS passive analysis and SYNC capture
-tools/dji-ble-attack.py         — DJI BLE command injection
-tools/esp32-ble-fuzz.py         — ESP32 BLE fuzzer
-tools/gps-spoof.sh              — GPS spoofing via Ettus
-tools/identify-target.sh        — Rapid target identification flowchart
-```
-
----
-
-## 9. Key Reference Documents in the Repo
-
-| Document | Lines | What's in it |
-|---|---|---|
-| `drone-wireless-vuln-reference.md` | ~1555 | 60+ CVEs, chipset exploitation techniques, protocol attacks, toolchain reference |
-| `attack-research-plan.md` | ~506 | 7-phase plan with exercises, scripts to build, open questions |
-| `firmware/README.md` | ~150 | Hardware mapping, ELRS attack chain documentation, SHA-256 checksums |
-| `AGENTS.md` | ~150 | Multi-agent coordination rules, coding guidelines |
-
----
-
-## 10. Things That Only Exist on the Lab Machine
-
-| Item | Location | How to recreate |
-|---|---|---|
-| Extracted ELRS source | `firmware/src/ExpressLRS-4.1.0/` | `tar xzf expresslrs-4.1.0.tar.gz` |
-| Extracted Betaflight source | `firmware/src/betaflight-2026.6.2/` | `tar xzf betaflight-2026.6.2.tar.gz` |
-| Ghidra 12.1.4 | `/opt/ghidra/` | Download from ghidra-sre.org + JDK 21 |
-| REA MCP server | npm/npx | `npx rea-agents@latest setup` |
-| Ghidra zip | `~/Downloads/ghidra_12.1.4_PUBLIC_20260921.zip` | Download fresh if needed |
-| SSH key | `~/.ssh/Wireless_CTF_Research.ed25519` | Must exist on home machine too |
-| Claude Code memory | `~/.claude/projects/-home-borealis-Harness/memory/` | Auto-managed by Claude Code |
-
----
-
-## 11. SSH / Git Setup Reminder
-
-The repo uses a custom SSH alias. Your `~/.ssh/config` must have:
-```
-Host github-personal
-    HostName github.com
-    User git
-    IdentityFile ~/.ssh/Wireless_CTF_Research.ed25519
-```
-
-And the repo-level git config:
-```bash
-cd Harness
-git config user.name "oatmealphysics"
-git config user.email "dboardman13@proton.me"
-```
-
-The remote URL is: `git@github-personal:oatmealphysics/research-project.git`
-
----
-
-## 12. Immediate Next Session Priorities
-
-1. **Power on the E8** (battery + switch) and re-run `elrs-serial-probe.py --dump-params` — extract device info, firmware version, and any exposed UID/binding data
-2. **Ghidra analysis** of `betaflight_CRAZYBEEF4SX1280.bin` — find the ELRS packet handler, audit for buffer overflows, map the failsafe logic
-3. **Build `elrs-analyzer.py`** — passive SX1280 SYNC capture using the Ettus B210, extract UID[3:5], feed into rainbow table
-4. **Test WiFi attack on E8** — trigger WiFi mode, connect to the AP, enumerate what's accessible
-5. **Start building the game-day scripts** from the plan (start with `identify-target.sh` for rapid protocol fingerprinting)
+*— andeds, orchestrator, 2026-10-15. This section is the current way ahead.
+When the owner answers §4, we update §2 (path commitment) and §5 (the active
+phase) in place.*
