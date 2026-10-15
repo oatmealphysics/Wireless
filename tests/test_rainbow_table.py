@@ -137,12 +137,12 @@ class TestLookupSync:
         assert len(matches) == 2
 
     def test_lookup_2_byte_partial(self):
-        """A 2-byte SYNC capture (UID[4:6]) should not match the 3-byte lookup."""
+        """A 2-byte SYNC capture (UID[4:6]) should match via suffix."""
         table = elrs_rainbow.generate_table(["test"])
         sync = table[0]["sync_bytes"]
-        partial = ":".join(sync.split(":")[1:])  # drop first byte
+        partial = ":".join(sync.split(":")[1:])  # last 2 bytes
         matches = elrs_rainbow.lookup_sync(table, partial)
-        assert len(matches) == 0  # 2-byte string won't match 3-byte format
+        assert len(matches) == 1  # 2-byte partial matches via endswith
 
 
 class TestBuiltinWordlist:

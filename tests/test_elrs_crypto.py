@@ -72,7 +72,7 @@ class TestUIDToFHSSSeed:
 
     def test_zero_uid(self):
         uid = bytes([0, 0, 0, 0, 0, 0])
-        assert elrs_rainbow.uid_to_fhss_seed(uid) == (0 ^ elrs_rainbow.OTA_VERSION_ID)
+        assert elrs_rainbow.uid_to_fhss_seed(uid) == (0 ^ elrs_rainbow.DEFAULT_OTA_VERSION)
 
     def test_all_ff(self):
         uid = bytes([0xFF] * 6)

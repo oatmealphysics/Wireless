@@ -89,7 +89,7 @@ class TestBuildPing:
         ping = serial_probe.build_ping()
         parsed = serial_probe.parse_frame(ping)
         assert parsed["payload"][0] == 0x00  # broadcast dest
-        assert parsed["payload"][1] == 0xEC  # radio transmitter origin
+        assert parsed["payload"][1] == 0xEA  # radio transmitter origin
 
 
 class TestBuildDeviceInfoRequest:
@@ -104,7 +104,7 @@ class TestBuildDeviceInfoRequest:
         req = serial_probe.build_device_info_request()
         parsed = serial_probe.parse_frame(req)
         assert parsed["payload"][0] == 0xEE  # CRSF transmitter
-        assert parsed["payload"][1] == 0xEC  # radio transmitter
+        assert parsed["payload"][1] == 0xEA  # radio transmitter
 
 
 class TestBuildParamRead:
@@ -113,7 +113,7 @@ class TestBuildParamRead:
         parsed = serial_probe.parse_frame(req)
         assert parsed is not None
         assert parsed["crc_ok"] is True
-        assert parsed["type"] == 0x2B  # PARAMETER_READ
+        assert parsed["type"] == 0x2C  # PARAMETER_READ
 
     def test_param_index_in_payload(self):
         for idx in [1, 5, 20]:
@@ -129,11 +129,11 @@ class TestBuildParamRead:
 
 class TestParseFrame:
     def test_valid_frame(self):
-        frame = serial_probe.build_crsf_frame(0x0E, bytes([0x01, 0x02, 0x03]))
+        frame = serial_probe.build_crsf_frame(0x14, bytes([0x01, 0x02, 0x03]))
         parsed = serial_probe.parse_frame(frame)
         assert parsed is not None
         assert parsed["sync"] == serial_probe.CRSF_SYNC_RX
-        assert parsed["type"] == 0x0E
+        assert parsed["type"] == 0x14
         assert parsed["type_name"] == "LINK_STATISTICS"
         assert parsed["crc_ok"] is True
 
@@ -195,7 +195,7 @@ class TestExtractDeviceInfo:
     def test_dest_and_origin(self):
         payload = self._build_device_info_payload()
         info = serial_probe.extract_device_info(payload)
-        assert info["dest"] == "RADIO_TRANSMITTER"
+        assert info["dest"] == "CRSF_RECEIVER"
         assert info["origin"] == "CRSF_TRANSMITTER"
 
     def test_serial_number(self):
@@ -213,9 +213,10 @@ class TestExtractDeviceInfo:
         assert info == {}
 
     def test_three_byte_payload(self):
+        # New implementation requires full device info (name + 14 bytes of rest)
+        # A 3-byte payload returns empty dict
         info = serial_probe.extract_device_info(b"\xEC\xEE\x00")
-        assert info["dest"] == "RADIO_TRANSMITTER"
-        assert info["origin"] == "CRSF_TRANSMITTER"
+        assert info == {}
 
     def test_no_null_terminator_for_name(self):
         # If no null terminator, name won't be found
@@ -229,18 +230,17 @@ class TestExtractDeviceInfo:
         assert info["name"] == "ExpressLRS TX Module v4.1.0"
 
     def test_minimal_rest_data(self):
-        # Payload with name but insufficient rest data
+        # New implementation requires name_end + 15 bytes total
+        # Payload with name but insufficient rest data returns empty dict
         payload = bytes([0xEC, 0xEE]) + b"Dev\x00" + bytes(8)
         info = serial_probe.extract_device_info(payload)
-        assert info["name"] == "Dev"
-        # 8 bytes of rest → serial_no + hw_ver but not sw_ver (needs 12)
-        assert "serial_no" not in info
+        assert info == {}
 
 
 class TestCRSFConstants:
     def test_sync_bytes_defined(self):
         assert serial_probe.CRSF_SYNC_TX == 0xC8
-        assert serial_probe.CRSF_SYNC_RX == 0xEC
+        assert serial_probe.CRSF_SYNC_RX == 0xC8
         assert serial_probe.CRSF_SYNC_MODULE == 0xEE
 
     def test_common_frame_types_present(self):
@@ -250,6 +250,6 @@ class TestCRSFConstants:
         assert 0x16 in serial_probe.CRSF_TYPES  # RC_CHANNELS_PACKED
 
     def test_address_map_has_key_entries(self):
-        assert 0xEC in serial_probe.CRSF_ADDR  # RADIO_TRANSMITTER
+        assert 0xEC in serial_probe.CRSF_ADDR  # CRSF_RECEIVER
         assert 0xEE in serial_probe.CRSF_ADDR  # CRSF_TRANSMITTER
         assert 0x00 in serial_probe.CRSF_ADDR  # BROADCAST
