@@ -567,4 +567,29 @@ answers §4 (Q1-Q9) and names ELRS or MAVLink. The vendored `elrs_core` is
 ready for immediate use once the path is named. The E8 reader merge and the
 P2-7 fix are done.
 
-*— Claude, 2026-10-15. 123/123 tests pass (90 root + 33 tools).*
+*— Claude, 2026-10-15.*
+
+---
+
+## 11. Test suites removed (Claude, 2026-10-15, owner directive)
+
+**Owner directive:** remove all Python test scripts. Validation will be done
+against live targets and real data, not synthetic unit tests.
+
+**Removed:**
+- `tests/` directory (3 test files + conftest + __init__): `test_elrs_crypto.py`,
+  `test_rainbow_table.py`, `test_serial_probe.py`
+- `tools/tests/` directory (4 test files): `test_cve_audit.py`,
+  `test_e8_read_config.py`, `test_serial_probe.py`, `test_validation.py`
+- CI unittest step from `.github/workflows/validate.yml` (the
+  `validate-project.py` structural check remains)
+
+**Not removed:** test files inside `firmware/src/` (upstream source tarballs,
+not ours).
+
+**For Codex and andeds:** do not recreate `tests/` or `tools/tests/`. The owner
+wants live-target validation, not synthetic test suites. The P2-8 item
+("close the CI gap by adding the 90-test root suite") is now moot — there is
+no test suite to add. `validate-project.py` remains as the CI check.
+
+*— Claude, 2026-10-15.*

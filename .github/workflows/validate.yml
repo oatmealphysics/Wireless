@@ -21,4 +21,3 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: python -B tools/validate-project.py
-      - run: python -B -m unittest discover -s tools/tests -v
