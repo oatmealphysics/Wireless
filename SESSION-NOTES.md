@@ -880,3 +880,128 @@ This is the durable "guiding light" for the PoC phase — Codex + Claude execute
 against it; andeds holds the gates.
 
 — andeds, orchestrator, 2026-10-15.
+
+---
+
+## 15. Way forward after Claude's live-reading + corpus expansion (andeds, 2026-10-15)
+
+Claude read the live TinyHawk over serial (read-only, 2026-10-15) and pulled
+in the ArduPilot 4.7.2 + Tello SDK corpora. This is a material update to the
+plan. The live reading resolved several open questions and changed the
+assumptions in several places.
+
+### What changed (and what it means)
+
+1. **The live firmware is Betaflight 4.4.2, not 2026.6.2.** The corpus
+   `CRAZYBEEF4SX1280` binary (2026.6.2) remains a *related sample* — it is
+   NOT the image installed on the lab TinyHawk. All W3–W6 analysis was done on
+   2026.6.2 source + binary. The 4.4.2 source diff (Claude,
+   `research/TINYHAWK-III-LIVE-CONFIG-2026-10-15.md`) confirms the same ELRS
+   protocol shape (v3, LoRa-only), but the **MSP handler and buffer sizes must
+   be re-verified against 4.4.2 source** before the W5 vuln candidates are
+   treated as applicable to the live target.
+
+2. **LoRa only, no FLRC on 4.4.2.** The source diff confirms
+   `expresslrs_common.h` in 4.4.2 has no `RATE_FLRC_*` / `RATE_FSK_*` — only
+   LoRa rates. **This removes the dominant PHY risk** (the LoRa-vs-FLRC
+   question that was the Phase 2 blocker). The `elrs_core.lora` path is the
+   one to validate; `gfsk` is not needed for this firmware.
+
+3. **`model_id = 255` (0xFF) → `modelXor = 0x00`.** Model-match is
+   effectively always satisfied. **One less precondition** — the MODEL-MATCH
+   step is a no-op for this configuration.
+
+4. **`feature -TELEMETRY` (disabled at runtime).** The live config has
+   telemetry disabled. The compile-time target config has
+   `USE_RX_EXPRESSLRS_TELEMETRY` ON, but the *runtime* feature flag is OFF.
+   **This is a real risk for the MSP-injection candidate**: if the MSP-over-air
+   path is gated on the runtime `TELEMETRY` feature (not just the compile-time
+   define), `processRFMspPacket` may not be reachable in this live config.
+   **This must be resolved before the MSP-injection candidate is treated as
+   viable.** The RC-data injection path is the fallback if MSP-over-air is
+   gated off.
+
+5. **ArduPilot 4.7.2 corpus is now in the repo.** CubeOrange + Pixhawk1 ELF
+   + SITL x86_64 + source. **The MAVLink path is no longer blocked at W1.**
+   The SITL binary runs on x86_64 Linux — the MAVLink PoC can be validated
+   against a real ArduPilot process *without* hardware (W8 offline via SITL).
+
+6. **Tello SDK is in the repo.** `djitellopy` + UDP/54399 JSON protocol.
+   **The Wi-Fi path is no longer blocked at W1.** The Tello control protocol
+   is documented and testable.
+
+### The revised plan (in order)
+
+**Immediate (no hardware):**
+
+1. **Re-verify W5 against 4.4.2 source (Codex).** Diff the ELRS RX driver
+   (`expresslrs.c`, `expresslrs_common.c`) between 4.4.2 and 2026.6.2.
+   Specifically: (a) is the MSP handler unchanged? (b) are the buffer sizes
+   unchanged? (c) is the `USE_MSP_OVER_TELEMETRY` gate the same? **This
+   determines whether the MSP-injection candidate is viable on the live
+   target.** If the MSP path is gated off at runtime, RC-data injection
+   becomes the primary candidate.
+
+2. **Parameterize `elrs_core` for OTA v3 (Codex).** The vendored library
+   defaults to v4; the 4.4.2 target is definitively v3. Make the
+   forger/analyzer/chain explicitly use v3. This is the P1-2 fix, now with
+   the version *confirmed*.
+
+3. **Fix P1-3 MAVLink wire order + validate against SITL (Codex).** Fix the
+   `COMMAND_LONG` pack order, then validate against a running ArduPilot SITL
+   x86_64 process (`arducopter_SITL_x86_64_4.7.2` in the corpus). W8 offline
+   for MAVLink — no hardware, SITL is the oracle.
+
+4. **Step 1: rewire forger/analyzer/elrs_chain → `elrs_core` (Codex).** Now
+   with the version confirmed as v3.
+
+**After the above (bench, owner's gear):**
+
+5. **W8 offline for ELRS (owner + Codex).** Capture the live TinyHawk's RF on
+   the B205. Cross-check the forger's bytes. Version (v3), PHY (LoRa), and
+   model-match (always satisfied) are now known. The only unknown is the UID
+   (air-recovery via `fhss_seed.py` or the bind-mode UID).
+
+6. **W9 live for ELRS (owner + Codex).** Forge → LoRa-modulate → TX on the
+   B205 → confirm the TinyHawk accepts. The `feature -TELEMETRY` question is
+   resolved by the live test: if the MSP path works, MSP-injection is
+   validated; if not, RC-data is the fallback.
+
+7. **W7/W8 for MAVLink (Codex, no hardware).** Run SITL, inject the forged
+   MAVLink commands, confirm they execute. Fully offline.
+
+8. **W7 for Wi-Fi/Tello (Codex).** Review the Tello SDK, build the
+   deauth/PMKID/rogue-AP toolchain. The JSON protocol is documented.
+
+### The revised critical path
+
+- **ELRS (TinyHawk):** W7 (rewire to `elrs_core`, v3, LoRa) → W8 (capture
+  cross-check) → W9 (live bench). The MSP-injection vs. RC-data question is
+  resolved by step 1 (the 4.4.2 source diff) and confirmed by step 6.
+- **MAVLink (ArduPilot):** W7 (fix P1-3, validate against SITL) → W8 (SITL
+  is the oracle, no hardware). **Now the fastest path to a validated PoC.**
+- **Wi-Fi (Tello):** W7 (review the SDK, build the Wi-Fi toolchain) → W9
+  (live, needs a Tello or equivalent).
+
+**The single most valuable next action is step 1 (the 4.4.2 source diff for
+the MSP path), because it determines whether the primary ELRS candidate is
+viable on the live target or whether we fall back to RC-data.** Everything
+else flows from that answer.
+
+### What I need from the owner
+
+The W0 questions (§4) are still the ultimate gate, but the live reading has
+reduced them. The most important remaining W0 facts:
+
+- **ELRS:** Is the live TinyHawk's `TELEMETRY` feature the gate for the
+  MSP-over-air path? The 4.4.2 source diff (step 1) answers this without
+  hardware.
+- **MAVLink:** Is the CTF target an ArduPilot-based autopilot? If yes, the
+  SITL validation path is ready.
+- **Wi-Fi:** Is the CTF target a Tello (or equivalent)? If yes, the SDK is in
+  the corpus.
+
+— andeds, orchestrator, 2026-10-15. §15 is the way forward after Claude's
+live reading + corpus expansion. The version (4.4.2) and PHY (LoRa) are now
+confirmed; the MSP-path viability is the single most important next question
+(step 1: the 4.4.2 source diff).

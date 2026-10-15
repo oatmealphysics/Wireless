@@ -81,8 +81,11 @@ W10 GAME-DAY   [last]  Re-ground the playbook in W9. Dry-run under time. Failure
 
 | Firmware | HAVE / NEED | Version / target | W-state | Notes |
 |---|---|---|---|---|
-| **AruPilot / PX4 / Betaflight-MAVLink firmware** | **NEED** | (owner confirms which) | W1 (acquire) — NOT STARTED | We have the MAVLink *protocol* (pymavlink, spec) but **no target firmware** yet. The PoC tools (fuzzer/injector) exist but carry P1-1 (signing bypass fake) + P1-3 (COMMAND_LONG wire order wrong). |
-| **The CTF GCS / companion computer image** | **NEED** | (CTF-dependent) | W1 (acquire) | If the CTF exposes a GCS over network/RF, pull its image + confirm the signing key exposure (the P1-1 path depends on a leaked/absent key). |
+| **ArduPilot 4.7.2 (CubeOrange ELF)** | **HAVE** | 4.7.2 / CubeOrange | W1 done (acquire) | In the corpus. ELF binary, ARM. |
+| **ArduPilot 4.7.2 (Pixhawk1 ELF)** | **HAVE** | 4.7.2 / Pixhawk1 | W1 done (acquire) | In the corpus. ELF binary, ARM. |
+| **ArduPilot 4.7.2 (SITL x86_64)** | **HAVE** | 4.7.2 / SITL | W1 done (acquire) | **Runs on x86_64 Linux** — the W8 oracle for MAVLink, no hardware needed. |
+| **ArduPilot 4.7.2 source** | **HAVE** | 4.7.2 | W7 (reference) | The pinned reference for the MAVLink handler. |
+| **The CTF GCS / companion computer image** | **NEED** | (CTF-dependent) | W1 (acquire) | If the CTF exposes a GCS over network/RF, pull its image + confirm the signing key exposure. |
 | MAVLink v2 **spec** (pymavlink) | **HAVE** (reference) | v2 | W7 (reference) | The pinned reference the injector must be built against. |
 
 **Chain to run (MAVLink) — the fastest-to-working path if it's the CTF target:**
@@ -129,8 +132,8 @@ W10 GAME-DAY   [last]  Playbook + dry-run.
 
 | Firmware | HAVE / NEED | Version / target | W-state | Notes |
 |---|---|---|---|---|
-| **Ryze Tello (or CTF Wi-Fi drone) firmware** | **NEED** | (CTF-dependent) | W1 (acquire) — NOT STARTED | No Tello firmware in the corpus. The attack is at the **Wi-Fi layer** (deauth / PMKID / rogue-AP), so the "firmware" here is mostly the **Wi-Fi config + the control protocol** (Tello uses a UDP/TCP JSON protocol on the AP). |
-| **The Tello control-protocol spec** | PARTIAL (known) | — | W4 (surface) | The UDP/54399 command protocol is documented. The PoC scripts exist but are unreviewed. |
+| **Tello DJI SDK (djitellopy + UDP/54399 protocol)** | **HAVE** | master snapshot | W1 done (acquire) | The Tello control protocol (UDP/TCP JSON) is documented + testable. `tello_test.py` included. |
+| **The CTF Wi-Fi drone firmware** | **NEED** | (CTF-dependent) | W1 (acquire) | If the CTF target is a *different* Wi-Fi drone (not a Tello), pull its firmware. If it IS a Tello, the SDK is the corpus. |
 
 **Chain to run (Wi-Fi) — the "is it even a firmware problem" path:**
 
@@ -265,27 +268,44 @@ One table: every firmware, have/need, wicket state, the single next action.
 
 | # | Firmware / platform | HAVE / NEED | W-state (furthest done) | The single next action | Owner / tool |
 |---|---|---|---|---|---|
-| 1 | TinyHawk / Crazybee F4SX1280 (ELRS/BF) | **HAVE** | W6 done, **W7 in progress** | **Rewire forger/analyzer/chain → `elrs_core`** (Step 1) | Codex |
-| 2 | STM32F411 generic BF build | **HAVE** | W1 (acquire only) | Individually analyze (same source as #1, different config) — low priority | Codex |
-| 3 | The exact game-day TinyHawk image | **NEED** | W1 (close the gap) | If the CTF target is this drone: pull the exact image (laptop → Configurator → gitlab01) | Owner (laptop) |
-| 4 | ELRS 4.1.0 source (reference) | **HAVE** | W7 (reference) | — (done, it's the reference) | — |
+| 1 | TinyHawk / Crazybee F4SX1280 (ELRS/BF 2026.6.2, related sample) | **HAVE** | W6 done, **W7 in progress** | Rewire forger/analyzer/chain → `elrs_core`, **v3** (Step 1) | Codex |
+| 1b | TinyHawk III live firmware (ELRS/BF **4.4.2**, the actual target) | **HAVE** | W1 done (acquire, 4.4.2 bin+src), W2–W6 need re-verification | **Diff the 4.4.2 ELRS RX driver vs 2026.6.2** (MSP handler, buffer sizes, TELEMETRY gate) | Codex |
+| 2 | STM32F411 generic BF build (2026.6.2) | **HAVE** | W1 (acquire only) | Individually analyze — low priority | Codex |
+| 3 | The exact game-day TinyHawk image | **NEED** | W1 (close the gap) | If the CTF target is this drone: pull the exact image | Owner (laptop) |
+| 4 | ELRS 4.1.0 source (reference) | **HAVE** | W7 (reference) | — (done) | — |
 | 5 | ExpressLRS master source (reference) | **HAVE** | W7 (reference) | — (done) | — |
-| 6 | MAVLink autopilot / GCS firmware | **NEED** | W5 done (vulns), **W1 (acquire) = blocker** | **Pull the exact autopilot + GCS image** (laptop → gitlab01) | Owner (laptop) |
+| 6 | **ArduPilot 4.7.2 (CubeOrange + Pixhawk1 ELF + SITL x86_64)** | **HAVE** | W1 done (acquire), W4–W5 done (vulns P1-1/P1-3) | **Fix P1-3 + validate against SITL x86_64** (W8 offline, no HW) | Codex |
 | 7 | MAVLink v2 spec (pymavlink, reference) | **HAVE** | W7 (reference) | — (done) | — |
-| 8 | Wi-Fi drone (Tello) firmware | **NEED** | W4 done (surface), **W1 (acquire) = blocker** | Confirm at W0: is the attack firmware-RE or pure Wi-Fi-layer? If RE: pull the firmware | Owner (laptop) |
+| 7b | The CTF GCS / companion image | **NEED** | W1 (acquire) | If the CTF exposes a GCS: pull its image | Owner (laptop) |
+| 8 | **Tello DJI SDK (djitellopy + UDP/54399 protocol)** | **HAVE** | W1 done (acquire), W4 done (surface) | **Review the SDK + build the Wi-Fi toolchain** (deauth/PMKID/rogue-AP) | Codex |
+| 8b | The CTF Wi-Fi drone firmware (if not a Tello) | **NEED** | W1 (acquire) | If the CTF target is a different Wi-Fi drone: pull it | Owner (laptop) |
 | 9 | BLE target firmware | **NEED** | W4 partial (surface), **W1 (acquire) = blocker** | Confirm at W0: is the CTF BLE? Pull the firmware + confirm a BLE adapter | Owner (laptop) |
-| 10 | GPS target (GNSS SDR spoofing) | **NEED** | W4 done (concept), **W1 (acquire) = blocker** | Confirm at W0: is the CTF GPS-dependent? Confirm a GNSS SDR for game day | Owner (laptop) |
-| 11 | E8 ELRS TX firmware (delivery device) | **NEED** (ref) | W7 (delivery tool) | Confirm at W0: can the E8 TX our forged frames, or is the B205 SDR the delivery path? | Owner |
+| 10 | GPS target (GNSS SDR spoofing) | **NEED** | W4 done (concept), **W1 (acquire) = blocker** | Confirm at W0: is the CTF GPS-dependent? Confirm a GNSS SDR | Owner (laptop) |
+| 11 | E8 ELRS TX firmware (delivery device) | **NEED** (ref) | W7 (delivery tool) | Confirm at W0: can the E8 TX our frames, or is the B205 SDR the path? | Owner |
 
-**The two hard "NEED TO DOWNLOAD" blockers (everything else is HAVE or reference):**
-- **#6 — the MAVLink autopilot + GCS image** (if MAVLink is the target).
-- **#8/#9/#10 — the Wi-Fi / BLE / GPS target firmware** (if one of those is the target).
+**The "NEED TO DOWNLOAD" items (down from five to three after Claude's
+corpus expansion):**
+- **#7b — the CTF GCS / companion image** (if the CTF exposes a GCS over
+  network/RF; the ArduPilot firmware itself is now HAVE).
+- **#8b — the CTF Wi-Fi drone firmware** (if the CTF target is a *different*
+  Wi-Fi drone than a Tello; the Tello SDK is now HAVE).
+- **#9/#10 — the BLE + GPS target firmware** (if the CTF is BLE or
+  GPS-dependent; these have no corpus yet).
 
 **And the one that closes the test-article gap:**
-- **#3 — the exact game-day TinyHawk image** (if the CTF target is this drone).
+- **#3 — the exact game-day TinyHawk image** (if the CTF target is this
+  drone; the 4.4.2 corpus binary is a version-matched sample, not the
+  confirmed installed image).
 
-All of these come in via **laptop → gitlab01 push** (no egress on the enclave).
-The download instructions for each are in the chain above.
+All of these come in via **laptop → gitlab01 push** (no egress on the
+enclave). The download instructions for each are in the chain above.
+
+**The corpus is now substantially more complete than it was a day ago.**
+MAVLink (ArduPilot 4.7.2, including the SITL x86_64 oracle) and Wi-Fi (Tello
+SDK) are no longer blocked at W1 — they have firmware in the repo and can
+move to W7 (build) immediately. The only paths still blocked at W1 are BLE
+and GPS (no corpus, and both need specific game-day hardware the enclave
+doesn't have).
 
 ---
 
