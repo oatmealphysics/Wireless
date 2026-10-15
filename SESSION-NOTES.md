@@ -342,3 +342,160 @@ fixes (§3 items 1 and 3) from the orchestrator's review.
 
 *— Claude, 2026-10-15. Assessment only — no files were merged or copied.
 Awaiting owner's path commitment (§2) before acting on any integration.*
+
+---
+
+## 9. Consolidated integration plan (andeds, orchestrator, 2026-10-15)
+
+This section merges **all three** integration assessments into one decision-ready
+plan: my §6/§7 review + Phase B/C, Claude's §8 (Tier 1/2/3 inventory + the FLRC
+finding), and Codex's §23 in `HOME-LAB-HANDOFF.md` (12 prioritized candidates).
+Where the three disagree, I say which way I rule and why. **No code has been
+merged** — this is the plan to execute once the owner commits to a path (§2).
+
+### 9.1. Where the three of us agree (the core, non-negotiable)
+
+All three assessments independently land on the same structural conclusion:
+
+> **Stop re-implementing the ELRS protocol layer in this repo. Import the
+> validated `elrs_sdr/core` (CRC/FHSS/OTA/LoRa/FLRC) as the single source of
+> truth, and make the CTF tools thin adapters over it.**
+
+- **Me (§6/§7):** "import `elrs_sdr/core` as a library, don't fork it — forking
+  is how the single-version bugs (P1-2) happened."
+- **Claude (§8.7):** "submodule or copy `elrs_sdr/core/` … matches the
+  orchestrator's 'import, don't duplicate' directive in §6."
+- **Codex (§23.2, priority 1):** "one reusable ELRS packet/CRC/hopping model …
+  addresses duplicated protocol assumptions and the wrong type/UID layout."
+
+The concrete fix this buys: **P1-2** (hardcoded `OTA_VERSION_ID=4` →
+version-parameterized v2–v6), the three divergent `Crc2Byte`/FHSS/UID copies
+(forger / tx-emulator / elrs_chain), and the wrong SYNC/type field positions the
+differential review flagged. **Agreement is total on this. No decision needed.**
+
+### 9.2. The one fact that changes everything (Claude, confirmed by me)
+
+> **The TinyHawk III at its default air rate (`rate_index=2`) transmits
+> FLRC/GFSK, not LoRa.** The poc-research tools assume LoRa. If the CTF target
+> runs a FLRC rate (the common default), `elrs-tx-emulator.py` (a fixed-SF6 LoRa
+> chirp, P2-5) and `elrs-analyzer.py` (LoRa-only decode) produce / expect a
+> signal the real link does not use.
+
+I accept this as the dominant risk on the ELRS path. It means the **PHY layer
+(`gfsk.py` + `identify.py`), not just the protocol layer (CRC/FHSS/OTA), is in
+scope for the ELRS path** — Phase 2 of my plan is not optional, it's the actual
+blocker. This is the single most valuable thing the elrs-sdr project produced
+for the CTF.
+
+### 9.3. Where we disagreed, and my ruling
+
+| Disagreement | Claude said | Codex said | **My ruling** |
+|---|---|---|---|
+| **How to bring in `elrs_sdr/core`** | Git **submodule** preferred (§8.7.1) | **Copy** the selected files, keep provenance (§23.1) | **Vendored copy with a pinned `PROVENANCE.md`.** Rationale: (a) no egress on the enclave or likely the CTF box — a submodule can't be fetched at build time; (b) the CTF machine may be air-gapped; (c) a submodule adds a fetch step that can silently break. A copy + provenance pin is self-contained and auditable. I update my §6 "import, don't fork" to mean "import the *module*, vendored with a pinned commit" — the anti-fork point (no drift, single source) still holds. |
+| **Scope of the first integration** | Rewrite all three tools (analyzer + tx-emulator + forger) at once (§8.7) | Staged: protocol layer first (priority 1), PHY later (priority 8) | **Staged, Codex is right.** Phase 1 = protocol layer only (CRC/FHSS/OTA) across forger + analyzer + elrs_chain + the P2-7 rainbow loader. Phase 2 = PHY (FLRC/LoRa). Doing Claude's full three-tool rewrite before the protocol layer is proven round-trips is too much change at once. |
+| **E8 reader** | Copy `tools/e8_read.py` (confirmed, 85 lines) | Bring over "redacted evidence + parser semantics first", keep the CTF reader's dry-run/endpoint checks | **Merge, don't replace.** `e8_read.py` has the confirmed 64-byte/17-byte protocol; the CTF `e8-read-config.py` has the safety plumbing (dry-run default, endpoint validation, private-capture handling). Take the confirmed protocol from `e8_read.py`, keep the CTF tool's safety shell. Don't throw either away. |
+| **UHD radio wrapper** | Copy `elrs_sdr/radio.py` (UHD-native, 1047 lines) | "Adapt behind the CTF SDR interface, exclude transmit wiring from observation paths" | **Codex's caution wins for Phase 1.** Bring in the *receive* portions behind the existing `sdr_common.py` interface; do not introduce a competing global radio owner, and keep TX wiring out of any observation path. The full UHD wrapper is a Phase 2 / ELRS-path decision. |
+| **What to pull for recon** | Tier 2: dronescan, protocol_catalog, OpenDroneID, fusion, WaveRaider, bursts | Priorities 5,6,7,9,10,11 (bursts, fhss_observe, protocol_catalog, Remote-ID, fusion, WaveRaider plugins) | **Defer all of it.** Recon tooling is valuable but is *not* on the critical path to a working exploit. Pull it only after the chosen attack path is end-to-end valid. Both are right that it's useful; I'm ruling it's later, not now. |
+| **PHY (gfsk/lora) confidence** | "100% byte-exact round-trip at ~20 dB" (Claude, §8.2 T1-2) | "Experimental/partial until checked against independent real recordings; synthetic round trips do not close the long-interleaving payload barrier" (Codex, §23.2 p8) | **Codex's caution stands, with a refinement.** The *protocol* round-trip (CRC/OTA) is proven — that's Phase 1 and it's safe. The *PHY* demod (gfsk/lora, especially the long-interleaved payload) is **self-consistent, not yet validated on an independent real capture** — that's Phase 2 and it needs the bench + the T1-8 IQ capture as ground truth. I do not accept "100% byte-exact" as a game-day guarantee until it's run on the `captures/fhss_20261010_113103` capture (real TinyHawk FLRC). Label the PHY work SELF-CONSISTENT until then, per the honesty contract. |
+
+### 9.4. The consolidated execution plan (supersedes §5 Phase B/C detail)
+
+**Gate (unchanged):** owner answers §4 (Q1–Q9) and names the path. If the path
+is **not** ELRS, skip to 9.5. The plan below is the ELRS path; the MAVLink path
+only needs the P1-1/P1-3/P2-6 fixes (§3) and none of the elrs-sdr import.
+
+**Phase 1 — Protocol layer (Codex implements, Claude QCs, ~1 week, no hardware)**
+1. Vendor `elrs_sdr/core/{crc,ota,fhss}.py` → `tools/elrs_core/` with a
+   `PROVENANCE.md` pinning the elrs-sdr commit (currently `7936602`). No numpy
+   needed for these three (pure Python).
+2. Rewrite `tools/elrs-packet-forger.py`: delete local `Crc2Byte`/`ElrsRng`/
+   `generate_fhss_sequence`/`uid_to_*`; import from `elrs_core`. **Fixes P1-2**
+   (version now a parameter, not a constant).
+3. Rewrite `tools/elrs-analyzer.py`: delete `OTA_VERSION_ID=4` constant + local
+   decode; call `elrs_core.ota.decode_full` / `decode_std` with the version
+   **from the packet**. This is the "measure, don't assume" fix.
+4. Rewrite `tools/exploit_chains/elrs_chain.py`: same import swap for
+   `phrase_to_uid`/`uid_to_fhss_seed`/`uid_to_crc_init`/`compute_fhss_sequence`
+   and the local `crc14`.
+5. **Fix P2-7:** the rainbow-table loader in
+   `tools/passive-telemetry-interceptor.py:1102` reads `uid_3_5` but the JSON
+   has `uid_hex`/`uid_bytes`/`sync_bytes` → it silently indexes 0 of 723 entries.
+   Normalize to the actual schema; make a non-empty file → empty index a visible
+   error.
+6. **Add round-trip tests:** encode a packet with the new `elrs_core`-backed
+   forger, decode it back, assert byte equality. Cross-check against the pinned
+   `firmware/src/expresslrs-4.1.0` source struct (Codex's "independent fixtures"
+   requirement). These are the "no direct tests of these raw builders" gap the
+   review flagged.
+7. **Close P2-8:** add the 90-test root suite to
+   `.github/workflows/validate.yml`.
+8. Commit code + notes together. Selftest green. **No hardware, no TX.**
+
+**Phase 2 — PHY layer (Codex implements, Claude QCs, ~2–3 weeks, needs bench)**
+9. Vendor `elrs_sdr/core/{gfsk,lora,lora_payload,lora_sync,lora_ref}.py`
+   (numpy-dependent) + `identify.py` into `tools/elrs_core/`.
+10. Rewrite `tools/elrs-tx-emulator.py` modulation: replace the fixed-SF6
+    chirp (`_modulate_lora`) with `elrs_core.gfsk.modulate` (FLRC) /
+    `elrs_core.lora.modulate_frame` (LoRa), selected by the target's
+    `rate_index`. **Fixes P2-5.**
+11. Rewrite `tools/passive-telemetry-interceptor.py` SDR/IQ path: replace
+    `envelope_demod()` (magnitude-threshold, P2-4) with
+    `elrs_core.identify` (auto-detects LoRa vs FLRC, version-agnostic). This is
+    the recon layer the analyzer was supposed to be.
+12. **Validate on real ground truth:** run the new PHY against the T1-8 capture
+    (`captures/fhss_20261010_113103`, real TinyHawk FLRC, 480 MB — copy locally,
+    do **not** commit). Until it decodes that capture, label the PHY
+    SELF-CONSISTENT, not VALIDATED (Codex's caution).
+13. **Bring in the receive-only UHD radio** (`elrs_sdr/radio.py` RX portions)
+    behind `sdr_common.py`, TX wiring excluded from observation paths (Codex).
+14. Bench-test against the owned TinyHawk + E8 (read-only first, no-flash):
+    forge → (FLRC-modulated) transmit → receiver accepts → command executes.
+
+**Phase 3 — Game-day (unchanged from §5 Phase D)**
+15. Re-ground `docs/game_day_playbook.md` in Phase 2 output. Home-lab dry-run
+    under the time limit. Document what does not work.
+
+**Defer (recon, both paths, only after the exploit path is valid):**
+- `dronescan.py`, `protocol_catalog.py`, OpenDroneID decoder, `fusion.py`,
+  WaveRaider dashboard, `bursts.py`, Remote-ID fixtures. Useful, not critical.
+
+### 9.5. If the MAVLink path is chosen instead
+
+None of the elrs-sdr import is needed for the MAVLink attack itself. Do only:
+- **P1-1** fix the signing mutation (`mavlink-signing-replay.py:202/230`) — it
+  must re-sign with a key, or stop claiming a bypass.
+- **P1-3** fix the COMMAND_LONG wire order (`mavlink_chain.py:391`,
+  `mavlink-signing-replay.py:591`) — use the pymavlink generated serializer as
+  the reference, not hand-rolled `struct.pack`.
+- **P2-6** stop reporting "REPLAY VIABLE" from clock age alone.
+- **P2-8** close the CI gap.
+- The E8 reader merge (9.3) is still useful regardless of path.
+- The elrs-sdr recon tools (9.4 defer list) remain available for game-day
+  situational awareness.
+
+### 9.6. Standing constraints on any merge (all three of us, unanimous)
+
+- **No TX wiring in any observation/recon path.** The TX gate stays a wall for
+  the current phase; it opens only with explicit human sign-off + bench-only.
+- **No E8 flash.** Absolute. The E8 reader merge is read-only.
+- **Provenance on every vendored file.** Pin the elrs-sdr commit; record the
+  source path. No "exact port" label is a substitute for an independent fixture
+  check (Codex).
+- **Honesty contract on PHY claims.** Self-consistent round-trip ≠ validated on
+  real RF. Label accordingly until the T1-8 capture test passes.
+- **Code + notes in the same commit.** Every merge commit includes the notes
+  entry in the same commit (the standing 3-agent rule).
+- **No secrets committed.** The bind UID is a pairing secret, not a constant in
+  code/fixtures/logs.
+
+### 9.7. The single question that still blocks Phase 1
+
+**Does the owner commit to the ELRS path, and is the CTF target confirmed to be
+ELRS (and which version / rate)?** If yes → Phase 1 starts immediately (no
+hardware needed, ~1 week). If the target is MAVLink/GCS → 9.5. If unknown → the
+owner gathers §4 (Q1–Q9) from the organizers first. **Do not start Phase 1
+tool rewrites before the path is named** — that's the rule I set in §2 and both
+agents have held to it so far. Good.
+
+— andeds, orchestrator, 2026-10-15. This consolidates §6–§8 and Codex §23 into
+one plan. It is the current way ahead for the ELRS integration.
