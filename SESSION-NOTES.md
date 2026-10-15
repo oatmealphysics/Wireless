@@ -593,3 +593,127 @@ wants live-target validation, not synthetic test suites. The P2-8 item
 no test suite to add. `validate-project.py` remains as the CI check.
 
 *— Claude, 2026-10-15.*
+
+---
+
+## 12. Review of Phase 1 landing + next steps (andeds, orchestrator, 2026-10-15)
+
+I pulled and reviewed the two commits that landed after §9 (`2971dad` +
+`c7682fd`). This is the current state and the exact next steps. The owner's
+directive: **test on live gear, not synthetic fixtures.** That changes the
+validation strategy but does not change the protocol-correctness work — see §12.3.
+
+### 12.1. What landed correctly (verified in code, evidence class VALIDATED)
+
+| Item | Status | How I verified |
+|---|---|---|
+| **Vendored `elrs_core/{crc,ota,fhss}.py`** | **Correct.** Byte-identical to source. | SHA-256 of all three vendored files matches the elrs-sdr source at commit `7936602` exactly. `PROVENANCE.md` pins the commit + source paths + the "do not modify, re-vendor on change" rule. |
+| **P2-7 rainbow loader fix** | **Correct.** | `passive-telemetry-interceptor.py:1102` now keys on `sync_bytes` (the actual schema) and logs an **error** when a non-empty file yields an empty index. The old silent `uid_3_5` → 0-of-723 bug is gone. |
+| **E8 reader merge** | **Correct.** | `e8-read-config.py` has the confirmed 64-byte TX (`02 01` + 62 zeros) / 17-byte RX (`02 c5 <rate> <cfg1> <cfg2> <UID:6> <pad:6>`) protocol, **dry-run default**, VID:PID `8888:2001` validation, 115200 8N1, UID redacted from stdout. Per §9.3. |
+| **E8 protocol reconstruction doc** | **Present.** | `research/e8-protocol-reconstruction.md` (368 lines). |
+| **Test removal per owner directive** | **Acknowledged.** | `tests/` + `tools/tests/` removed, CI unittest step dropped, `validate-project.py` retained. §11 records the directive. I will not recreate the synthetic suites. |
+
+### 12.2. The gap — Phase 1 is half done (the tools are NOT rewired)
+
+**The vendored `elrs_core` library is in the repo, but none of the three
+consuming tools import it yet.** Verified in code:
+
+| Tool | Still local re-implementation? | The bug it carries |
+|---|---|---|
+| `tools/elrs-packet-forger.py:160` | **Yes** — local `class Crc2Byte` | Divergent CRC copy |
+| `tools/elrs-analyzer.py:39` | **Yes** — `OTA_VERSION_ID = 4` constant | **P1-2** (hardcoded version) |
+| `tools/exploit_chains/elrs_chain.py:397` | **Yes** — local `def crc14` | Divergent CRC copy |
+| `tools/elrs-tx-emulator.py:220` | **Yes** — local `class Crc2Byte` | Divergent CRC copy (Phase 2) |
+
+**The structural fix for P1-2 is not yet in effect.** The correct library sits
+unused in `tools/elrs_core/` while the tools run their own single-version code.
+This is the "fork, don't import" failure mode §9.1 was written to prevent.
+
+**Note on the commit message:** `2971dad` says "All 123 tests pass" — true at
+that commit (before `c7682fd` removed the suites). The round-trip it refers to
+was the vendored library's self-consistency, **not** a test that the consuming
+tools now emit correct bytes. The tools still produce bytes from their local
+(buggy) code.
+
+### 12.3. Next steps (the path to "live-test ready")
+
+Live validation is the right call for the PHY layer (§9.6). But **protocol
+correctness is not optional because we'll test live**: if the forger emits a
+v4-only CRC init and the target is v3 or v6, the live test fails for a reason
+unrelated to the RF. Fix the protocol layer first, *then* the live test
+tests the RF, not the version constant.
+
+**Step 1 — Complete the Phase 1 rewiring (Codex, ~1 day, no hardware, no TX):**
+1. `tools/elrs-packet-forger.py`: delete local `Crc2Byte`/`ElrsRng`/
+   `generate_fhss_sequence`/`uid_to_*`. Import from `tools/elrs_core.{crc,fhss,ota}`.
+   Make OTA version a **CLI parameter** (default 4, overridable) — P1-2 fix
+   actually taking effect.
+2. `tools/elrs-analyzer.py`: delete `OTA_VERSION_ID = 4` + local decode. Call
+   `elrs_core.ota.decode_full`/`decode_std` with the version **from the packet**.
+3. `tools/exploit_chains/elrs_chain.py`: same import swap for `phrase_to_uid`/
+   `uid_to_fhss_seed`/`uid_to_crc_init`/`compute_fhss_sequence`/local `crc14`.
+4. **Live validation replaces the deleted unit tests:** the owner runs the
+   rewired forger against the owned TinyHawk and confirms the receiver accepts
+   the forged frame. That is the real test (§12.4).
+5. Commit code + notes together. `validate-project.py` green.
+
+**Step 2 — Live protocol-layer validation (owner + Codex, on the bench):**
+6. With the owned TinyHawk bound to the E8, run
+   `python tools/elrs-packet-forger.py --phrase <known-phrase> --ota-version <N> --sync`
+   and confirm the emitted bytes match a **real capture** of the same link
+   (the T1-8 IQ capture, or a fresh one). **Match = protocol layer VALIDATED
+   on real RF** — the strongest evidence class, replacing the synthetic test.
+7. If it does **not** match, the diff tells us exactly which field (CRC init?
+   FHSS seed? packet layout?) is still wrong — more useful than a green
+   synthetic test that never touched real RF.
+
+**Step 3 — Phase 2 PHY (only after Step 2 passes, Codex + Claude, ~2–3 weeks):**
+8. Vendor `elrs_sdr/core/{gfsk,lora,lora_payload,lora_sync,lora_ref,identify}.py`
+   (numpy) into `tools/elrs_core/`.
+9. Rewire `elrs-tx-emulator.py` modulation → `elrs_core.gfsk.modulate` (FLRC,
+   the TinyHawk default) / `elrs_core.lora.modulate_frame` (LoRa), by
+   `rate_index`. **Fixes P2-5.**
+10. Rewire `passive-telemetry-interceptor.py` SDR/IQ path →
+    `elrs_core.identify` (auto-detect LoRa vs FLRC). **Fixes P2-4.**
+11. **Live validation:** capture the owned TinyHawk on the B205/B210, run the
+    new PHY against it, confirm it decodes the real FLRC signal. Until it
+    passes on a real capture, the PHY stays SELF-CONSISTENT (§9.6).
+12. **Live end-to-end:** forge → FLRC-modulate → transmit on the B205 → owned
+    TinyHawk accepts → command executes. **The CTF exploit, proven on real gear.**
+
+**Step 4 — Game-day (after Step 3):**
+13. Re-ground `docs/game_day_playbook.md` in Step 3 output. Home-lab dry-run
+    under the time limit. Document what does not work.
+
+### 12.4. What "live validation" means concretely (the owner's gear)
+
+Bench (per AGENTS.md): TinyHawk III (target), E8 (TX, no-flash), B205mini +
+B210 (SDR), ALFA cards (Wi-Fi path), Ubuntu platform.
+
+**Live-test sequence (Step 2 + Step 3.12):**
+1. Power the TinyHawk, bind to the E8. Recover the UID from the air
+   (`elrs-sdr` `fhss_seed.py` method) or read it from the E8 via the merged
+   `e8-read-config.py`.
+2. Capture the link on the B205 (2.4 GHz FHSS band). Ground truth for Step 2.6.
+3. Run the rewired forger with the recovered UID. Compare to the capture.
+   **Match = protocol layer VALIDATED.**
+4. (Phase 2) Modulate the forged frame as FLRC, transmit on the B205, confirm
+   the TinyHawk accepts (throttle=1000 positive command). **Accept = exploit
+   works on real gear.**
+
+**What I need from the owner to start Step 2:** confirm the TinyHawk + E8 are
+on the bench and the B205 is wired up. If so, Codex does Step 1 (~1 day) and
+we run Step 2 together on the bench.
+
+### 12.5. What is explicitly NOT next
+
+- **Do not start Phase 2 (PHY) before Step 2 (live protocol check) passes.**
+- **Do not recreate the synthetic test suites.** Owner directive (§11) stands.
+- **Do not flash the E8.** Absolute. The E8 reader is read-only.
+- **Do not treat the `elrs-tx-emulator.py` SoapySDR chirp as a working
+  transmitter.** It is the P2-5 prototype until Step 3.9 rewires it.
+- **Do not commit the 480 MB IQ capture to git.** Copy locally for analysis.
+
+— andeds, orchestrator, 2026-10-15. §12 is the current state + next steps.
+Step 1 (rewire the tools to `elrs_core`) is the immediate work item for Codex.
+Step 2 (live protocol check on the bench) is the gate to Phase 2.
