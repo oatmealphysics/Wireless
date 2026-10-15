@@ -1008,6 +1008,150 @@ confirmed; the MSP-path viability is the single most important next question
 
 ---
 
+## 17. Review of the 4.4.2 rewire + driver diff + Layer 2 research (andeds, 2026-10-15)
+
+I pulled and reviewed the four commits after §15 (`b8d79a6`, `f0e86e9`,
+`f1d467d`, `d79d0e8`). This is a major step — Step 1 (the rewire) is **done
+and verified working**, the MSP-path question is **resolved in our favor**, and
+the target landscape is **broadened from "drone" to "controller + drone."**
+
+### What landed correctly (verified in code + by running it)
+
+1. **Step 1 (the rewire) is DONE and WORKS.** All three tools
+   (`elrs-packet-forger.py`, `elrs-analyzer.py`, `elrs_chain.py`) now import
+   from `elrs_core`; the local `Crc2Byte` / `ElrsRng` / `crc14` re-implementations
+   are **deleted** (not just bypassed). I ran the forger: it produces valid
+   8-byte v3 packets with the correct UID-derived CRC init and sync channel
+   41. **P1-2 (hardcoded OTA v4) is structurally fixed** — the version is now
+   a parameter, defaulted to v3 for the live target.
+
+2. **The v3 CRC init correction is right.** The forger's `uid_to_crc_init` now
+   does `init ^ (ota_version if ota_version == 3 else ota_version << 8)` —
+   v3 XORs into the **low** byte, v4 into the high byte. This matches the
+   4.4.2 source (`expressLrsSpiInit`). The old code XORed into the high byte
+   for all versions, which was wrong for v3.
+
+3. **The sync channel is fixed to v3 (channel 41).** `ISM2G4_SYNC_CHANNEL =
+   ISM2G4_FREQ_COUNT // 2 + 1`. The 4.4.2 driver diff confirms
+   `(freqCount / 2) + 1` = channel 41 for v3 (v4 uses channel 40). The old
+   code used `freqCount // 2` (channel 40), which is the v4 formula — wrong
+   for the live target.
+
+4. **The MSP-path question is RESOLVED (in our favor).** The 4.4.2 driver
+   diff (`research/TINYHAWK-III-LIVE-CONFIG-2026-10-15.md`, §"4.4.2
+   MSP-over-ELRS reachability review") is precise: **runtime `feature
+   -TELEMETRY` does NOT gate MSP receipt/dispatch in 4.4.2.** The
+   `processRFPacket()` dispatches every CRC-valid `ELRS_MSP_DATA_PACKET` to
+   `processRFMspPacket()` without checking `FEATURE_TELEMETRY`. The 65-byte
+   buffer + 5-byte chunking is unchanged. **MSP-over-ELRS remains the primary
+   4.4.2 candidate.** Evidence class: SOURCE-DERIVED / SELF-CONSISTENT,
+   pending live validation (W9). RC-data injection remains the fallback.
+
+5. **The full 4.4.2 attack parameters are now confirmed from source** (the
+   table at the end of the live-config doc): OTA v3, LoRa only, rate_index 2 =
+   LoRa 150Hz SF7 BW800, CRC init `((UID[4]<<8)|UID[5])^3`, no nonce XOR (v3),
+   FHSS seed `(UID[2]<<24+UID[3]<<16+UID[4]<<8+UID[5])^3`, sync channel 41,
+   UID[4:5] leak in every SYNC, MSP buffer 65B, MSP reachable, model-match
+   always satisfied, switch mode HYBRID. **This is the W4/W5 output for the
+   live target, now version-confirmed.**
+
+6. **PX4 v1.18.0-rc1 artifacts added** (CubeOrange + FMU-v5 `.px4` firmware).
+   Cross-stack MAVLink comparison is now possible (ArduPilot 4.7.2 vs PX4
+   1.18.0). The MAVLink path has two reference stacks.
+
+7. **Layer 2 research doc** (`research/layer2-wireless-attack-research.md`,
+   462 lines). This is the **broadening** the owner asked for: the target
+   landscape now includes the **controllers and ground stations**, not just
+   the drones. Three attack chains are defined:
+   - **Chain 1: ELRS controller WiFi exploitation** — jam the link → ELRS TX
+     auto-starts an open WiFi AP (~60s) → connect → `GET /config` → extract
+     the binding phrase + UID → forge. This is a **new** attack surface I
+     hadn't tracked: the ELRS *transmitter* (ESP32) has a WiFi config
+     interface that leaks the binding phrase.
+   - **Chain 2: WiFi network → MAVLink command injection** — join the GCS
+     WiFi (PMKID/open/evil-twin) → find MAVLink endpoints (UDP 14550/14551) →
+     inject COMMAND_LONG (land/RTL/disarm). Uses the ArduPilot SITL binary
+     as the W8 oracle.
+   - **Chain 3: DJI BLE exploitation** — CVE-2026-78306 (unauthenticated BLE
+     commands) + CVE-2026-77812 (passive WiFi credential sniff). Requires DJI
+     hardware (not in lab).
+
+### My assessment
+
+**This is the strongest state the project has been in.** The three things that
+were blocking are now resolved:
+- **P1-2 (hardcoded v4)** → fixed, verified working.
+- **The sync channel (v4 vs v3)** → fixed to v3 (channel 41).
+- **The MSP-path viability** → resolved in our favor (MSP is reachable even
+  with telemetry disabled).
+
+The ELRS path is now at **W7 (build) done, ready for W8 (offline validation
+against a real capture)**. The MAVLink path is at **W7 (build) — needs the
+P1-3 fix + SITL validation**. The Layer 2 research **broadened the target
+landscape** from "the drone" to "the drone + the controller + the GCS," which
+is the "deliberately broad" posture the owner asked for.
+
+**The one thing that's now the highest-value next action: W8 offline
+validation for ELRS.** The forger is built and correct (v3, LoRa, channel 41,
+MSP reachable). The next gate is to **cross-check the forger's bytes against
+a real capture of the live TinyHawk's RF** (the owner's bench, the B205 SDR).
+This is W8 — it proves the bytes are right against the real target, not just
+self-consistent. The only unknown at W8 is the UID (air-recovery via
+`fhss_seed.py` or the bind-mode UID). Everything else (version, PHY, rate,
+CRC init, sync channel, model-match) is now confirmed.
+
+### The revised next steps (in order)
+
+1. **W8 offline for ELRS (owner + Codex, bench).** Capture the live
+   TinyHawk's RF on the B205. Cross-check the forger's bytes. Recover the UID
+   (air or bind-mode). **This is the immediate next gate.** The forger is
+   ready; the capture is the missing piece.
+
+2. **W9 live for ELRS (owner + Codex, bench).** Forge → LoRa-modulate → TX on
+   the B205 → confirm the TinyHawk accepts. The MSP-injection candidate is
+   validated (or RC-data is the fallback).
+
+3. **W7/W8 for MAVLink (Codex, no hardware).** Fix P1-3 (COMMAND_LONG wire
+   order) + validate against the ArduPilot SITL x86_64 binary. Fully offline.
+   This is the **fastest path to a second validated PoC** (no bench needed).
+
+4. **Layer 2 Chain 1 (ELRS controller WiFi) — the new surface.** The ELRS
+   TX auto-starts an open WiFi AP after link loss. The `GET /config` leaks
+   the binding phrase. **This is a lab test the owner can do read-only on the
+   E8** (the no-flash constraint allows a read-only WiFi config read). If the
+   E8's WiFi AP is reachable and the config is readable, the entire UID
+   recovery step (W8's only unknown) is eliminated — the binding phrase is
+   available directly.
+
+5. **Layer 2 Chain 2 (WiFi → MAVLink).** Build the WiFi join + MAVLink
+   injection toolchain. Validate against SITL (W8 offline).
+
+### What I need from the owner
+
+The W0 questions are now **much** more answerable, because the Layer 2
+research identified the specific targets:
+
+- **Is the CTF target an ELRS drone + controller (Chain 1)?** If yes, the
+  E8's WiFi AP read is the key lab test (read-only, allowed by the
+  no-flash constraint). It would eliminate the UID recovery step.
+- **Is the CTF target a MAVLink GCS over WiFi (Chain 2)?** If yes, the
+  ArduPilot SITL + the WiFi join toolchain is the path.
+- **Is the CTF target a DJI drone (Chain 3)?** If yes, DJI hardware is needed
+  (not in lab).
+
+**The single most valuable next action is W8 (the ELRS capture cross-check)
+— the forger is ready, the capture is the missing piece. And the Layer 2
+Chain 1 (E8 WiFi AP read) is the lab test that would eliminate the UID
+recovery step entirely.**
+
+— andeds, orchestrator, 2026-10-15. §17 is the review of the 4.4.2 rewire +
+driver diff + Layer 2 research. Step 1 is done and verified working; the
+MSP-path is resolved in our favor; the target landscape is broadened to
+controller + GCS. W8 (the ELRS capture cross-check) is the immediate next
+gate.
+
+---
+
 ## 16. Betaflight 4.4.2 MSP reachability result (Codex, 2026-10-15)
 
 Completed §15 step 1 by diffing the pinned Betaflight 4.4.2 and 2026.6.2
