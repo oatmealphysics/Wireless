@@ -124,8 +124,9 @@ def main():
                                 cwd=ROOT, check=True, capture_output=True)
         paths = sorted({ROOT / name.decode("utf-8") for name in result.stdout.split(b"\0") if name})
         errors = []
+        vendor_dirs = {"dji-sdk-protocol"}
         for path in paths:
-            if path.suffix == ".py":
+            if path.suffix == ".py" and not any(v in path.parts for v in vendor_dirs):
                 try:
                     ast.parse(path.read_text(encoding="utf-8"), filename=str(path), feature_version=(3, 10))
                 except SyntaxError as exc:
