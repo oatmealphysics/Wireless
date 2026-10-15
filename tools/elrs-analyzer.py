@@ -3,8 +3,10 @@
 ELRS OTA Packet Analyzer
 
 Passive analysis of ExpressLRS over-the-air traffic captured via SDR.
-Identifies SYNC packets, extracts UID fragments, matches against the
-rainbow table, and reconstructs FHSS hopping sequences.
+Identifies SYNC packets and extracts the two UID bytes carried by OTA_Sync_s.
+Two bytes are insufficient for an unambiguous rainbow-table match or FHSS
+reconstruction; those remain candidate-generation steps until more identity
+information is recovered.
 
 Input sources:
   - Raw IQ file (SX1280 LoRa demodulated)
@@ -34,9 +36,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from elrs_core.ota import build_rcdata_std, build_sync, decode_full, decode_std
 
-# ELRS OTA constants
-OTA_VERSION_ID = 4  # ELRS v3.x/4.x
 
 # ELRS packet types
 ELRS_PKT_RC_DATA_4CH = 0x00
@@ -89,33 +90,6 @@ def phrase_to_uid(phrase):
     return hashlib.md5(raw.encode()).digest()[:6]
 
 
-def uid_to_fhss_seed(uid):
-    return (uid[2] << 24) | (uid[3] << 16) | (uid[4] << 8) | (uid[5] ^ OTA_VERSION_ID)
-
-
-def uid_to_crc_init(uid):
-    return ((uid[4] << 8) | uid[5]) ^ (OTA_VERSION_ID << 8)
-
-
-def generate_fhss_sequence(seed, count=FHSS_FREQ_COUNT, seq_len=FHSS_SEQ_LEN):
-    """Generate the FHSS hopping sequence from a seed (simplified ELRS algorithm)."""
-    rng_state = seed
-    sequence = []
-    used = set()
-
-    for i in range(seq_len):
-        rng_state = ((rng_state * 1103515245) + 12345) & 0xFFFFFFFF
-        idx = (rng_state >> 16) % count
-        while idx in used and len(used) < count:
-            idx = (idx + 1) % count
-        if len(used) >= count:
-            used.clear()
-        used.add(idx)
-        sequence.append(idx)
-
-    return sequence
-
-
 def load_rainbow_table(path):
     """Load rainbow table from JSON file."""
     if not path or not os.path.exists(path):
@@ -154,32 +128,31 @@ class ElrsPacket:
         self._decode()
 
     def _decode(self):
-        if len(self.raw) < 2:
+        if len(self.raw) not in (8, 13):
             return
-        header = self.raw[0]
-        self.pkt_type = (header >> 2) & 0x07
+        decoded = decode_std(self.raw) if len(self.raw) == 8 else decode_full(self.raw)
+        self.pkt_type = decoded.type
 
         if self.pkt_type == ELRS_PKT_SYNC:
-            self._decode_sync()
+            self._decode_sync(decoded)
         elif self.pkt_type == ELRS_PKT_RC_DATA_4CH:
             self._decode_rc()
         elif self.pkt_type == ELRS_PKT_TLM_LINK:
             self._decode_tlm_link()
 
-    def _decode_sync(self):
-        if len(self.raw) < 6:
+    def _decode_sync(self, decoded):
+        if decoded.sync is None:
             return
-        # SYNC packet contains UID[3], UID[4], UID[5] in plaintext
+        # OTA_Sync_s carries UID[4:5]. A third UID byte must not be invented.
         self.fields = {
-            "uid3": self.raw[1],
-            "uid4": self.raw[2],
-            "uid5": self.raw[3],
-            "uid_fragment": f"{self.raw[1]:02x}:{self.raw[2]:02x}:{self.raw[3]:02x}",
-            "nonce_rx": self.raw[4] if len(self.raw) > 4 else 0,
-            "switch_mode": (self.raw[0] >> 5) & 0x03,
+            "uid4": decoded.sync.uid4,
+            "uid5": decoded.sync.uid5,
+            "uid_fragment": f"{decoded.sync.uid4:02x}:{decoded.sync.uid5:02x}",
+            "nonce_rx": decoded.sync.nonce,
+            "fhss_index": decoded.sync.fhss_index,
+            "rate_enum": decoded.sync.rf_rate_enum,
+            "switch_mode": decoded.sync.switch_enc_mode,
         }
-        fhss_seed = uid_to_fhss_seed(bytes([0, 0, 0, self.raw[1], self.raw[2], self.raw[3]]))
-        self.fields["fhss_seed"] = fhss_seed
 
     def _decode_rc(self):
         if len(self.raw) < 5:
@@ -246,7 +219,7 @@ class ElrsTracker:
                 "snr": pkt.snr,
                 "new_tx": is_new,
                 "sync_count": tx_info["sync_count"],
-                "fhss_seed": pkt.fields.get("fhss_seed", 0),
+                "fhss_index": pkt.fields.get("fhss_index", 0),
             }
             if match:
                 fields["rainbow_match"] = True
@@ -285,7 +258,9 @@ class ElrsTracker:
         }
         for uid_hex, info in self.transmitters.items():
             tx_sum = {
-                "uid_fragment": f"{uid_hex[0:2]}:{uid_hex[2:4]}:{uid_hex[4:6]}",
+                "uid_fragment": ":".join(
+                    uid_hex[i:i + 2] for i in range(0, len(uid_hex), 2)
+                ),
                 "sync_count": info["sync_count"],
                 "first_seen": info["first_seen"],
                 "last_seen": info["last_seen"],
@@ -323,23 +298,31 @@ def simulate_traffic(tracker, json_mode, duration=0):
                 rssi = random.randint(-90, -40)
                 snr = random.uniform(5.0, 15.0)
 
-                # Generate SYNC packet
-                sync_raw = bytearray(6)
-                sync_raw[0] = (ELRS_PKT_SYNC << 2) | (random.randint(0, 3) << 5)
-                sync_raw[1] = uid[3]
-                sync_raw[2] = uid[4]
-                sync_raw[3] = uid[5]
-                sync_raw[4] = random.randint(0, 255)  # nonce
-                sync_raw[5] = 0  # padding
+                # Generate a structurally valid v3 standard SYNC packet.
+                crc_init = ((uid[4] << 8) | uid[5]) ^ 3
+                sync_raw = build_sync(
+                    False,
+                    fhss_index=random.randint(0, 239),
+                    nonce=random.randint(0, 255),
+                    rf_rate_enum=4,
+                    uid4=uid[4],
+                    uid5=uid[5],
+                    crc_init=crc_init,
+                )
 
                 pkt = ElrsPacket(bytes(sync_raw), freq_mhz=freq, rssi=rssi, snr=round(snr, 1))
                 tracker.process_packet(pkt, json_mode)
 
                 # Occasionally send RC data
                 if random.random() < 0.3:
-                    rc_raw = bytearray(5)
-                    rc_raw[0] = ELRS_PKT_RC_DATA_4CH << 2
-                    rc_raw[1:5] = os.urandom(4)
+                    rc_raw = build_rcdata_std(
+                        [random.randint(172, 1811) for _ in range(4)],
+                        switch_index=0,
+                        switch_value=0,
+                        is_armed=False,
+                        crc_init=crc_init,
+                        ota_nonce=0,
+                    )
                     pkt = ElrsPacket(bytes(rc_raw), freq_mhz=freq, rssi=rssi)
                     tracker.process_packet(pkt, json_mode)
 

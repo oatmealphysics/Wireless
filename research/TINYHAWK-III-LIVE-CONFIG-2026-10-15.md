@@ -93,7 +93,9 @@ Diffed `src/main/rx/expresslrs_common.h` between 4.4.2 and 2026.6.2:
 | Arm channel | Not v4-aware | v3 channel 4 / v4 channel 13 |
 
 **Impact on the attack chain:**
-- CRC init formula is definitively v3: `(UID[4] << 8) | UID[5]` XOR `(3 << 8)`
+- CRC init formula is definitively v3: `((UID[4] << 8) | UID[5]) XOR 3`.
+  The `version << 8` form belongs to the newer v4 branch; the 4.4.2 source
+  applies the v3 version value to the low byte.
 - PHY is LoRa only — FLRC is not available on this firmware
 - The `rate_index = 2` observed in CLI maps to the 4.4.2 rate table (LoRa)
 - The `model_id = 255` (0xFF) means `modelXor = 0x00` — model-match is effectively always satisfied
@@ -111,8 +113,56 @@ Diffed `src/main/rx/expresslrs_common.h` between 4.4.2 and 2026.6.2:
 
 ## Remaining actions
 
-1. Full source diff of the ELRS RX driver (`expresslrs.c`, `expresslrs_common.c`) between
-   4.4.2 and 2026.6.2 to verify MSP handler and buffer sizes are unchanged.
-2. Ghidra analysis of the 4.4.2 binary to cross-check the source-derived findings.
-3. Re-qualify all W5 vuln candidates against the 4.4.2 source (not 2026.6.2).
-4. Update `elrs_core` usage to explicitly parameterize for OTA v3.
+1. Ghidra analysis of the 4.4.2 binary to cross-check the source-derived findings.
+2. Cross-check the OTA-v3 tool output against a live RF capture.
+3. Validate the source-derived MSP reachability result on the owned bench target.
+
+## 4.4.2 MSP-over-ELRS reachability review (source-derived, 2026-10-15)
+
+The full ELRS RX source comparison requested above is complete. The result is
+more precise than the earlier concern: runtime `feature -TELEMETRY` does **not**
+gate receipt or dispatch of MSP uplink packets in Betaflight 4.4.2.
+
+### Compile-time path
+
+- `src/main/target/common_pre.h` defines `USE_MSP_OVER_TELEMETRY`.
+- `src/main/target/common_post.h` keeps that define whenever at least one of
+  SmartPort, CRSF, or GHST telemetry is compiled. For `USE_RX_EXPRESSLRS`, the
+  same file explicitly defines `USE_TELEMETRY` and `USE_TELEMETRY_CRSF`.
+- Consequently the ExpressLRS receiver contains `mspBuffer[65]`,
+  `processRFMspPacket()`, and the CRSF/MSP parser for this source/target family.
+
+### Runtime path with telemetry disabled
+
+`expresslrs_telemetry.c:initTelemetry()` returns immediately when
+`FEATURE_TELEMETRY` is disabled. That return skips sensor-list setup and
+`mspReceiverResetState()`. It does not disable the RF packet switch or the MSP
+receiver:
+
+1. `expresslrs.c:expressLrsSpiInit()` calls
+   `setMspDataToReceive(ELRS_MSP_BUFFER_SIZE, mspBuffer)` after
+   `initTelemetry()`, even when `initTelemetry()` returned early.
+2. `processRFPacket()` dispatches every CRC-valid `ELRS_MSP_DATA_PACKET` to
+   `processRFMspPacket()` without checking `FEATURE_TELEMETRY`.
+3. `processRFMspPacket()` requires `ELRS_CONNECTED`, assembles the bounded
+   five-byte chunks, and calls `processMspPacket(mspBuffer)` when model match
+   holds. The live `model_id = 255` makes the model XOR zero.
+4. `processMspPacket()` feeds CRSF MSP request/write frames to
+   `handleCrsfMspFrameBuffer()`, which reaches `mspFcProcessCommand()`.
+
+The 65-byte buffer size and five-byte chunking are unchanged between 4.4.2 and
+2026.6.2. Both versions bound each copy with the remaining buffer length. This
+supports the earlier conclusion that the interesting surface is command
+injection, not a packet-length memory corruption.
+
+There is one runtime nuance. With `FEATURE_TELEMETRY` disabled, global
+`telemetryInit()` does not call `initSharedMsp()`, so the shared MSP descriptor
+retains its static initial value (`-1`). The 4.4.2 parser still invokes
+`mspFcProcessCommand()` and the special telemetry-origin comparisons see the
+same descriptor value. This is source evidence that commands remain reachable,
+but only a bench observation can establish the installed binary's behavior and
+whether acknowledgements are emitted reliably.
+
+**Finding:** MSP-over-ELRS remains the primary 4.4.2 candidate.
+Evidence class: **SOURCE-DERIVED / SELF-CONSISTENT**, pending live validation.
+RC-data injection remains the fallback, not the primary path.

@@ -21,7 +21,7 @@ Usage:
     # Show derived crypto state for a binding phrase
     python3 elrs-packet-forger.py --phrase "iloveflying" info
 
-    # Generate a SYNC packet (v4, default)
+    # Generate a SYNC packet (v3, live TinyHawk default)
     python3 elrs-packet-forger.py --phrase "iloveflying" sync
 
     # Generate RC channel data with specific stick values
@@ -47,13 +47,16 @@ import argparse
 import struct
 import sys
 
+from elrs_core.crc import Crc2Byte, ELRS_CRC14_POLY, ELRS_CRC16_POLY
+from elrs_core.fhss import build_sequence
+
 # ---------------------------------------------------------------------------
 # Constants from ExpressLRS source
 # ---------------------------------------------------------------------------
 
 FHSS_SEQUENCE_LEN = 256
 ISM2G4_FREQ_COUNT = 80
-ISM2G4_SYNC_CHANNEL = ISM2G4_FREQ_COUNT // 2  # channel 40
+ISM2G4_SYNC_CHANNEL = ISM2G4_FREQ_COUNT // 2 + 1  # ELRS v3: channel 41
 ISM2G4_FREQ_START_HZ = 2400400000
 ISM2G4_FREQ_STOP_HZ = 2479400000
 
@@ -61,10 +64,6 @@ ISM2G4_FREQ_STOP_HZ = 2479400000
 PACKET_TYPE_RCDATA = 0b00
 PACKET_TYPE_DATA = 0b01
 PACKET_TYPE_SYNC = 0b10
-
-# CRC polynomials
-ELRS_CRC14_POLY = 0x2E57
-ELRS_CRC16_POLY = 0x3D65
 
 # Standard packet = 8 bytes (CRC14), full-res = 13 bytes (CRC16)
 OTA4_PACKET_SIZE = 8
@@ -98,27 +97,10 @@ def uid_to_fhss_seed(uid: bytes, ota_version: int) -> int:
 
 
 def uid_to_crc_init(uid: bytes, ota_version: int) -> int:
-    return ((uid[4] << 8) | uid[5]) ^ (ota_version << 8)
-
-
-# ---------------------------------------------------------------------------
-# ELRS LCG random number generator (from FHSS/random.cpp)
-# ---------------------------------------------------------------------------
-
-class ElrsRng:
-    M = 2147483648  # 2^31
-    A = 214013
-    C = 2531011
-
-    def __init__(self, seed: int):
-        self._seed = seed & 0xFFFFFFFF
-
-    def rng(self) -> int:
-        self._seed = (self.A * self._seed + self.C) % self.M
-        return self._seed >> 16
-
-    def rng_n(self, max_val: int) -> int:
-        return self.rng() % max_val
+    init = (uid[4] << 8) | uid[5]
+    # Betaflight 4.4.2's v3 path XORs the version into the low byte. ELRS v4
+    # moved it to the high byte to reserve the low byte for the nonce.
+    return init ^ (ota_version if ota_version == 3 else ota_version << 8)
 
 
 # ---------------------------------------------------------------------------
@@ -126,57 +108,13 @@ class ElrsRng:
 # ---------------------------------------------------------------------------
 
 def generate_fhss_sequence(seed: int, freq_count: int = ISM2G4_FREQ_COUNT) -> list[int]:
-    sync_ch = freq_count // 2
-    seq_count = (FHSS_SEQUENCE_LEN // freq_count) * freq_count  # 240 for 80ch
-
-    sequence = [0] * seq_count
-    for i in range(seq_count):
-        if i % freq_count == 0:
-            sequence[i] = sync_ch
-        elif i % freq_count == sync_ch:
-            sequence[i] = 0
-        else:
-            sequence[i] = i % freq_count
-
-    rng = ElrsRng(seed)
-    for i in range(seq_count):
-        if i % freq_count != 0:
-            offset = (i // freq_count) * freq_count
-            rand = rng.rng_n(freq_count - 1) + 1
-            sequence[i], sequence[offset + rand] = sequence[offset + rand], sequence[i]
-
-    return sequence
+    # Betaflight 4.4.2 / ELRS v3 uses the legacy +1 sync-channel formula.
+    return build_sequence(seed, freq_count, freq_count // 2 + 1, FHSS_SEQUENCE_LEN)
 
 
 def fhss_index_to_freq_hz(channel: int) -> int:
     spread = (ISM2G4_FREQ_STOP_HZ - ISM2G4_FREQ_START_HZ) / (ISM2G4_FREQ_COUNT - 1)
     return int(ISM2G4_FREQ_START_HZ + channel * spread)
-
-
-# ---------------------------------------------------------------------------
-# CRC engine (from CRC/crc.cpp — Crc2Byte class)
-# ---------------------------------------------------------------------------
-
-class Crc2Byte:
-    def __init__(self, bits: int, poly: int):
-        self.bits = bits
-        self.bitmask = (1 << bits) - 1
-        highbit = 1 << (bits - 1)
-        self.table = [0] * 256
-        for i in range(256):
-            crc = i << (bits - 8)
-            for _ in range(8):
-                if crc & highbit:
-                    crc = (crc << 1) ^ poly
-                else:
-                    crc = crc << 1
-            self.table[i] = crc & self.bitmask
-
-    def calc(self, data: bytes, init: int = 0) -> int:
-        crc = init & self.bitmask
-        for b in data:
-            crc = ((crc << 8) ^ self.table[((crc >> (self.bits - 8)) ^ b) & 0xFF]) & self.bitmask
-        return crc
 
 
 # ---------------------------------------------------------------------------
@@ -442,8 +380,8 @@ def main():
     )
     parser.add_argument("--phrase", required=True,
                         help="ELRS binding phrase")
-    parser.add_argument("--ota-version", type=int, default=4, choices=[3, 4],
-                        help="OTA version ID (3 for ELRS 3.x, 4 for ELRS 4.x; default: 4)")
+    parser.add_argument("--ota-version", type=int, default=3, choices=[3, 4],
+                        help="OTA version ID (3 for the live 4.4.2 target; 4 for ELRS 4.x; default: 3)")
     parser.add_argument("--nonce", type=int, default=0,
                         help="Packet nonce / counter (0–255, default: 0)")
     parser.add_argument("--full-res", action="store_true",

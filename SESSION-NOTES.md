@@ -1005,3 +1005,59 @@ reduced them. The most important remaining W0 facts:
 live reading + corpus expansion. The version (4.4.2) and PHY (LoRa) are now
 confirmed; the MSP-path viability is the single most important next question
 (step 1: the 4.4.2 source diff).
+
+---
+
+## 16. Betaflight 4.4.2 MSP reachability result (Codex, 2026-10-15)
+
+Completed §15 step 1 by diffing the pinned Betaflight 4.4.2 and 2026.6.2
+sources, focusing on `expresslrs.c`, `expresslrs_common.c`, and
+`expresslrs_telemetry.{c,h}`, then tracing the compile-time feature closure and
+the CRSF/MSP dispatcher.
+
+**Result:** the live runtime setting `feature -TELEMETRY` does **not** gate the
+MSP uplink receive/dispatch path in 4.4.2. `initTelemetry()` returns early, but
+`expressLrsSpiInit()` still installs the 65-byte MSP receive buffer;
+`processRFPacket()` still routes CRC-valid `ELRS_MSP_DATA_PACKET` frames to
+`processRFMspPacket()`; and a complete request still reaches
+`handleCrsfMspFrameBuffer()` → `mspFcProcessCommand()` when connected and
+model-matched. The live `model_id=255` makes model match a no-op.
+
+The buffer remains 65 bytes with five-byte chunks in both versions, and the
+copy is capped by remaining capacity. The earlier classification therefore
+holds for 4.4.2: **command injection candidate, not memory-corruption
+candidate**.
+
+Runtime telemetry-off does skip `initSharedMsp()`, leaving its descriptor at
+the static initial value `-1`. The parser still calls the command dispatcher,
+and telemetry-origin comparisons use that same value, so source flow remains
+reachable. Live validation is still required to promote this from
+**SOURCE-DERIVED / SELF-CONSISTENT** to VALIDATED and to confirm acknowledgement
+behavior in the installed binary.
+
+Detailed evidence and the revised remaining actions are in
+`research/TINYHAWK-III-LIVE-CONFIG-2026-10-15.md`.
+
+**Decision:** keep MSP-over-ELRS as the primary TinyHawk 4.4.2 candidate;
+RC-data injection remains the fallback.
+
+Completed §15 steps 2/4 in the same change:
+
+- `elrs-packet-forger.py` now defaults to OTA v3 and consumes the vendored CRC
+  and FHSS implementations instead of its local copies.
+- `elrs_chain.py` now defaults to OTA v3, uses the vendored FHSS builder and
+  OTA RC builder, and no longer uses its non-ELRS LCG or incorrect CRC-14
+  polynomial.
+- `elrs-analyzer.py` now parses 8/13-byte frames with `elrs_core.ota` and
+  reports the actual two UID bytes in `OTA_Sync_s`; it no longer invents a
+  third byte or derives a full FHSS seed from incomplete identity.
+
+The 4.4.2 source also corrected an earlier notes assumption: v3 computes the
+CRC initializer as `((UID[4] << 8) | UID[5]) XOR 3`; the `version << 8` form is
+the v4 branch. The consumers implement that version split explicitly without
+modifying the pinned vendored core.
+
+Validation: all three scripts compile; forger `info`, analyzer simulation, and
+chain dry-run complete; `python3 -B tools/validate-project.py` passes all 102
+structural/provenance/link checks. No hardware or TX was used. Live RF capture
+comparison remains the W8 gate.
