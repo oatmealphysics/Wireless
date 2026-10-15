@@ -14,6 +14,8 @@
 > [CVE evidence audit](research/CVE-AUDIT.md). E8-specific identity and USB CRSF
 > support remain unconfirmed. Corpus checksums pass with byte-preserving Git rules.
 
+> **ELRS reuse recommendations (2026-10-15):** [Section 23](#23-selective-reuse-from-the-elrs-sdr-project) records the comparison with the separate `elrs-sdr-transfer` repository, prioritized candidates, validation limits, and a planning-only continuation prompt. No source-project code, captures, or artifacts have been imported. Read it alongside the [October 15 tool review](Harness_DIFFERENTIAL_REVIEW_2026-10-15.md); older tool-state descriptions and the original Section 22 prompt are historical.
+
 ## Navigation
 
 - [1. Start here at home](#1-start-here-at-home)
@@ -38,6 +40,7 @@
 - [20. Open questions and outstanding work](#20-open-questions-and-outstanding-work)
 - [21. Source links](#21-source-links)
 - [22. Copy-ready continuation prompt](#22-copy-ready-continuation-prompt)
+- [23. Selective reuse from the ELRS SDR project](#23-selective-reuse-from-the-elrs-sdr-project)
 
 ## 1. Start here at home
 
@@ -1061,4 +1064,130 @@ relying on it. Do not treat lack of decoded CRSF frames as proof of no traffic.
 Keep observations, source-derived findings, hypotheses, and planned tests
 separate. Record exact versions, source paths, artifact hashes, commands,
 results, and remaining uncertainty. End with a precise next-session handoff.
+```
+
+## 23. Selective reuse from the ELRS SDR project
+
+### 23.1 Request, repositories and current scope
+
+The owner explained that the CTF was the original reason for starting the ELRS project and requested a list of useful components from the separate checkout at `~/Drone_Project/elrs-sdr-transfer`. The explicit instruction was to **list recommendations without merging anything**. The follow-up authorized saving these recommendations in this Markdown handoff and pushing the notes to enclave; it did not authorize importing implementations or running hardware operations.
+
+| Item | Comparison snapshot |
+|---|---|
+| CTF repository | `/home/borealis/Harness`, commit `d6b6c88` before this documentation update |
+| CTF enclave remote | `git@gitlab01.an.dd:user08/poc-research.git`, remote name `enclave`, branch `main` |
+| Separate ELRS checkout | `/home/borealis/Drone_Project/elrs-sdr-transfer`, commit `7936602` |
+| ELRS upstream remote | `git@gitlab01.an.dd:andeds-agent/elrs-sdr-transfer.git` |
+| Comparison activities | Local source/document inspection and existing offline selftests |
+| Integration state | Recommendations only; no copied source, merged history, imported captures, or device tests |
+
+Source paths in this section are relative to the ELRS checkout, unless explicitly labeled as CTF paths. They are written as code paths so the notes remain usable on enclave without depending on the laptop's absolute directory layout.
+
+The strongest immediate contribution is a better passive capture and protocol foundation. These candidates do not establish a working wireless exploit, an E8 firmware image, successful receiver takeover, or code execution. The existing MAVLink signing and raw command-serialization findings need their own corrections; importing ELRS components will not resolve them.
+
+### 23.2 Prioritized candidate list
+
+| Priority | Source candidates | Benefit to this project | Integration qualification |
+|---|---|---|---|
+| **1** | `elrs_sdr/core/crc.py`, `ota.py`, `fhss.py` | One reusable ELRS packet/CRC/hopping model for the current analyzer and packet helpers. Addresses duplicated protocol assumptions and the wrong type/UID layout documented in the CTF review. | Compare imported functions against the pinned upstream source and independent fixtures. Keep OTA version, packet size and applicable domain explicit. The source's “exact port” label is not a substitute for this comparison. |
+| **2** | `references/e8_protocol_reconstruction.md`, `docs/E8_CONSOLE_INVESTIGATION.md`, selected response parsing from `tools/e8_read.py` | Adds documented successful Linux configuration-read evidence, fixed request framing, response layout, USB-mode observations and a rate mapping. Helps reconcile inconclusive Windows results. | Bring over redacted evidence and parser semantics first. Keep installed firmware/MCU and unknown field mappings unconfirmed. Retain the CTF reader's dry-run, endpoint checks and private-capture handling. |
+| **3** | Receive-side portions of `elrs_sdr/radio.py`, with `uhd_bootstrap.py` where required | Reuses B205mini/B210 transport experience: stream activation, antenna selection, stream shutdown between channels, buffering and UHD binding compatibility. | Adapt behind the CTF SDR interface rather than introduce competing global radio owners. Exclude transmit wiring from observation paths. Review sample-rate metadata behavior separately. |
+| **4** | `elrs_sdr/selftest.py`, `tests/test_mock_uhd.py`, appropriate fixture expectations | Gives shared protocol and receiver-adapter regression checks before hardware work. | Separate independent reference checks from encode/decode round trips and mocked transport checks. Integrate selected tests into the intended CI suite; do not infer hardware validation from mock success. |
+| **5** | `elrs_sdr/core/bursts.py`, selected measurement helpers from `core/identify.py` | Provides chunked/memory-mapped IQ handling, burst extraction, DC-spike suppression, adaptive thresholds, occupied-band measurement and carrier-offset characterization. Improves recon before packet decoding. | Preserve capture format/rate provenance and negative-case behavior. Burst energy or a plausible waveform family must not become an automatic ELRS identification. |
+| **6** | `elrs_sdr/core/fhss_observe.py`, `fhss_seed.py` | Adds observed hop timing, channel/pattern comparison, candidate seed searches and cross-capture verification. Reduces reliance on a phrase dictionary for passive characterization. | A hopping seed is a link discriminator, not a hardware-unique aircraft ID or proof of recovering all UID bytes. Preserve candidate ambiguity, version assumptions, held-out evaluation and computational cost. |
+| **7** | `elrs_sdr/protocol_catalog.py`, selected result/evidence structures from `detect.py` | Makes recon distinguish presence, waveform family, specific protocol and identity, with an explicit evidence class. Helps prevent speculative vulnerability labels becoming dashboard facts. | Adopt the evidence model and independently reviewed capability entries. Reconcile historical status disagreements rather than copy every `validated=True` value. Distinguish claimed identity from authenticated identity. |
+| **8** | `elrs_sdr/core/gfsk.py`, `lora.py`, `lora_sync.py`, `lora_payload.py`, relevant design notes | Supplies deeper signal-processing and payload-decoding research to investigate the missing PHY stages in current CTF prototypes. | Experimental/partial until checked against independent real recordings for the selected mode. The documented long-interleaving payload barrier remains material; synthetic round trips do not close it. |
+| **9** | WaveRaider Remote ID parsing and `waveraider/tests/test_remote_id_reference.py`, `tests/fixtures/opendroneid/` | Adds independently sourced PCAPs and reference-decoder expectations for a useful additional CTF recon input. | Preserve fixture hashes, source revisions and license/provenance files. Keep supported recorded formats separate from unvalidated live reception; do not imply Wi-Fi NAN or Bluetooth 5 Long Range support. |
+| **10** | Selected `elrs_sdr/fusion.py` event/track structures | Supports combining SDR observations, Remote ID and other sources in a consistent tracker. Could improve the current recon dashboard's cross-source data model. | Define a CTF event contract first, including evidence, timestamps and ambiguity. Review track merging, stale evidence and sticky confirmation rather than copy its behavior unquestioned. |
+| **11** | `waveraider/waveraider/protocols/base.py`, selected ELRS source adapters, `tests/test_elrs_fhss_route.py` and related ownership/gating tests | Offers protocol plugins, capture-source adapters and checks that observation/UI paths do not reach transmitter code or fight another radio consumer. | Reuse patterns after stabilizing the core. Avoid importing an entire second dashboard/server and its deployment assumptions merely to gain a plugin interface. |
+| **12** | Separately attributed `DroneSecurity/` documentation and optional offline receiver material | Broadens the reference/recon track to DJI DroneID, using a research receiver documented for B205mini-class hardware. | Keep optional dependencies and licensing distinct. This is additional receive-side research, not an ELRS component or a demonstrated DJI control exploit. |
+
+### 23.3 Why these candidates matter to the current review
+
+The [CTF tool review](Harness_DIFFERENTIAL_REVIEW_2026-10-15.md) found that the current ELRS analyzer reads packet type and SYNC identity from incorrect positions, and that SDR receive/transmit prototypes lack demonstrated compatible PHY processing. The source repository contains a more useful starting point for the protocol and capture layers than duplicating those models in additional scripts.
+
+The suggested first architectural step is one reusable protocol module with thin adapters for the current command-line tools. An illustrative data path is:
+
+```text
+Recorded IQ or an explicitly owned receive adapter
+    -> capture metadata and validity checks
+    -> burst measurements / candidate protocol classification
+    -> supported decoder and version-aware OTA parsing
+    -> evidence-bearing event records
+    -> existing recon dashboard / offline report
+```
+
+This is a design recommendation, not an implemented integration. Observation and UI entrypoints must remain separate from transmit paths and from any E8 configuration-write/update logic.
+
+### 23.4 Validation actually performed during the comparison
+
+Both commands were run in the ELRS checkout with bytecode writes disabled and output captured locally for aggregate reporting:
+
+| Existing source check | Result observed | Limit |
+|---|---|---|
+| `python3 -B -m elrs_sdr.selftest` | Exit 0; **133 PASS markers**, zero FAIL markers | Includes source-derived checks and synthetic/self-consistency checks. Does not demonstrate all demodulation modes on real RF. |
+| `python3 -B tests/test_mock_uhd.py` | Exit 0 | Exercises a simulated UHD interface; no physical radio was opened. |
+
+No package installation, firmware build, capture replay of private identities, serial operation or RF test was performed for the comparison. The source checkout was clean at the final status check. The CTF checkout retained its pre-existing untracked `.claude/` directory.
+
+### 23.5 Adaptation issues identified before any code import
+
+**Native E8 reader:** `tools/e8_read.py` opens a serial port on a normal invocation and prints the bind UID by default, with an additional raw-output option. It also clears buffered input and prints best-guess Power/telemetry labels. Reuse its validated protocol observations and response parsing through this project's existing guarded reader. Do not copy those live defaults or secret-printing behavior. A normal read is not a shell, device-firmware dump, or evidence of an RF-reachable handler.
+
+**Capture sample rate:** the source's `radio.py` computes `measured_srate` using received sample count divided by elapsed wall time and passes that value into capture metadata. Transport delivery throughput is not automatically the hardware sampling clock. An import should distinguish configured rate, driver-reported actual rate, timestamps, dropped samples/discontinuities and wall-clock throughput before downstream frequency/timing measurements rely on it. The present recommendation does not certify the source's rate interpretation.
+
+**Protocol/version differences:** some older docs describe family-level ELRS detection while later catalog entries describe a more specific hopping-based result. Preserve the dates, evidence and known gaps. Sweeping candidate OTA numbers in code does not establish compatibility with every firmware generation or every packet format.
+
+**Identity:** a bind UID, recovered seed, observed network identifier, advertised MAC or Remote ID string has its own meaning and limitations. Avoid collapsing these into a single hardware-unique or authenticated aircraft identity. Carry the identifier type and evidence source alongside the value.
+
+**Third-party attribution:** the local WaveRaider copy contains an MIT license, while `DroneSecurity/` contains an AGPL license and Remote ID fixtures have their own provenance/license files. Preserve applicable notices and track where each candidate came from rather than treat the source tree as one undifferentiated codebase.
+
+### 23.6 Material to defer or exclude
+
+- **Old `tools/e8_serial.py` speculative probing and serial “tap” approach.** It sends guessed patterns, and its `socat`/`dd` discussion does not establish a lossless dual-direction capture. This is not a replacement for the confirmed normal Read operation or single-operator access rules.
+- **Automatic Git/capture hooks.** The source project has capture-related push behavior and machine-specific workflow assumptions. No such hooks should be copied into this CTF repository as a side effect of importing code.
+- **Bulk IQ, private identities and raw configuration.** Select only recordings needed for an explicit test, with provenance and reviewed privacy. Avoid copying large capture trees, actual bind secrets or private session data into the CTF history.
+- **Wholesale conversation logs and local configuration.** Carry concise evidence/correction summaries and necessary references; leave machine-specific SSH aliases, credentials, personal runtime configuration and obsolete handoff instructions behind.
+- **Complete duplicate applications.** The immediate need is protocol/capture correctness and reusable evidence, not two independent dashboards with incompatible event and device-ownership models.
+- **Transmit/update paths.** Their presence in the source repository is not authorization to enable them here. The connected E8's absolute no-flashing rule, current read-only scope and explicit access handoff remain in force.
+
+### 23.7 Suggested sequence if selective integration is later authorized
+
+**Batch 1 — correctness and evidence (priorities 1–5):** establish the shared protocol contract and independent fixtures; document redacted successful Linux E8-read evidence; adapt the receive transport with its mock checks; then add burst measurements. Keep interface adapters small and make each change separately reviewable.
+
+**Batch 2 — passive characterization (priorities 6–8):** add hopping observations and candidate verification, then adopt evidence-bearing result records. Treat LoRa/FLRC payload work as explicitly experimental until independent capture tests establish the selected mode. Keep unknown/no-decode outcomes visible.
+
+**Batch 3 — broader recon and presentation (priorities 9–12):** add recorded Remote ID checks, cross-source tracking and selected plugin/ownership patterns. Evaluate optional DJI receive-side research separately with its attribution and dependencies.
+
+For each candidate, retain source commit/path attribution, enumerate dependencies, compare its behavior with the pinned protocol source or reference decoder, and identify which current implementation it will replace or wrap. Test the actual adapter boundary as well as the imported module. Report offline conformance, mock success and hardware results separately.
+
+No batch is currently authorized for implementation by this recommendation request. The only authorized change in this follow-up is this documentation update and its publication to the CTF enclave remote.
+
+### 23.8 Continuation prompt for this integration assessment
+
+```text
+Read AGENTS.md, HOME-LAB-HANDOFF.md Section 23 and the October 15 review.
+The separate source is ~/Drone_Project/elrs-sdr-transfer, inspected at 7936602.
+This CTF project was at d6b6c88 before the recommendation-notes update.
+
+The owner requested recommendations only: no code copy, merge, source-history
+import, hook installation or device operation is authorized by that request.
+The notes have a prioritized 12-item list and a proposed three-batch sequence.
+Wait for an explicit implementation instruction before starting a batch.
+
+The strongest candidates are the shared CRC/OTA/FHSS core, redacted E8 Linux-read
+evidence, UHD receive adaptations, existing offline tests and burst measurements.
+The source selftest produced 133 PASS checks and its mock-UHD test exited 0.
+These are not proof that every real RF decoding path works.
+
+Adapt the E8 reader's protocol parsing without its live-by-default/UID-printing
+behavior. Review the capture layer's throughput-versus-sampling-rate assumption.
+Preserve source provenance, evidence levels, candidate ambiguity and relevant
+third-party notices. Exclude private identities, bulk captures and Git hooks.
+
+The connected E8 must never be flashed. Keep its characterization read-only and
+respect the explicit single-operator handoff in research/E8-COLLABORATION.md.
+For this project's documentation follow-up, main tracks the enclave remote
+git@gitlab01.an.dd:user08/poc-research.git; pull before edits and push finished
+authorized changes without rewriting history.
 ```
