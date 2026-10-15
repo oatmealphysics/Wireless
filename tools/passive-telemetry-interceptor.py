@@ -968,12 +968,15 @@ class SDRSource:
 # ---------------------------------------------------------------------------
 
 def envelope_demod(samples: np.ndarray) -> bytes:
-    """Extract byte-level data from IQ samples via amplitude envelope.
+    """PROTOTYPE — amplitude-only envelope detector, NOT a real demodulator.
 
-    This is a simplified demodulator suitable for detecting framed protocols
-    in raw IQ. Real demodulation would need matched filters per protocol's
-    modulation scheme (LoRa for ELRS, GFSK for CRSF, etc.), but envelope
-    detection catches unencrypted telemetry on simple modulations.
+    Thresholds sample magnitudes and packs bits. Discards all phase/frequency
+    information, so it cannot decode LoRa (ELRS), GFSK, or any modulation
+    that encodes data outside the amplitude domain. Output will not contain
+    valid protocol frames from those modulations.
+
+    For validated telemetry parsing, supply already-demodulated bytes via
+    --stdin-raw instead of using --freq or --iq-file with this path.
     """
     amplitude = np.abs(samples)
     # threshold at mean + 1 std
@@ -1155,6 +1158,9 @@ def run_capture(args):
     source = None
 
     if use_sdr:
+        log.warning("SDR/IQ demodulation is PROTOTYPE ONLY (amplitude envelope). "
+                     "It cannot decode LoRa, GFSK, or other phase/frequency modulations. "
+                     "Use --stdin-raw with an external demodulator for validated capture.")
         source = SDRSource(
             args=args.sdr_args or "",
             freq=args.freq,
@@ -1203,6 +1209,8 @@ def run_capture(args):
                     if use_iq:
                         break
                     continue
+                # PROTOTYPE: envelope_demod is amplitude-only and cannot
+                # decode LoRa/GFSK. Use --stdin-raw for validated parsing.
                 raw_bytes = envelope_demod(samples)
             else:
                 print("ERROR: Specify --freq, --iq-file, or --stdin-raw",

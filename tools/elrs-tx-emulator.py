@@ -387,7 +387,12 @@ def build_msp_packet(msp_cmd: int, msp_payload: bytes,
 # ---------------------------------------------------------------------------
 
 class SoapySDRBackend:
-    """Transmit ELRS packets via any SoapySDR-compatible SDR."""
+    """EXPERIMENTAL SDR backend — waveform is a chirp prototype, not SX1280-compatible.
+
+    The modulator uses fixed SF6/BW812.5kHz with no whitening, interleaving,
+    or proper LoRa header coding. Output will not decode on a real SX1280
+    receiver. Use the SPI backend for interoperable packet transmission.
+    """
 
     def __init__(self, device_args="", channel=0, gain=60.0,
                  antenna=None, bandwidth=None, rate=2.5e6):
@@ -457,17 +462,18 @@ class SoapySDRBackend:
 
     def transmit(self, packet: bytes):
         np = self._np
-        # Convert packet bytes to LoRa-modulated IQ samples
-        # This is a simplified chirp spread spectrum modulation
-        # Real SX1280 LoRa uses CSS; SDR approximation for testing
+        # EXPERIMENTAL: chirp prototype, not SX1280-compatible framing.
+        # A successful SDR write does NOT mean the packet is receiver-decodable.
         samples = self._modulate_lora(packet)
         status = self._dev.writeStream(self._tx_stream, [samples], len(samples))
         return status
 
     def _modulate_lora(self, packet: bytes) -> 'numpy.ndarray':
         np = self._np
-        # LoRa chirp spread spectrum modulation (simplified)
-        # SF6 at BW 812.5 kHz — 2^6 = 64 chips per symbol
+        # EXPERIMENTAL PROTOTYPE — not SX1280-compatible.
+        # Fixed SF6/BW812.5kHz, no whitening/interleaving/header coding,
+        # custom sync word. Will not decode on a real SX1280 receiver.
+        # Use the SPI backend for interoperable packet transmission.
         sf = 6
         bw = 812500.0
         chips_per_symbol = 2 ** sf
