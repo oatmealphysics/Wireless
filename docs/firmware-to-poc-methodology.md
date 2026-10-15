@@ -216,6 +216,39 @@ let the rest of the pipeline run from source.
 
 ## Wicket 4 — SURFACE (attack-surface map: inputs, sinks, trust boundaries)
 
+> **Protocol-analysis checklist** (from Claude's independent draft, folded in).
+> For *any* wireless protocol surface, answer these ten before you trust a
+> single-packet analysis. They are the structural questions that distinguish
+> "I read one packet" from "I understand the link."
+
+| # | Question | Why it's a gate |
+|---|---|---|
+| 1 | Is the integrity check (CRC/checksum) **authentication**? | CRC is integrity, not authentication. A UID-seeded CRC is anti-collision, not anti-forgery — if the seed is recoverable, the packets are forgeable. |
+| 2 | Does any secret **leak in the clear** (in a sync/handshake)? | If the UID/key/nonce is broadcast, it's recoverable passively. |
+| 3 | Is the nonce/counter **observable** or reconstructable? | An observable nonce means the CRC/anti-replay state is reconstructable. |
+| 4 | Is the **packet format** fixed and known (type bits, structure)? | A fixed structure is trivially identifiable and forgeable in captures. |
+| 5 | Is the **PHY/rate** observable, and does it select the modulation? | Getting the PHY wrong (e.g. LoRa vs FLRC) makes the forged signal invisible. Must match the target's actual PHY. |
+| 6 | Does a single packet **directly control** an actuator (throttle/arm/motor)? | If so, one forged packet is enough — no multi-step chain. |
+| 7 | Is the **hop sequence** (FHSS) derived from a recoverable seed? | A deterministic LCG from a known seed = the full hop sequence is known. |
+| 8 | Does the receiver **lock to the strongest signal** on a frequency? | If yes, overpowering the legitimate TX captures the RX. |
+| 9 | Is **bind mode** simplified (weaker CRC init, known nonce)? | Forced re-bind = trivially forgeable bind packets. |
+| 10 | Is there a **firmware-update / OTA path** over the air? | An OTA update path is a persistent-compromise surface (rogue AP / malicious firmware). |
+
+**ELRS answers to the checklist (known, from this project's analysis):**
+
+| # | Answer | Implication |
+|---|---|---|
+| 1 | **No.** CRC is integrity, not authentication. UID-seeded CRC is anti-collision, not anti-forgery. | Forge valid packets with a known UID |
+| 2 | **Yes.** UID[4:5] broadcast in every SYNC. UID derived from binding phrase via MD5. | Passive capture → rainbow lookup → full UID |
+| 3 | **Partial.** Nonce XOR'd into CRC init, but nonce is observable (in SYNC). | Reconstruct current nonce from a capture |
+| 4 | **Yes.** SYNC packet has fixed structure, known type bits, predictable UID bytes. | Easy to identify in IQ captures |
+| 5 | **No downgrade**, but `rate_index` is observable and selects PHY (LoRa vs FLRC). | Must match the target's PHY — wrong PHY = invisible signal |
+| 6 | **Yes.** RCDATA directly controls throttle/yaw/pitch/roll; arm is a channel value. | Forge RCDATA (e.g. throttle=0 → motors off) |
+| 7 | **Yes.** FHSS seed derived from UID; sequence is a deterministic LCG permutation. | Full hop sequence from the UID alone |
+| 8 | **Yes.** SX1280 locks to the strongest signal on a frequency. | Overpower the legitimate TX to capture the RX |
+| 9 | **Yes.** Bind mode uses a simplified CRC init (just OTA_VERSION_ID), nonce=0. | Forced re-bind → trivially forgeable bind packets |
+| 10 | **Partially.** SPI ELRS on the TinyHawk needs a full FC reflash; standalone-ESP ELRS has a WiFi update path. | WiFi update on ESP-based ELRS = rogue-AP + malicious-firmware vector |
+
 **Goal:** you know *where untrusted input enters*, *where it goes* (the sinks),
 and *what trust boundaries* sit between them. This is the "can I control what's
 placed in the buffer?" question, answered structurally before you look for a
@@ -262,6 +295,21 @@ classified (fixed-size / input-sized / deserializer). The TinyHawk map is in
 ---
 
 ## Wicket 5 — VULN (candidate vulns, triaged, evidence-classed)
+
+> **Vulnerability classes to look for** (from Claude's independent draft,
+> folded in). This is the triage lens — every candidate from W4's sinks gets
+> assigned a class, which drives its CTF severity and its PoC shape.
+
+| Class | What it means | CTF severity (typical) |
+|---|---|---|
+| **Authentication bypass** | Accept commands without valid credentials | CRITICAL — enables full command injection |
+| **Injection (forgery)** | Forge new packets the receiver accepts | CRITICAL — arbitrary control |
+| **Replay** | Re-send captured packets to reproduce an effect | HIGH — capture legitimate commands, replay them |
+| **Firmware-update abuse** | Flash malicious firmware over the air | HIGH — persistent compromise |
+| **Cryptographic weakness** | Break or bypass crypto (leaked key, weak hash) | HIGH — undermines all security claims |
+| **State-machine confusion** | Force an unexpected state (failsafe/bind/bootloader) | MEDIUM-HIGH — depends on the resulting state |
+| **Denial of service** | Disrupt the link without taking it over | MEDIUM — scores lower than commandeering |
+| **Information disclosure** | Extract secrets or state (UID, telemetry, phrase) | MEDIUM — enables other attacks |
 
 **Goal:** a *ranked, defensible* list of candidate vulnerabilities, each with
 an evidence class, each tied to a specific line of code, none overclaimed.
@@ -395,6 +443,41 @@ the ELRS protocol layer.
 **Gate 7:** the PoC tools exist, are built against the reference, and
 pass a no-hardware smoke test (they run, they emit bytes, they don't crash).
 The bytes are not yet *proven* correct — that's W8.
+
+> **Concrete example — forging an ELRS RCDATA packet with `elrs_core`**
+> (from Claude's independent draft, folded in). This is what W7 "built against
+> the reference" looks like in practice — the tool imports the vendored,
+> version-parameterized library instead of re-deriving the CRC/FHSS:
+>
+> ```python
+> from elrs_core.ota import ota_uid_crc_init, build_rcdata_std, OTA_VERSION_ID
+> from elrs_core.fhss import uid_seed, build_sequence, DOMAINS
+>
+> # From a passive capture or rainbow-table lookup:
+> uid = bytes([...])  # 6-byte UID (recovered or bind-mode {0,1,2,3,4,5})
+>
+> # Derive the attack state from the UID (the validated library does this):
+> crc_init = ota_uid_crc_init(uid)
+> seed = uid_seed(uid)
+> domain = DOMAINS["ISM2G4"]
+> sequence = build_sequence(seed, domain.freq_count, domain.sync_channel)
+>
+> # Build a command (throttle to minimum, all channels centered):
+> CRSF_MID, CRSF_LOW = 992, 171
+> disarm_packet = build_rcdata_std(
+>     channels=[CRSF_MID, CRSF_MID, CRSF_LOW, CRSF_MID],  # AETR
+>     switch_index=0, switch_value=0, is_armed=False,
+>     crc_init=crc_init,
+>     ota_nonce=current_nonce,  # must be tracked from the capture, not assumed
+> )
+> # disarm_packet is 8 bytes of valid OTA data, ready for FLRC modulation + TX
+> ```
+>
+> Note the last argument: `ota_nonce` is **tracked from the capture**, not a
+> constant. That is the W8 discipline — the value comes from observed traffic,
+> not an assumption. (The same pattern applies to the MSP-injection path: the
+> `build_msp_packet` in `elrs_chain.py` is the relevant builder, currently on
+> the local CRC that Step 1 rewires to `elrs_core`.)
 
 ---
 
@@ -619,25 +702,56 @@ capability.
 
 ---
 
-## Where the TinyHawk is in this pathway (current state, 2026-10-15)
+## Where the project is in this pathway (current state, 2026-10-15)
+
+> **The TinyHawk is the *test article*, not the target.** It is the one
+> platform we have a full firmware corpus + bench for, so it's the worked
+> example through all ten wickets. The CTF target is whatever the owner
+> identifies (W0) — and it may be a *different* platform than the TinyHawk.
+> The table below tracks **every candidate protocol family** through the
+> pipeline, because the CTF could test any of them and we are deliberately
+> broad, not TinyHawk-only. (Folded from Claude's independent multi-protocol
+> status table, retitled to the wicket numbering.)
+
+### TinyHawk (ELRS / Betaflight) — the worked example
 
 | Wicket | State |
 |---|---|
+| W0 FRAME | Partial — target card for the CTF target still open (§4 owner questions). |
 | W1 ACQUIRE | **Done.** Corpus + register + SHA256 + source tarballs. `hardware_match` = related sample. |
-| W2 MODEL | **Done.** Cortex-M4F, base `0x08000000`, memory map, vector table confirmed (Codex). |
-| W3 RECON | **Done.** Entropy (no obfuscation), string index, code regions, call tree (Codex + andeds §13). |
-| W4 SURFACE | **Done.** ELRS RX inputs → CRC boundary → 3 sinks, classified (andeds §13). |
+| W2 MODEL | **Done.** Cortex-M4F, base `0x08000000`, memory map, vector table confirmed. |
+| W3 RECON | **Done.** Entropy (no obfuscation), string index, code regions, call tree. |
+| W4 SURFACE | **Done.** ELRS RX inputs → CRC boundary → 3 sinks, classified. |
 | W5 VULN | **Done.** Ranked: MSP-injection (top), bind-mode UID (fastest), RC-overflow (dead end). SELF-CONSISTENT. |
-| W6 DESIGN | **Done.** The 5-step chain (RECOVER→FORGE→SYNC→MODEL-MATCH→INJECT) + preconditions + failure modes (andeds §13 §4). |
+| W6 DESIGN | **Done.** The 5-step chain + preconditions + failure modes. |
 | W7 BUILD | **In progress.** `elrs_core` vendored (protocol layer); forger/analyzer/chain **not yet rewired** (Step 1); TX emulator is a chirp prototype (Phase 2). |
 | W8 VALIDATE-OFFLINE | **Not started.** Needs the rewired tools (W7) + a real capture to cross-check. |
 | W9 VALIDATE-LIVE | **Not started.** Needs W7 + W8 + the owner's bench (TinyHawk + E8 + B205). |
 | W10 GAME-DAY | **Not started.** Needs W9. |
 
-**The immediate next wicket is W7 completion (Step 1: rewire the tools to
-`elrs_core`), then W8 (offline validation against a real capture), then W9
-(live, on the owner's bench).** W1–W6 are done; the analysis phase is
-complete. The PoC phase (W7→W10) is what's left.
+### All candidate protocol families (broad view)
+
+The CTF could test any of these. Each runs its own W0→W10; the TinyHawk column
+is the furthest along because it's the one we have a corpus + bench for.
+
+| Protocol | W1–W2 (acquire/model) | W3–W5 (recon/surface/vuln) | W6 (design) | W7 (build) | W8–W9 (validate) |
+|---|---|---|---|---|---|
+| **ELRS** (TinyHawk) | DONE | DONE (P1-2/P2-4/P2-5 known) | DONE | PARTIAL (forger exists, P1-2; `elrs_core` vendored) | NOT STARTED (needs PHY + bench) |
+| **MAVLink** (autopilot/GCS) | PARTIAL (no target firmware yet; pymavlink available) | DONE (v2 spec known; P1-1/P1-3 documented) | DONE | PARTIAL (injector/fuzzer exist, P1-1/P1-3) | NOT STARTED |
+| **Wi-Fi** (Tello/AP-mode) | PARTIAL (no Tello firmware) | DONE (deauth/PMKID/rogue-AP) | DONE | PARTIAL (scripts exist, not reviewed) | NOT STARTED (need a Wi-Fi drone) |
+| **BLE** | NOT STARTED | PARTIAL (attack surface documented) | NOT STARTED | NOT STARTED | NOT STARTED |
+| **GPS** (spoofing) | NOT STARTED (SDR-based) | DONE (L1 well-understood; concept documented) | PARTIAL | PARTIAL (`gps-spoof-poc` exists) | NOT STARTED |
+
+**The critical path is W7→W9 for ELRS (the FLRC PHY blocker) and W7→W9 for
+MAVLink (the P1-1/P1-3 protocol-conformance fixes).** Both are gated on the
+owner's W0 — the CTF target and flag condition. Everything is deliberately
+multi-platform: the TinyHawk proves the *pipeline*, but the CTF win depends on
+which platform W0 identifies.
+
+**The immediate next wicket (for the furthest-along platform, ELRS) is W7
+completion (Step 1: rewire the tools to `elrs_core`), then W8 (offline
+validation against a real capture), then W9 (live, on the owner's bench).**
 
 — andeds, orchestrator, 2026-10-15. The firmware→PoC pathway, ten wickets,
-grounded in the TinyHawk run. The gates are the honesty contract made concrete.
+grounded in the TinyHawk run (the test article) but broad across every
+candidate protocol family. The gates are the honesty contract made concrete.
