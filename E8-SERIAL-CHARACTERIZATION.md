@@ -81,22 +81,63 @@ tested. The port opens and closes without error.
 
 ---
 
-## 3. Diagnosis: Device Needs Battery Power
+## 3. Powered-On Testing (2026-10-15, controller powered on and connected)
 
-The E8 transmitter requires its internal battery to be charged and the power
-switch to be engaged. Evidence:
+With the E8 powered on, the device remains on COM4 with identical USB identity.
+**The serial interface is still completely unresponsive.**
 
-1. **USB CDC without serial data** — The USB descriptor enumerates even in
-   low-power/charging mode (the USB PHY on the MCU or bridge chip is powered by
-   the USB 5V rail), but the application firmware is not running.
-2. **Consistent with prior session** — The Ubuntu lab session recorded the same
-   behavior: the device showed as `/dev/ttyACM0` but produced no CRSF responses.
-   The SESSION-NOTES.md explicitly states: "The E8 almost certainly needs a
-   battery installed and the power switch turned on."
-3. **EMAX E8 form factor** — This is a handheld RC transmitter with a power
-   switch and internal/removable battery. The USB port serves dual purpose:
-   charging and serial communication, but only the charging function works
-   without the main power switch.
+### Additional tests performed with device powered on
+
+| Test Category | Tests Run | Result |
+|---|---|---|
+| **Serial configs** | 13 combinations (8N1, 8E1, 8O1, 7N1, 7E1, 8N2, etc.) | No response |
+| **Flow control** | XON/XOFF, RTS/CTS, DSR/DTR | No response |
+| **Baud rates** | 9600, 19200, 38400, 57600, 74880, 115200, 230400, 256000, 420000, 460800, 500000, 921600, 1000000, 2000000 | No response |
+| **Handshake sequences** | 30+ patterns including 0x55, 0xAA, 0x7F (STM32 bootloader), ESP32 sync, CRSF ping variants, text commands, control bytes | No response |
+| **BREAK signal** | Sent at 115200 | No response |
+| **Boot triggers** | DTR reset cycle, 1200bps touch, ESP32 GPIO0 strapping | No response |
+| **Control lines** | CTS, DSR, RI, CD all checked with DTR/RTS on/off | All FALSE at all times |
+| **Windows mode command** | Configured port with DSR handshaking off, DTR=ON | No change |
+| **Extended passive listen** | 5–15 seconds at each baud rate | Zero bytes received |
+
+### Modem status line analysis
+
+```
+CTS  = False (even with RTS asserted)
+DSR  = False (even with DTR asserted)
+RI   = False
+CD   = False
+```
+
+All modem status lines are permanently low. This indicates the USB CDC ACM
+implementation either does not implement flow control, or the internal UART
+bridge is not connected to an active MCU UART in normal operating mode.
+
+### Diagnosis: Custom EMAX Configurator Protocol Required
+
+The E8 does NOT use standard MSP, CRSF, MAVLink, or any standard CLI
+protocol over USB serial. EMAX provides a **custom configurator application**
+that communicates using a proprietary protocol:
+
+- Download: Available from [EMAX Support](https://emaxusa2.freshdesk.com/support/solutions/articles/19000157264)
+  (hosted on Google Drive and Mega.nz)
+- Workflow: "Connect USB-C → Click Connect → Click Read" (no special boot mode)
+- The configurator can Read/Write device settings through dropdown menus
+
+The configurator likely uses one of:
+1. **USB CDC ACM class-specific control transfers** (SET_LINE_CODING,
+   SEND_ENCAPSULATED_COMMAND) rather than bulk data endpoints
+2. **A proprietary framing protocol** with a specific initialization handshake
+   that none of our 30+ tested sequences matched
+3. **Direct USB control transfers** that bypass the serial port abstraction
+
+### What this means for CTF exploitation
+
+The E8's serial interface is effectively **obscured by a proprietary protocol**.
+This is security-by-obscurity, not security-by-design:
+- The protocol can be reverse-engineered from the configurator application
+- The USB interface has no authentication mechanism
+- Once the protocol is known, arbitrary configuration changes are possible
 
 ---
 
@@ -140,38 +181,33 @@ From `EMAX_TINYHAWKF4SX1280.config`:
 
 ---
 
-## 5. Next Steps — When E8 Is Powered On
+## 5. Next Steps
 
-### Immediate (serial characterization)
+### Priority 1: Reverse-engineer the EMAX configurator protocol
 
-```powershell
-# 1. List ports to confirm COM assignment (may change)
-python3 tools/elrs-serial-probe.py --list-ports
+1. **Download the EMAX configurator** from the support page
+2. **Run it with a USB sniffer** (USBPcap, Wireshark) to capture the exact
+   USB transactions between the configurator and the E8
+3. **Analyze the configurator binary** — likely an Electron/NW.js or .NET app;
+   look for serial port initialization code, baud rate, and frame format
+4. **Replicate the protocol** in a Python script for automated exploitation
 
-# 2. Passive CRSF capture at 460800 (ELRS default baud)
-python3 tools/elrs-serial-probe.py -p COM4 -b 460800 --capture work/e8-capture.bin
+### Priority 2: Alternative access vectors
 
-# 3. Active probe with parameter dump
-python3 tools/elrs-serial-probe.py -p COM4 -b 460800 --probe --dump-params
+1. **WiFi mode** — The ELRS TX module has a WiFi AP mode (default SSID
+   "ExpressLRS TX", default password "expresslrs"). Try triggering it:
+   - Via the Lua script on the radio (if paired)
+   - By timeout (some ELRS builds auto-enable WiFi after 60s without connection)
+   - WiFi AP at 10.0.0.1 provides web UI for firmware upload and config
+2. **Firmware update mode** — Hold R4+ button + power button to enter serial
+   flash mode (per EMAX manual). This might use a different USB protocol.
+3. **Bootloader mode** — Try esptool.py with GPIO0 strapping if the ESP32
+   boot pins are accessible
 
-# 4. If CRSF fails, try MSP at 115200 (Betaflight passthrough)
-# Use the msp_probe.py script from this session's scratchpad
-```
-
-### Extract and document
-
-1. **Firmware version** — ELRS version, build date, hardware ID
-2. **UID bytes** — Check if exposed via CRSF device info or parameters
-3. **Binding phrase status** — Whether a custom phrase is set
-4. **WiFi configuration** — Auto-WiFi-on timer, SSID, password
-5. **TX power settings** — Maximum power, regulatory domain
-6. **UART/serial config** — Which serial protocols are enabled on which ports
-7. **Failsafe behavior** — What happens when the link is lost
-
-### Security assessment
+### Priority 3: Security assessment (once access is gained)
 
 1. **Can MSP commands be sent without authentication?** — Expected: yes
-2. **Can firmware be reflashed without a physical button press?** — Expected: yes (ESP32 UART boot)
+2. **Can firmware be reflashed without a physical button press?** — Expected: yes
 3. **Are debug interfaces exposed?** — Check for JTAG test pads on the PCB
 4. **What failsafe behavior is configured?** — Critical for understanding DoS impact
 5. **Is the WiFi password default?** — Check if "expresslrs" is still the AP password
