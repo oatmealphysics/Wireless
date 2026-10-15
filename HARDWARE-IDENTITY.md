@@ -47,6 +47,14 @@ and closes without error but produces no data.
 enumerates in charging-only mode but the application firmware is not running.
 Full characterization details in `E8-SERIAL-CHARACTERIZATION.md`.
 
+**Causal qualification:** The battery/charging explanation above is a hypothesis,
+not established by empty serial reads. The owner reports a red LED and believed
+battery power, but startup, variant and serial-mode conditions remain unresolved.
+The recovered vendor read command also returned no bytes in the present state.
+The manufacturer documents a separate serial mode; see the newer
+[USB characterization](research/E8-USB-CHARACTERIZATION.md) for primary sources
+and the distinction between USB revision, host-tool version and device firmware.
+
 ## Next hardware session
 
 1. Power on the E8 (battery + switch) and confirm COM port assignment.

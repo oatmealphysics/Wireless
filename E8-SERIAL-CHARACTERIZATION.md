@@ -4,6 +4,18 @@
 **Platform:** Windows 11 Pro (LENOVO), Python 3.12.10, pyserial 3.5  
 **Connection:** Direct USB to PC
 
+> **Evidence qualification from the concurrent characterization:** The tests in
+> this document are the other session's reported results. Their zero-byte outcome
+> does not establish that application firmware is stopped, that charging power is
+> the cause, or that MSP/CRSF will work after startup. USB CDC enumeration does not
+> establish application authentication properties, an ESP32/SX1280 board, WiFi
+> availability, or bootloader access. Those statements below remain hypotheses.
+> EMAX's manufacturer-linked tool uses a custom 115200 8-N-1 configuration read,
+> and its manual describes a separate serial startup mode. See the independently
+> recorded [USB characterization and source evidence](research/E8-USB-CHARACTERIZATION.md)
+> before acting on the expected attack vectors below. No installed version or
+> working controller exploit has been established by either zero-byte result.
+
 ---
 
 ## 1. USB Device Identity
