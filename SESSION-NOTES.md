@@ -499,3 +499,72 @@ agents have held to it so far. Good.
 
 — andeds, orchestrator, 2026-10-15. This consolidates §6–§8 and Codex §23 into
 one plan. It is the current way ahead for the ELRS integration.
+
+---
+
+## 10. Path-independent integration (Claude, 2026-10-15)
+
+Enacted the three items from §9 that are **not gated** on path commitment.
+No tool rewrites — these are preparation and bug fixes.
+
+### 10.1. Vendored `elrs_sdr/core` protocol layer → `tools/elrs_core/`
+
+Per §9.4 Phase 1 step 1 and §9.3 (vendored copy with pinned provenance).
+Copied 3 files from `elrs-sdr-transfer` commit `7936602`:
+
+| File | Lines | What |
+|---|---|---|
+| `crc.py` | 76 | Crc2Byte (CRC-14/16) + Crc8 (CRC-8/DVB-S2) |
+| `ota.py` | 500 | OTA packet model: encode/decode sync/rc/linkstats/data, CRC validate/generate |
+| `fhss.py` | 217 | FHSS LCG + sequence builder + ISM2G4 domain table |
+
+Plus `__init__.py` and `PROVENANCE.md` (SHA-256 hashes, source paths, commit pin).
+
+**Verified:** imports clean, build_sync → decode_std round-trip passes, CRC
+validates, FHSS sequence is 240 entries with sync channel at block start.
+Evidence class: VALIDATED (these are the same files the companion repo's 29
+self-tests cover).
+
+**Not done (gated on path commitment):** rewriting the CTF tools to import
+from `elrs_core` instead of their local reimplementations. That's §9.4 Phase 1
+steps 2-6.
+
+### 10.2. E8 reader merge
+
+Per §9.3: "Take the confirmed protocol from `e8_read.py`, keep the CTF tool's
+safety shell." Rewrote `tools/e8-read-config.py` to combine:
+
+- **From `e8_read.py` (confirmed):** the 64-byte Read command (`02 01` + 62
+  zeros), 17-byte response parsing (rate/cfg1/cfg2/UID/padding), rate lookup
+  table, human-readable output
+- **From the original CTF tool (safety):** `--execute` dry-run default,
+  VID:PID 0x8888:0x2001 endpoint validation, private capture to `work/e8-session/`,
+  JSON summary output, UID redacted from stdout
+
+Also copied the E8 protocol reconstruction doc (`references/e8_protocol_reconstruction.md`)
+to `research/e8-protocol-reconstruction.md` for reference.
+
+All 3 existing tests in `tools/tests/test_e8_read_config.py` pass.
+
+### 10.3. P2-7 fix — rainbow table loader schema mismatch
+
+`tools/passive-telemetry-interceptor.py:1102` `load_rainbow_table()` was keying
+on `entry.get("uid_3_5", "")` — that key doesn't exist in the JSON schema.
+The actual keys are `sync_bytes`, `uid_hex`, `uid_bytes`, etc. (from
+`elrs-uid-rainbow.py`'s `generate_table()`).
+
+**Before:** `load_rainbow_table("elrs-rainbow-table.json")` → 0 entries loaded
+(silently). Every SYNC packet lookup returned no match.
+
+**After:** keyed on `sync_bytes` (normalized to uppercase). 723 entries load.
+Added an explicit error log when a non-empty file produces an empty index
+(catches future schema mismatches).
+
+### 10.4. What remains gated on path commitment
+
+Per §9.7, Phase 1 tool rewrites (steps 2-6) are blocked until the owner
+answers §4 (Q1-Q9) and names ELRS or MAVLink. The vendored `elrs_core` is
+ready for immediate use once the path is named. The E8 reader merge and the
+P2-7 fix are done.
+
+*— Claude, 2026-10-15. 123/123 tests pass (90 root + 33 tools).*

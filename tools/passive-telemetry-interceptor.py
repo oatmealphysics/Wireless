@@ -1100,15 +1100,23 @@ class StdinSource:
 # ---------------------------------------------------------------------------
 
 def load_rainbow_table(path: str) -> dict:
-    """Load ELRS rainbow table for binding phrase lookups."""
+    """Load ELRS rainbow table for binding phrase lookups.
+
+    Keys the table on sync_bytes (UID[3:6] as colon-separated hex), which is
+    the field present in the JSON produced by elrs-uid-rainbow.py.
+    """
     table = {}
     try:
-        with open(path) as f:
-            for entry in json.load(f):
-                uid_3_5 = entry.get("uid_3_5", "")
-                if uid_3_5:
-                    table[uid_3_5] = entry
-        log.info("Loaded %d rainbow table entries from %s", len(table), path)
+        entries = json.load(open(path))
+        for entry in entries:
+            key = entry.get("sync_bytes", "")
+            if key:
+                table[key.upper()] = entry
+        if entries and not table:
+            log.error("Rainbow table %s has %d entries but none have 'sync_bytes' — "
+                      "wrong schema?", path, len(entries))
+        else:
+            log.info("Loaded %d rainbow table entries from %s", len(table), path)
     except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
         log.warning("Could not load rainbow table: %s", e)
     return table
