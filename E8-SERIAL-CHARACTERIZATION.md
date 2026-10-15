@@ -16,6 +16,19 @@
 > before acting on the expected attack vectors below. No installed version or
 > working controller exploit has been established by either zero-byte result.
 
+> **Qualification of the later serial-mode update (reviewed 2026-10-14):**
+> The Windows-driver explanation below is a hypothesis, not a demonstrated root
+> cause: no paired successful Linux capture and failing Windows USB trace have
+> established the difference. Generic class-driver binding and low modem-status
+> lines do not prove incompatibility. The reported Windows configurator failure
+> is another session's observation, not an application execution by Codex.
+> In addition, the `02 02` + zero-payload variant listed below overlaps the
+> settings-write opcode attributed by the vendor static analysis; it must not
+> be described or repeated as a normal configuration read. No successful
+> readback establishes its effect. Preserve the owner's absolute no-flashing
+> rule and current read-only scope in `AGENTS.md`; do not follow older update,
+> bootloader, reset, or speculative driver-replacement suggestions here.
+
 ---
 
 ## 1. USB Device Identity
