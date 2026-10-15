@@ -193,48 +193,175 @@ From `EMAX_TINYHAWKF4SX1280.config`:
 
 ---
 
-## 5. Next Steps
+## 5. Serial Mode Testing (2026-10-15, R4+ activated)
 
-### Priority 1: Reverse-engineer the EMAX configurator protocol
+The user confirmed entering serial mode: R4+ held during power-on, flashing
+green WiFi/signal LED observed. Testing was performed with the device in this
+state.
 
-1. **Download the EMAX configurator** from the support page
-2. **Run it with a USB sniffer** (USBPcap, Wireshark) to capture the exact
-   USB transactions between the configurator and the E8
-3. **Analyze the configurator binary** — likely an Electron/NW.js or .NET app;
-   look for serial port initialization code, baud rate, and frame format
-4. **Replicate the protocol** in a Python script for automated exploitation
+### Qt-mimic vendor read attempts
 
-### Priority 2: Alternative access vectors
+Eight DTR/RTS configurations tested, mimicking various QSerialPort behaviors:
 
-1. **WiFi mode** — The ELRS TX module has a WiFi AP mode (default SSID
-   "ExpressLRS TX", default password "expresslrs"). Try triggering it:
-   - Via the Lua script on the radio (if paired)
-   - By timeout (some ELRS builds auto-enable WiFi after 60s without connection)
-   - WiFi AP at 10.0.0.1 provides web UI for firmware upload and config
-2. **Firmware update mode** — Hold R4+ button + power button to enter serial
-   flash mode (per EMAX manual). This might use a different USB protocol.
-3. **Bootloader mode** — Try esptool.py with GPIO0 strapping if the ESP32
-   boot pins are accessible
+| Setup | DTR | RTS | Settle | Result |
+|---|---|---|---|---|
+| Default (driver chooses) | true | true | 2s | 0 bytes |
+| DTR+RTS explicit pre-open | true | true | 2s | 0 bytes |
+| DTR toggle after open | true→false→true | false | 2s | 0 bytes |
+| DTR pulse after open | true→false→true | true | 2s | 0 bytes |
+| RTS only | false | true | 2s | 0 bytes |
+| Wine-like (both pre-open) | true | true | 3s | 0 bytes |
+| Default, long settle | true | true | 5s | 0 bytes |
+| DTR=true, long settle | true | true | 5s | 0 bytes |
 
-### Priority 3: Security assessment (once access is gained)
+All modem status lines (CTS, DSR, RI, CD) remained FALSE across all
+configurations. No initial/unsolicited data received in any test.
 
-1. **Can MSP commands be sent without authentication?** — Expected: yes
-2. **Can firmware be reflashed without a physical button press?** — Expected: yes
-3. **Are debug interfaces exposed?** — Check for JTAG test pads on the PCB
-4. **What failsafe behavior is configured?** — Critical for understanding DoS impact
-5. **Is the WiFi password default?** — Check if "expresslrs" is still the AP password
-6. **Can the binding phrase/UID be read over serial?** — Would enable OTA hijack
+### Vendor command variations
+
+Six framing variations of the vendor read request tested:
+
+| Variant | Request Bytes | Result |
+|---|---|---|
+| `02 01 00` + 61 zeros (64 total) | Standard | 0 bytes |
+| `02 01` only (2 bytes) | Minimal | 0 bytes |
+| `02 01 00` (3 bytes) | Short | 0 bytes |
+| `01 00` + 62 zeros | Alt header | 0 bytes |
+| `02 00` + 62 zeros | Alt subcommand | 0 bytes |
+| `02 02` + 62 zeros | Alt subcommand 2 | 0 bytes |
+
+### MSP/CLI in serial mode
+
+MSP v1 API_VERSION request and CLI commands (`#`, `version`, `help`) also
+returned 0 bytes while in serial mode.
+
+### Passive listen at multiple baud rates
+
+115200 and 460800 passive listen with DTR on/off: 0 bytes in all cases.
+
+### Additional serial stacks tested
+
+To rule out library-specific issues, the vendor read was attempted with
+three completely independent serial implementations:
+
+| Stack | API | Result |
+|---|---|---|
+| pyserial 3.5 | Python `serial.Serial` | 0 bytes |
+| .NET SerialPort | PowerShell `System.IO.Ports.SerialPort` | 0 bytes |
+| Windows API | Python ctypes `CreateFileW` / `WriteFile` / `ReadFile` | 0 bytes |
+
+All three successfully opened the port, configured 115200 8-N-1, asserted
+DTR/RTS, wrote 64 bytes, and received 0 bytes. The `EscapeCommFunction`
+(SETDTR/SETRTS) and `GetCommModemStatus` calls confirmed CTS/DSR/RI/CD
+all remained FALSE.
+
+### EMAX configurator verification
+
+The official EMAX configurator (`Serial Update Tool 2.1`, SHA-256
+`7ec41368...be99362d`) was run on this same Windows machine with the
+device in serial mode (R4+ active, green LED flashing). **The configurator
+also failed to read** — same behavior as our scripts.
+
+This confirms the zero-byte result is **not** a protocol or framing issue.
+The device previously worked with the same configurator on Ubuntu using Wine.
+
+### Root cause: Windows `usbser` driver incompatibility
+
+| Evidence | Conclusion |
+|---|---|
+| Device uses non-standard VID 0x8888 (not USB-IF registered) | Generic driver match only |
+| `DEVPKEY_Device_GenericDriverInstalled = True` | Windows used class-code matching, no device-specific driver |
+| `DEVPKEY_Device_MatchingDeviceId = usb\class_02&subclass_02&prot_01` | Matched by CDC ACM class, not by VID/PID |
+| `DriverRank = 16719875` | Very low priority match (high rank number) |
+| Device is NOT a USB Composite Device | Single-function CDC ACM, no interface confusion |
+| Same device works on Linux (`cdc_acm` driver → `/dev/ttyACM0`) | Linux driver handles non-standard descriptors |
+| EMAX configurator fails identically on Windows | Not a script/library issue |
+
+The Windows `usbser` driver binds to the device by CDC ACM class code but
+does not properly initialize the USB data path for this device's non-standard
+descriptors. Linux's `cdc_acm` module is more permissive and handles the
+device correctly. The E8's firmware likely has minimal or non-standard CDC
+functional descriptors that Windows requires but Linux does not enforce.
+
+### Resolution paths
+
+1. **Read on Linux** — fastest path. The device works on Ubuntu. Run
+   `python3 tools/e8-read-config.py --port /dev/ttyACM0 --execute`
+2. **STM32 VCP driver** — the STM32 Virtual COM Port driver handles more
+   CDC ACM descriptor variants than `usbser`
+3. **Driver reinstall** — uninstall in Device Manager (without deleting
+   driver), replug to force fresh binding
+4. **USB traffic capture** — use USBPcap/Wireshark on a working Linux
+   read to capture the exact USB control transfer sequence, then replicate
+   on Windows via pyusb/WinUSB
 
 ---
 
-## 6. Files Produced This Session
+## 6. Next Steps
+
+### Priority 1: Get a successful configuration read
+
+The vendor protocol is fully reverse-engineered (64-byte read request at
+115200 8-N-1, 17-byte expected response). The blocker is the Windows USB
+driver, not the protocol.
+
+1. **Read on Ubuntu** — plug E8 into the Ubuntu lab machine, enter serial
+   mode (R4+ held during power-on), and run:
+   `python3 tools/e8-read-config.py --port /dev/ttyACM0 --execute`
+2. **Parse the 17-byte response** — byte 0 should be `0x02` (header),
+   bytes 1–16 are the configuration payload containing rate, power,
+   telemetry ratio, and binding UID data
+3. **Optionally capture USB traffic** with Wireshark/USBMon on the working
+   Linux read for future Windows driver debugging
+
+### Priority 2: Extract security-relevant configuration
+
+Once a valid read is obtained:
+
+| Field | Security Relevance |
+|---|---|
+| Binding UID (6 bytes) | Seeds FHSS hopping + CRC init → enables OTA hijack |
+| TX power setting | Determines required attacker power to override |
+| Packet rate | Determines timing for packet injection |
+| Telemetry ratio | Determines telemetry injection opportunities |
+| WiFi configuration | Check if default credentials ("expresslrs") are set |
+| Failsafe behavior | Critical for understanding DoS impact on drone |
+
+### Priority 3: Alternative access vectors
+
+1. **WiFi mode** — ELRS TX modules have a WiFi AP mode (default SSID
+   "ExpressLRS TX", default password "expresslrs"). Trigger by:
+   - Timeout (some ELRS builds auto-enable WiFi after 60s without connection)
+   - WiFi AP at 10.0.0.1 provides web UI for config and firmware upload
+2. **ELRS Configurator** — the standard ExpressLRS Configurator (distinct
+   from EMAX's custom tool) may be able to read device info over USB
+3. **Passive RF analysis** — use SDR to capture OTA SYNC packets and
+   extract UID bytes [3:5] directly from the air
+
+### Priority 4: Develop attack tools
+
+Once configuration is extracted:
+
+1. **Binding phrase brute-force** — use `tools/elrs-uid-rainbow.py` to
+   check if the UID matches a known binding phrase
+2. **FHSS sequence calculator** — given the UID, compute the full 256-entry
+   hopping sequence for packet injection
+3. **OTA packet forger** — craft valid ELRS packets to override the
+   legitimate TX and commandeer the drone
+
+---
+
+## 7. Files Produced
 
 | File | Location | Purpose |
 |---|---|---|
 | `E8-SERIAL-CHARACTERIZATION.md` | Repo root | This document |
-| `msp_probe.py` | Session scratchpad | MSP v1/v2 + CLI probe script |
-| `passive_listen.py` | Session scratchpad | Multi-protocol passive listener |
-| `deep_probe.py` | Session scratchpad | DTR reset, boot detection, long listen |
+| `tools/e8-read-config.py` | Repo | Vendor read script (dry-run default, `--execute` to send) |
+| `tools/elrs-serial-probe.py` | Repo | CRSF serial probe with passive/active/param-dump modes |
+| `research/E8-USB-CHARACTERIZATION.md` | Repo | Detailed USB/configurator reverse engineering |
+| `research/E8-COLLABORATION.md` | Repo | Codex/Claude coordination notes |
+| `HARDWARE-IDENTITY.md` | Repo | Hardware identity evidence and discovery log |
+| Various probe scripts | Session scratchpad | MSP, passive listen, deep probe, wake probe, serial config sweep, Qt-mimic, raw Win32 API |
 
-The scratchpad scripts are session-local. The MSP probe script should be moved to
-`tools/` and committed once validated against the powered-on device.
+Session scratchpad scripts are ephemeral. The committed tools in `tools/`
+are the production-ready versions.
