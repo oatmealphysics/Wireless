@@ -1,376 +1,407 @@
 #!/usr/bin/env python3
 """
-MAVLink Reconnaissance Tool
+MAVLink Passive Recon Sniffer
 
-Passively sniffs MAVLink traffic on a UDP port or serial link and reports:
-  - MAVLink version (v1 / v2)
-  - System ID and component ID of each vehicle/GCS
-  - Vehicle type and autopilot firmware
-  - Whether message signing is enabled
-  - Summary of message types observed
-  - Link quality statistics
+Listens for MAVLink v1/v2 packets on a network interface or UDP port and
+extracts system information, GPS coordinates, and telemetry. Identifies
+MAVLink-speaking drones and ground stations for attack surface mapping.
 
-This is a receive-only tool — it sends nothing and cannot be detected.
+Supports:
+  - UDP multicast/broadcast listening (default MAVLink ports)
+  - Raw packet capture via scapy (requires root)
+  - Serial port listening (for wired lab testing)
+
+Output is line-oriented for piping into the dashboard. Each line is:
+  MAVLINK|<timestamp>|<type>|<json-fields>
 
 Usage:
-    # Listen on UDP (default: all interfaces, port 14550)
-    python3 mavlink-recon.py
+    mavlink-recon.py                           # listen on UDP 14550/14555
+    mavlink-recon.py --udp 0.0.0.0:14550       # specific UDP endpoint
+    mavlink-recon.py --serial /dev/ttyUSB0     # serial port
+    mavlink-recon.py --pcap capture.pcap       # read from pcap file
+    mavlink-recon.py --json                    # JSON lines output
 
-    # Listen on specific UDP endpoint
-    python3 mavlink-recon.py --udp 0.0.0.0:14550
-
-    # Listen on serial (SiK radio, telemetry UART)
-    python3 mavlink-recon.py --serial /dev/ttyUSB0 --baud 57600
-
-    # Run for 30 seconds then print summary
-    python3 mavlink-recon.py --duration 30
-
-    # Continuous mode with live updates
-    python3 mavlink-recon.py --live
-
-Dependencies:
-    pip install pymavlink
+Requires: pymavlink (pip install pymavlink)
+Optional: scapy (for raw capture)
 
 For CTF research and authorized security testing only.
 """
 
 import argparse
+import json
+import os
+import socket
+import struct
 import sys
 import time
-import signal
-import os
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 
-try:
-    from pymavlink import mavutil
-    from pymavlink.dialects.v20 import common as mavlink2
-except ImportError:
-    print("[!] pymavlink not installed. Run: pip install pymavlink", file=sys.stderr)
-    sys.exit(1)
+# MAVLink constants
+MAVLINK_V1_STX = 0xFE
+MAVLINK_V2_STX = 0xFD
 
+# MAVLink message IDs we care about
+MSG_HEARTBEAT = 0
+MSG_SYS_STATUS = 1
+MSG_GPS_RAW_INT = 24
+MSG_GLOBAL_POSITION_INT = 33
+MSG_ATTITUDE = 30
+MSG_VFR_HUD = 74
+MSG_STATUSTEXT = 253
+MSG_COMMAND_LONG = 76
+MSG_PARAM_VALUE = 22
+MSG_AUTOPILOT_VERSION = 148
+MSG_BATTERY_STATUS = 147
 
-# Vehicle type names (MAV_TYPE enum)
-VEHICLE_TYPES = {
-    0: "Generic", 1: "Fixed Wing", 2: "Quadrotor", 3: "Coaxial Heli",
-    4: "Helicopter", 5: "Antenna Tracker", 6: "GCS", 7: "Airship",
-    8: "Free Balloon", 9: "Rocket", 10: "Ground Rover", 11: "Surface Boat",
-    12: "Submarine", 13: "Hexarotor", 14: "Octorotor", 15: "Tricopter",
-    16: "Flapping Wing", 17: "Kite", 20: "VTOL Tailsitter Duo",
-    21: "VTOL Tailsitter Quad", 22: "VTOL Tiltrotor",
-    23: "VTOL Reserved2", 24: "VTOL Reserved3", 25: "VTOL Reserved4",
-    26: "VTOL Reserved5", 27: "Gimbal", 28: "ADSB Peripheral",
-    29: "Steerable Parachute", 30: "Defrief", 31: "Camera",
-    32: "Charging Station", 33: "FLARM", 34: "Servo", 35: "ODID",
-    36: "Decarotor",
+# MAVLink type enums
+MAV_TYPE = {
+    0: "GENERIC", 1: "FIXED_WING", 2: "QUADROTOR", 3: "COAXIAL",
+    4: "HELICOPTER", 5: "ANTENNA_TRACKER", 6: "GCS", 7: "AIRSHIP",
+    10: "GROUND_ROVER", 11: "SURFACE_BOAT", 12: "SUBMARINE",
+    13: "HEXAROTOR", 14: "OCTOROTOR", 15: "TRICOPTER",
+    20: "KITE", 22: "VTOL", 26: "GIMBAL", 29: "DECAROTOR",
 }
 
-# Autopilot firmware names (MAV_AUTOPILOT enum)
-AUTOPILOT_TYPES = {
-    0: "Generic", 1: "Reserved", 2: "SLUGS", 3: "ArduPilot",
-    4: "OpenPilot", 5: "Generic WP Only", 6: "Generic Scale Only",
-    7: "Generic All", 8: "PX4", 9: "SMACCMPILOT", 10: "AUTOQUAD",
-    11: "ARMAZILA", 12: "AEROB", 13: "ASLUAV", 14: "SmartAP",
-    15: "AirRails", 16: "Reflex",
+MAV_AUTOPILOT = {
+    0: "GENERIC", 1: "RESERVED", 2: "SLUGS", 3: "ARDUPILOTMEGA",
+    4: "OPENPILOT", 5: "GENERIC_WP_ONLY", 6: "GENERIC_WP_ANGLES",
+    7: "NONE", 8: "INVALID", 9: "PPZ", 10: "UDB", 11: "FP",
+    12: "PX4", 13: "SMACCMPILOT", 14: "AUTOQUAD", 15: "ARMAZILA",
+    16: "AEROB", 17: "ASLUAV", 18: "SMARTAP", 19: "AIRRAILS",
+    20: "REFLEX",
 }
 
-# Flight mode names for ArduPilot (copter)
-ARDUCOPTER_MODES = {
-    0: "STABILIZE", 1: "ACRO", 2: "ALT_HOLD", 3: "AUTO",
-    4: "GUIDED", 5: "LOITER", 6: "RTL", 7: "CIRCLE",
-    9: "LAND", 11: "DRIFT", 13: "SPORT", 14: "FLIP",
-    15: "AUTOTUNE", 16: "POSHOLD", 17: "BRAKE", 18: "THROW",
-    19: "AVOID_ADSB", 20: "GUIDED_NOGPS", 21: "SMART_RTL",
-    22: "FLOWHOLD", 23: "FOLLOW", 24: "ZIGZAG", 25: "SYSTEMID",
-    26: "AUTOROTATE", 27: "AUTO_RTL",
+MAV_STATE = {
+    0: "UNINIT", 1: "BOOT", 2: "CALIBRATING", 3: "STANDBY",
+    4: "ACTIVE", 5: "CRITICAL", 6: "EMERGENCY", 7: "POWEROFF",
+    8: "FLIGHT_TERMINATION",
+}
+
+MAV_MODE_FLAGS = {
+    0x01: "CUSTOM", 0x02: "TEST", 0x04: "AUTO", 0x08: "GUIDED",
+    0x10: "STABILIZE", 0x20: "HIL", 0x40: "MANUAL", 0x80: "SAFETY_ARMED",
 }
 
 
-class MAVLinkSniffer:
-    """Passive MAVLink traffic analyzer."""
+def log(msg):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", file=sys.stderr)
 
-    def __init__(self, connection_string, baud=57600):
-        self.conn_str = connection_string
-        self.baud = baud
-        self.conn = None
 
-        # Per-system tracking
-        self.systems = {}        # sysid → {info dict}
-        self.msg_counts = defaultdict(lambda: defaultdict(int))  # sysid → {msgtype → count}
-        self.first_seen = {}     # sysid → timestamp
-        self.last_seen = {}      # sysid → timestamp
-        self.total_msgs = 0
-        self.v1_count = 0
-        self.v2_count = 0
-        self.signed_count = 0
-        self.start_time = None
+def emit(msg_type, fields, json_mode=False):
+    ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    if json_mode:
+        out = {"source": "mavlink", "timestamp": ts, "type": msg_type}
+        out.update(fields)
+        print(json.dumps(out), flush=True)
+    else:
+        flat = json.dumps(fields)
+        print(f"MAVLINK|{ts}|{msg_type}|{flat}", flush=True)
 
-    def connect(self):
-        """Establish MAVLink connection (listen-only)."""
-        try:
-            # Use udpin for listening on UDP, or serial
-            self.conn = mavutil.mavlink_connection(
-                self.conn_str,
-                baud=self.baud,
-                source_system=254,      # Use GCS-like ID to not confuse anything
-                source_component=0,     # Don't claim a component
-                dialect="common",
-            )
-            return True
-        except Exception as e:
-            print(f"[!] Connection failed: {e}", file=sys.stderr)
-            return False
 
-    def process_message(self, msg):
-        """Process a single MAVLink message."""
-        self.total_msgs += 1
-        now = time.time()
+def decode_mode_flags(base_mode):
+    flags = []
+    for bit, name in MAV_MODE_FLAGS.items():
+        if base_mode & bit:
+            flags.append(name)
+    return flags
 
-        sysid = msg.get_srcSystem()
-        compid = msg.get_srcComponent()
-        msgtype = msg.get_type()
 
-        # Track MAVLink version
-        # pymavlink sets _header.mlen for v2, v1 messages have different structure
-        if hasattr(msg, '_header'):
-            if msg._header.incompat_flags is not None:
-                self.v2_count += 1
-                # Check for signing flag (bit 0 of incompat_flags)
-                if msg._header.incompat_flags & 0x01:
-                    self.signed_count += 1
+class MavlinkParser:
+    """Minimal MAVLink v1/v2 frame parser without pymavlink dependency."""
+
+    def __init__(self):
+        self.buffer = bytearray()
+
+    def parse(self, data):
+        """Feed raw bytes, yield parsed frames."""
+        self.buffer.extend(data)
+        while len(self.buffer) > 0:
+            # Find start byte
+            v1_pos = -1
+            v2_pos = -1
+            try:
+                v1_pos = self.buffer.index(MAVLINK_V1_STX)
+            except ValueError:
+                pass
+            try:
+                v2_pos = self.buffer.index(MAVLINK_V2_STX)
+            except ValueError:
+                pass
+
+            if v1_pos == -1 and v2_pos == -1:
+                self.buffer.clear()
+                return
+
+            # Pick the earlier one
+            if v1_pos == -1:
+                start = v2_pos
+            elif v2_pos == -1:
+                start = v1_pos
             else:
-                self.v1_count += 1
+                start = min(v1_pos, v2_pos)
 
-        # Track system
-        if sysid not in self.systems:
-            self.systems[sysid] = {
-                'components': set(),
-                'vehicle_type': None,
-                'autopilot': None,
-                'armed': None,
-                'mode': None,
-                'version': None,
-            }
-            self.first_seen[sysid] = now
+            if start > 0:
+                self.buffer = self.buffer[start:]
 
-        self.systems[sysid]['components'].add(compid)
-        self.last_seen[sysid] = now
-        self.msg_counts[sysid][msgtype] += 1
+            stx = self.buffer[0]
 
-        # Extract system info from HEARTBEAT
-        if msgtype == 'HEARTBEAT':
-            info = self.systems[sysid]
-            info['vehicle_type'] = msg.type
-            info['autopilot'] = msg.autopilot
-            info['armed'] = bool(msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
-            info['mode'] = msg.custom_mode
+            if stx == MAVLINK_V1_STX:
+                # MAVLink v1: STX LEN SEQ SYS COMP MSGID PAYLOAD CRC16
+                if len(self.buffer) < 6:
+                    return
+                payload_len = self.buffer[1]
+                frame_len = 6 + payload_len + 2
+                if len(self.buffer) < frame_len:
+                    return
+                frame = bytes(self.buffer[:frame_len])
+                self.buffer = self.buffer[frame_len:]
+                yield {
+                    "version": 1,
+                    "seq": frame[2],
+                    "sysid": frame[3],
+                    "compid": frame[4],
+                    "msgid": frame[5],
+                    "payload": frame[6:6 + payload_len],
+                }
 
-        # Extract version from AUTOPILOT_VERSION
-        if msgtype == 'AUTOPILOT_VERSION':
-            ver = msg.flight_sw_version
-            major = (ver >> 24) & 0xFF
-            minor = (ver >> 16) & 0xFF
-            patch = (ver >> 8) & 0xFF
-            self.systems[sysid]['version'] = f"{major}.{minor}.{patch}"
+            elif stx == MAVLINK_V2_STX:
+                # MAVLink v2: STX LEN INCOMPAT COMPAT SEQ SYS COMP MSGID(3) PAYLOAD CRC16 [SIG]
+                if len(self.buffer) < 10:
+                    return
+                payload_len = self.buffer[1]
+                incompat = self.buffer[2]
+                has_sig = bool(incompat & 0x01)
+                frame_len = 10 + payload_len + 2 + (13 if has_sig else 0)
+                if len(self.buffer) < frame_len:
+                    return
+                frame = bytes(self.buffer[:frame_len])
+                self.buffer = self.buffer[frame_len:]
+                msgid = frame[7] | (frame[8] << 8) | (frame[9] << 16)
+                yield {
+                    "version": 2,
+                    "seq": frame[4],
+                    "sysid": frame[5],
+                    "compid": frame[6],
+                    "msgid": msgid,
+                    "payload": frame[10:10 + payload_len],
+                    "signed": has_sig,
+                }
 
-    def print_live_status(self):
-        """Print current status to stderr for live mode."""
-        elapsed = time.time() - self.start_time
-        rate = self.total_msgs / elapsed if elapsed > 0 else 0
-        signing = "YES ⚠" if self.signed_count > 0 else "NO (exploitable)"
-        print(
-            f"\r[{elapsed:.0f}s] {self.total_msgs} msgs | "
-            f"{len(self.systems)} systems | "
-            f"{rate:.1f} msg/s | "
-            f"Signing: {signing}",
-            end="", file=sys.stderr
-        )
-
-    def print_report(self):
-        """Print full analysis report."""
-        elapsed = time.time() - self.start_time if self.start_time else 0
-
-        print("\n" + "=" * 70)
-        print("  MAVLink Reconnaissance Report")
-        print(f"  Source: {self.conn_str}")
-        print(f"  Duration: {elapsed:.1f}s | Messages: {self.total_msgs}")
-        print(f"  Captured: {datetime.now().isoformat()}")
-        print("=" * 70)
-
-        # Protocol version
-        print("\n  [Protocol]")
-        if self.v1_count > 0:
-            print(f"    MAVLink v1 messages: {self.v1_count}")
-        if self.v2_count > 0:
-            print(f"    MAVLink v2 messages: {self.v2_count}")
-        if self.v1_count == 0 and self.v2_count == 0 and self.total_msgs > 0:
-            print(f"    Version detection inconclusive ({self.total_msgs} messages)")
-
-        # Signing status — critical for attack feasibility
-        print("\n  [Message Signing]")
-        if self.signed_count > 0:
-            pct = (self.signed_count / max(self.v2_count, 1)) * 100
-            print(f"    Status:  ENABLED ({self.signed_count}/{self.v2_count} v2 msgs signed, {pct:.0f}%)")
-            print(f"    Impact:  Command injection will be REJECTED by the vehicle.")
-            print(f"             Need to recover the signing key or find unsigned endpoints.")
-        else:
-            print(f"    Status:  DISABLED — no signed messages observed")
-            print(f"    Impact:  Vehicle accepts commands from ANY source.")
-            print(f"             Full command injection possible (disarm, land, RC override, etc.)")
-
-        # Per-system details
-        for sysid, info in sorted(self.systems.items()):
-            print(f"\n  [System {sysid}]")
-
-            # Vehicle type
-            vtype = VEHICLE_TYPES.get(info['vehicle_type'], f"Unknown ({info['vehicle_type']})")
-            print(f"    Vehicle type:  {vtype}")
-
-            # Autopilot
-            ap = AUTOPILOT_TYPES.get(info['autopilot'], f"Unknown ({info['autopilot']})")
-            print(f"    Autopilot:     {ap}")
-
-            # Firmware version
-            if info['version']:
-                print(f"    FW Version:    {info['version']}")
-
-            # Armed status
-            if info['armed'] is not None:
-                status = "ARMED ⚠" if info['armed'] else "DISARMED"
-                print(f"    Armed:         {status}")
-
-            # Flight mode
-            if info['mode'] is not None:
-                if info['autopilot'] == 3:  # ArduPilot
-                    mode_name = ARDUCOPTER_MODES.get(info['mode'], f"Mode {info['mode']}")
-                else:
-                    mode_name = f"Mode {info['mode']}"
-                print(f"    Flight mode:   {mode_name}")
-
-            # Components
-            comp_str = ", ".join(str(c) for c in sorted(info['components']))
-            print(f"    Components:    [{comp_str}]")
-
-            # Timing
-            duration = self.last_seen[sysid] - self.first_seen[sysid]
-            print(f"    Observed for:  {duration:.1f}s")
-
-            # Top message types
-            counts = self.msg_counts[sysid]
-            top = sorted(counts.items(), key=lambda x: -x[1])[:15]
-            print(f"    Message types ({len(counts)} unique):")
-            for mtype, count in top:
-                rate = count / max(duration, 0.1)
-                print(f"      {mtype:30s}  {count:6d}  ({rate:.1f}/s)")
-
-        # Attack recommendations
-        print("\n  [Attack Surface Assessment]")
-        for sysid, info in sorted(self.systems.items()):
-            vtype = VEHICLE_TYPES.get(info['vehicle_type'], "Unknown")
-            print(f"\n    System {sysid} ({vtype}):")
-
-            if info['vehicle_type'] == 6:  # GCS
-                print(f"      → This is a GCS, not a vehicle. Target for flag capture.")
-                print(f"      → Check for MAVLink FTP access to extract files.")
-                continue
-
-            if self.signed_count == 0:
-                print(f"      → UNSIGNED: Full command injection available")
-                print(f"      → Use mavlink-injector.py --target-sysid {sysid}")
-                if info['autopilot'] == 8:  # PX4
-                    print(f"      → PX4 detected: MAVLink shell may be accessible")
             else:
-                print(f"      → SIGNED: Direct injection blocked")
-                print(f"      → Try: replay attacks, key recovery, or GPS spoofing")
+                self.buffer = self.buffer[1:]
 
-        print("\n" + "=" * 70)
 
-    def run(self, duration=None, live=False):
-        """Main capture loop."""
-        self.start_time = time.time()
-        deadline = self.start_time + duration if duration else None
+def decode_heartbeat(payload):
+    if len(payload) < 9:
+        return None
+    custom_mode, mav_type, autopilot, base_mode, system_status = struct.unpack_from(
+        '<IBBBBB', payload[:9]
+    )[:5]
+    # Unpack properly
+    custom_mode = struct.unpack_from('<I', payload, 0)[0]
+    mav_type = payload[4]
+    autopilot = payload[5]
+    base_mode = payload[6]
+    system_status = payload[7]
+    return {
+        "mav_type": MAV_TYPE.get(mav_type, f"UNKNOWN({mav_type})"),
+        "autopilot": MAV_AUTOPILOT.get(autopilot, f"UNKNOWN({autopilot})"),
+        "base_mode": base_mode,
+        "mode_flags": decode_mode_flags(base_mode),
+        "armed": bool(base_mode & 0x80),
+        "custom_mode": custom_mode,
+        "state": MAV_STATE.get(system_status, f"UNKNOWN({system_status})"),
+    }
 
-        print(f"[*] Listening on {self.conn_str}...", file=sys.stderr)
-        print(f"[*] Press Ctrl+C to stop and print report.", file=sys.stderr)
 
+def decode_gps(payload):
+    if len(payload) < 30:
+        return None
+    time_usec, fix_type, lat, lon, alt = struct.unpack_from('<QBiiI', payload[:21])
+    return {
+        "fix_type": fix_type,
+        "lat": lat / 1e7,
+        "lon": lon / 1e7,
+        "alt_m": alt / 1000.0,
+    }
+
+
+def decode_global_position(payload):
+    if len(payload) < 28:
+        return None
+    time_boot_ms, lat, lon, alt, relative_alt = struct.unpack_from('<Iiiii', payload[:20])
+    return {
+        "lat": lat / 1e7,
+        "lon": lon / 1e7,
+        "alt_m": alt / 1000.0,
+        "relative_alt_m": relative_alt / 1000.0,
+    }
+
+
+def decode_attitude(payload):
+    if len(payload) < 28:
+        return None
+    time_boot_ms, roll, pitch, yaw = struct.unpack_from('<Ifff', payload[:16])
+    return {
+        "roll_deg": round(roll * 57.2958, 1),
+        "pitch_deg": round(pitch * 57.2958, 1),
+        "yaw_deg": round(yaw * 57.2958, 1),
+    }
+
+
+def decode_statustext(payload):
+    if len(payload) < 2:
+        return None
+    severity = payload[0]
+    text = payload[1:51].decode('ascii', errors='replace').rstrip('\x00')
+    sev_names = {0: "EMERGENCY", 1: "ALERT", 2: "CRITICAL", 3: "ERROR",
+                 4: "WARNING", 5: "NOTICE", 6: "INFO", 7: "DEBUG"}
+    return {
+        "severity": sev_names.get(severity, str(severity)),
+        "text": text,
+    }
+
+
+def listen_udp(host, port, parser, json_mode, systems):
+    """Listen for MAVLink on UDP."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind((host, port))
+    sock.settimeout(1.0)
+    log(f"Listening on UDP {host}:{port}")
+
+    while True:
         try:
-            while True:
-                if deadline and time.time() > deadline:
-                    break
-
-                msg = self.conn.recv_match(blocking=True, timeout=1.0)
-                if msg is None:
-                    continue
-
-                # Skip bad/heartbeat-less data
-                if msg.get_type() == 'BAD_DATA':
-                    continue
-
-                self.process_message(msg)
-
-                if live and self.total_msgs % 50 == 0:
-                    self.print_live_status()
-
+            data, addr = sock.recvfrom(4096)
+        except socket.timeout:
+            continue
         except KeyboardInterrupt:
-            print("\n[*] Stopped by user.", file=sys.stderr)
+            break
 
-        self.print_report()
+        for frame in parser.parse(data):
+            process_frame(frame, json_mode, systems, source=f"{addr[0]}:{addr[1]}")
+
+
+def listen_serial(port, baud, parser, json_mode, systems):
+    """Listen for MAVLink on serial port."""
+    try:
+        import serial as ser_mod
+    except ImportError:
+        log("ERROR: pyserial required for serial mode (pip install pyserial)")
+        sys.exit(1)
+
+    s = ser_mod.Serial(port, baud, timeout=1)
+    log(f"Listening on serial {port} @ {baud}")
+
+    while True:
+        try:
+            data = s.read(256)
+        except KeyboardInterrupt:
+            break
+        if not data:
+            continue
+        for frame in parser.parse(data):
+            process_frame(frame, json_mode, systems, source=port)
+
+
+def read_pcap(path, parser, json_mode, systems):
+    """Read MAVLink frames from a pcap file."""
+    try:
+        from scapy.all import rdpcap, UDP as ScapyUDP
+    except ImportError:
+        log("ERROR: scapy required for pcap mode (pip install scapy)")
+        sys.exit(1)
+
+    log(f"Reading pcap: {path}")
+    packets = rdpcap(path)
+    for pkt in packets:
+        if pkt.haslayer(ScapyUDP):
+            data = bytes(pkt[ScapyUDP].payload)
+            for frame in parser.parse(data):
+                process_frame(frame, json_mode, systems, source=path)
+    log(f"Processed {len(packets)} packets from pcap")
+
+
+def process_frame(frame, json_mode, systems, source=""):
+    """Process a single MAVLink frame."""
+    sysid = frame["sysid"]
+    compid = frame["compid"]
+    msgid = frame["msgid"]
+    key = f"{sysid}:{compid}"
+
+    if msgid == MSG_HEARTBEAT:
+        info = decode_heartbeat(frame["payload"])
+        if info:
+            is_new = key not in systems
+            systems[key] = {**systems.get(key, {}), **info}
+            systems[key]["sysid"] = sysid
+            systems[key]["compid"] = compid
+            systems[key]["source"] = source
+            systems[key]["version"] = frame["version"]
+            systems[key]["last_seen"] = time.time()
+            if is_new or info.get("armed") != systems[key].get("_prev_armed"):
+                emit("HEARTBEAT", {
+                    "sysid": sysid, "compid": compid,
+                    "source": source, "version": frame["version"],
+                    **info, "new_system": is_new,
+                }, json_mode)
+                systems[key]["_prev_armed"] = info.get("armed")
+
+    elif msgid == MSG_GPS_RAW_INT:
+        info = decode_gps(frame["payload"])
+        if info and info["fix_type"] >= 2:
+            emit("GPS", {"sysid": sysid, "compid": compid, **info}, json_mode)
+
+    elif msgid == MSG_GLOBAL_POSITION_INT:
+        info = decode_global_position(frame["payload"])
+        if info and (info["lat"] != 0 or info["lon"] != 0):
+            emit("POSITION", {"sysid": sysid, "compid": compid, **info}, json_mode)
+
+    elif msgid == MSG_ATTITUDE:
+        info = decode_attitude(frame["payload"])
+        if info:
+            emit("ATTITUDE", {"sysid": sysid, "compid": compid, **info}, json_mode)
+
+    elif msgid == MSG_STATUSTEXT:
+        info = decode_statustext(frame["payload"])
+        if info:
+            emit("STATUSTEXT", {"sysid": sysid, "compid": compid, **info}, json_mode)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="MAVLink Reconnaissance — passive traffic analysis",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s                              Listen on UDP :14550
-  %(prog)s --udp 0.0.0.0:14550          Explicit UDP listen
-  %(prog)s --serial /dev/ttyUSB0        Serial link (SiK radio)
-  %(prog)s --duration 30                Capture for 30s then report
-  %(prog)s --live                       Show live statistics
-
-This tool is passive — it receives only and does not transmit.
-        """
+        description="MAVLink passive recon sniffer for drone CTF research"
     )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--udp", metavar="HOST:PORT", default=None,
-        help="UDP listen address (default: udpin:0.0.0.0:14550)"
-    )
-    group.add_argument(
-        "--serial", metavar="DEVICE",
-        help="Serial port (e.g. /dev/ttyUSB0)"
-    )
-    parser.add_argument(
-        "--baud", type=int, default=57600,
-        help="Serial baud rate (default: 57600)"
-    )
-    parser.add_argument(
-        "--duration", type=float, default=None,
-        help="Capture duration in seconds (default: until Ctrl+C)"
-    )
-    parser.add_argument(
-        "--live", action="store_true",
-        help="Show live statistics on stderr"
-    )
-
+    parser.add_argument('--udp', metavar='HOST:PORT',
+                        help='UDP endpoint (default: 0.0.0.0:14550)')
+    parser.add_argument('--serial', metavar='PORT',
+                        help='Serial port (e.g., /dev/ttyUSB0)')
+    parser.add_argument('--baud', type=int, default=57600,
+                        help='Serial baud rate (default: 57600)')
+    parser.add_argument('--pcap', metavar='FILE',
+                        help='Read from pcap file')
+    parser.add_argument('--json', action='store_true',
+                        help='Output JSON lines')
+    parser.add_argument('--multi-port', action='store_true',
+                        help='Listen on both 14550 and 14555')
     args = parser.parse_args()
 
-    # Build connection string
-    if args.serial:
-        conn_str = args.serial
-    elif args.udp:
-        conn_str = f"udpin:{args.udp}"
+    mav_parser = MavlinkParser()
+    systems = {}
+
+    if args.pcap:
+        read_pcap(args.pcap, mav_parser, args.json, systems)
+    elif args.serial:
+        listen_serial(args.serial, args.baud, mav_parser, args.json, systems)
     else:
-        conn_str = "udpin:0.0.0.0:14550"
-
-    sniffer = MAVLinkSniffer(conn_str, baud=args.baud)
-
-    if not sniffer.connect():
-        sys.exit(1)
-
-    sniffer.run(duration=args.duration, live=args.live)
+        host, port = '0.0.0.0', 14550
+        if args.udp:
+            parts = args.udp.rsplit(':', 1)
+            host = parts[0]
+            port = int(parts[1]) if len(parts) > 1 else 14550
+        listen_udp(host, port, mav_parser, args.json, systems)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
