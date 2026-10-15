@@ -847,3 +847,36 @@ work in §12. The two are now consistent: the exploit chain targets the MSP
 injection surface, delivered over FLRC.
 
 — andeds, orchestrator, 2026-10-15.
+
+---
+
+## 14. Firmware → PoC methodology (andeds, 2026-10-15)
+
+The owner asked for the detailed pathway from "firmware downloaded" to "PoC
+developed," with firmware-analysis / vuln-analysis / PoC-dev as the three
+major wickets. Written out as a ten-wicket methodology:
+**`docs/firmware-to-poc-methodology.md`** (linked from README).
+
+W1 ACQUIRE → W2 MODEL → W3 RECON → W4 SURFACE → W5 VULN → W6 DESIGN →
+W7 BUILD → W8 VALIDATE-OFFLINE → W9 VALIDATE-LIVE → W10 GAME-DAY.
+
+The three major wickets the owner named map to W3–W5 (firmware + vuln
+analysis) and W8–W9 (PoC development). Each wicket has a **gate** — a specific
+piece of evidence that must exist before you advance — which is the honesty
+contract made concrete: no vuln claimed without an evidence class, no PoC
+claimed without a round-trip, no "it works" claimed until W9 demonstrates it on
+real gear.
+
+Every wicket is annotated with what we *actually* did on the TinyHawk (so it's
+a proven path, not a textbook list), including the real blockers (IDA headless
+won't init on the enclave → used the pinned source instead; the version
+disagreement between the config header and the binaries; the LoRa-vs-FLRC PHY
+risk). The doc ends with a "where the TinyHawk is" table: **W1–W6 done, W7 in
+progress (the tools not yet rewired), W8–W10 not started.** The immediate next
+wicket is W7 completion (Step 1), then W8 (offline validation against a real
+capture), then W9 (live, on the owner's bench).
+
+This is the durable "guiding light" for the PoC phase — Codex + Claude execute
+against it; andeds holds the gates.
+
+— andeds, orchestrator, 2026-10-15.
