@@ -144,40 +144,65 @@ firmware image. See `HARDWARE-IDENTITY.md` before selecting a device target.
 
 ## Current State and Open Work
 
-> **The way ahead is in [`SESSION-NOTES.md`](SESSION-NOTES.md), §1–§7
-> (andeds, orchestrator, 2026-10-15).** Read that first. It records the full
-> code-level review, the three P1 protocol defects (re-verified in code), the
-> CTF facts the owner must gather before we commit to an attack path, and the
-> execution plan for once the path is chosen. The "Open Questions" below are
-> re-scoped there as §4 (Q1–Q9) and are the real blocker, not the code.
+> **The way ahead is in [`SESSION-NOTES.md`](SESSION-NOTES.md).** Read §1–§7
+> for the orchestrator's code-level review and P1 defect list, §16–§17 for the
+> 4.4.2 rewire and vendored-tool fixes, and **§18 for the Layer 2 wireless
+> attack program** (owner-directed, 2026-10-15). The Layer 2 research is in
+> [`research/layer2-wireless-attack-research.md`](research/layer2-wireless-attack-research.md).
+
+### Owner direction (2026-10-15): ELRS first, ~1 month timeline
+
+The owner committed to an attack path without waiting for all Q1–Q9 answers:
+**prove the ELRS chain end-to-end on the TinyHawk III + E8 first**, then
+expand to DJI and other targets. Target completion: mid-November 2026.
+
+The program has three chains. Chain 1 (ELRS) is the active priority:
+1. **Chain 1 — ELRS WiFi mode exploitation** (P1, active): Force TX into WiFi
+   mode → extract binding phrase → derive FHSS/CRC → forge ELRS packets → drone control
+2. **Chain 2 — WiFi → MAVLink injection** (P1, parallel): Evil twin / rogue AP
+   → network access → MAVLink command injection. Uses SITL, no hw acquisition.
+3. **Chain 3 — DJI BLE exploitation** (P2, after Chain 1 proven): CVE-2026-78306
+   BLE command injection. Requires DJI hardware acquisition.
 
 ### Done
 - Vulnerability reference document covering WiFi, BLE, ELRS, MAVLink, GPS, chipset exploitation (~1555 lines)
 - 7-phase attack research plan with lab exercises
-- Firmware corpus: Betaflight hex/bin, ELRS source, unified target configs (11 artifacts, SHA256-verified)
+- Firmware corpus: Betaflight 4.4.2 + 2026.6.2, ELRS 4.1.0, ArduPilot 4.7.2, PX4 1.18.0-rc1, Tello SDK (24 artifacts, SHA256-verified)
 - ELRS binding phrase rainbow table generator (723 phrases, reverse SYNC lookup)
 - CRSF serial probe tool for USB-connected ELRS devices
 - 5 exploit chains (ELRS / MAVLink / Wi-Fi-Tello / multi-recon) + supporting tools
-- Differential review (`Harness_DIFFERENTIAL_REVIEW_2026-10-15.md`) + orchestrator re-verification (SESSION-NOTES §1–§3)
+- Differential review + orchestrator re-verification (SESSION-NOTES §1–§3)
+- Live TinyHawk III firmware identification: Betaflight 4.4.2 (not 2026.6.2)
+- Complete ELRS 4.4.2 vs 2026.6.2 source diff (attack parameters confirmed for v3)
+- ELRS vendored-tool OTA v3 fixes (§16–§17): analyzer, forger, chain default to v3
+- Layer 2 wireless attack surface analysis and target landscape mapping
 
-### In Progress
-- **Path commitment** — owner to answer the CTF facts (SESSION-NOTES §4, Q1–Q9), then we pick one attack path
+### In Progress (Chain 1 — ELRS WiFi mode exploitation)
+- **Week 1:** ELRS WiFi mode recon on E8 — confirm WiFi mode entry, document AP behavior
+- **Week 1–2:** WiFi config extractor tool — connect to ELRS AP, extract binding phrase/UID
+- **Week 2:** RF disruption feasibility — characterize methods to force WiFi mode timeout
+- **Week 2–3:** End-to-end Chain 1 dry run (simulation, no TX)
+- **Week 3–4:** Live RF validation with SDR (B205/B210)
+- **Week 4:** Game-day playbook as timed operator checklist
+
+### In Progress (Chain 2 — parallel)
+- Evil twin / rogue AP automation tool
+- MAVLink MitM proxy
+- MAVLink injection over WiFi (SITL validation)
+
+### In Progress (other)
 - Serial testing of EMAX E8 over USB (needs battery power) — read-only, no-flash
 
-### Blocked on owner (do not start tool work until these are answered)
-- The CTF target platform(s), flag location, exposed interfaces, rules (allowed/disallowed), scoring model, recon window, proximity, game-day hardware, UID recoverability — see SESSION-NOTES §4
+### Not Yet Started
+- Chain 3: DJI BLE exploitation (after Chain 1 proven + DJI hw acquired)
+- Phase D: game-day playbook re-grounded in live RF output
+- Firmware binary analysis in Ghidra (4.4.2 binary ready)
+- ESP32 BLE exploitation (BrakTooth, if E8 BT is active)
 
-### Not Started (sequenced in SESSION-NOTES §5 after path commitment)
-- Phase B: protocol conformance fixes on the chosen path (P1-1/2/3 + P2-7 + P2-8) against the reference implementation
-- Phase C: real LoRa PHY + bench RF validation (ELRS path only)
-- Phase D: game-day playbook re-grounded in Phase C output + home-lab dry-run
-- Firmware binary analysis in Ghidra
-- Additional hardware acquisition (Tello, Pixhawk, ESP32 dev board, etc.)
-
-### Open Questions (re-scoped — see SESSION-NOTES §4)
-- What drones/protocols will the CTF use? → **Q1** (blocks path commitment)
-- Is RF jamming allowed? Is GPS spoofing allowed? → **Q4**
-- Scoring model — is commandeering worth more than DoS? → **Q5**
-- Physical layout — how close can attackers get to targets? → **Q7**
-- Is there a flag format or submission API? → **Q2**
-- (plus Q3, Q6, Q8, Q9 in SESSION-NOTES §4)
+### Open Questions (partially resolved — see SESSION-NOTES §4 and §18)
+- CTF target platform(s) → **Q1** (ELRS path chosen regardless; still informs Chain 2/3 priority)
+- Is RF jamming allowed? → **Q4** (affects Chain 1 WiFi mode forcing method)
+- Scoring model — commandeering vs DoS? → **Q5**
+- Physical layout / proximity? → **Q7**
+- E8 WiFi mode trigger — safe within no-write constraint? → needs owner confirmation
+- (plus Q2, Q3, Q6, Q8, Q9 in SESSION-NOTES §4)

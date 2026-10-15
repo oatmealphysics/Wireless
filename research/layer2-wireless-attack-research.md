@@ -253,17 +253,17 @@ Cheerson CX-10W, Syma X5UW, numerous cheap camera drones
 
 Ranked by CTF likelihood × exploitability:
 
-| Priority | Target | Wireless entry | Pivot to control | Lab-testable? |
-|---|---|---|---|---|
-| **P1** | ELRS TX (ESP32) | WiFi mode exploitation (force + connect) | Extract binding phrase → forge ELRS packets | Yes — our E8 (read-only) |
-| **P1** | WiFi toy drone (Tello etc.) | Deauth + rogue AP, or direct join | Send UDP commands directly | Yes — if we acquire a Tello |
-| **P1** | MAVLink GCS on WiFi | Evil twin, WPA crack, network injection | MAVLink command injection over UDP | Yes — SITL + laptop + ALFA |
-| **P2** | DJI controller | BLE exploitation (CVE-2026-78306) | BLE command injection → DoS / WiFi cred theft | Need DJI hardware |
-| **P2** | DJI Enhanced WiFi drone | WiFi MitM (deauth + evil twin) | Command injection over WiFi link | Need DJI Mini SE or similar |
-| **P3** | ESP32 BLE (BrakTooth) | BLE LMP overflow (CVE-2021-28139) | Crash / potential code exec on ESP32 | Yes — our E8 if BT active |
-| **P3** | Crossfire TX | RF capture + reverse binding | CRSF packet forgery | Need TBS hardware + SDR |
-| **P3** | Linux GCS kernel | WiFi driver exploit or BleedingTooth | Kernel RCE → full GCS control | Partially — our own machine |
-| **P4** | FrSky ACCESS | Unknown — no public research | Unknown | Need FrSky hardware |
+| Priority | Target | Wireless entry | Pivot to control | Lab-testable? | Status |
+|---|---|---|---|---|---|
+| **P1 — NOW** | ELRS TX (ESP32) | WiFi mode exploitation (force + connect) | Extract binding phrase → forge ELRS packets | Yes — our E8 (read-only) | **Active — prove end-to-end first** |
+| **P1 — NOW** | MAVLink GCS on WiFi | Evil twin, WPA crack, network injection | MAVLink command injection over UDP | Yes — SITL + laptop + ALFA | Can run in parallel (no hw needed) |
+| **P2 — after ELRS proven** | DJI controller | BLE exploitation (CVE-2026-78306) | BLE command injection → DoS / WiFi cred theft | After DJI hw acquisition | Sequenced after Chain 1 proven |
+| **P2 — after ELRS proven** | DJI Enhanced WiFi drone | WiFi MitM (deauth + evil twin) | Command injection over WiFi link | After DJI hw acquisition | Sequenced after Chain 1 proven |
+| **P2** | WiFi toy drone (Tello etc.) | Deauth + rogue AP, or direct join | Send UDP commands directly | Yes — if we acquire a Tello | Tools mostly built |
+| **P3** | ESP32 BLE (BrakTooth) | BLE LMP overflow (CVE-2021-28139) | Crash / potential code exec on ESP32 | Yes — our E8 if BT active | After Chain 1 WiFi path |
+| **P3** | Crossfire TX | RF capture + reverse binding | CRSF packet forgery | Need TBS hardware + SDR | Deferred |
+| **P3** | Linux GCS kernel | WiFi driver exploit or BleedingTooth | Kernel RCE → full GCS control | Partially — our own machine | Deferred |
+| **P4** | FrSky ACCESS | Unknown — no public research | Unknown | Need FrSky hardware | Deferred |
 
 ### What we already have vs. what's missing
 
@@ -426,18 +426,25 @@ DJI drone (NOT in lab — would need to acquire)
 
 ---
 
-## 7. Open Questions (blocks final design)
+## 7. Owner Decisions (2026-10-15)
 
-1. **Timeline:** Is there a specific competition date, or is this open-ended
-   capability building? Determines depth vs. breadth trade-off.
-2. **Hardware acquisition budget:** Which items from §5 acquisition list can
-   we buy? DJI hardware is the most expensive but opens Chain 3.
-3. **RF test environment:** Do we have or can we get a shielded enclosure for
+1. **Timeline:** ~1 month target (mid-November 2026). Build depth on the
+   primary target first, prove it works, then expand.
+2. **Hardware strategy:** Prove capability on the TinyHawk III + EMAX E8
+   (ELRS, Chain 1) first. DJI hardware available once ELRS chain is proven
+   end-to-end. This means Chain 1 is the priority; Chain 3 (DJI BLE) is
+   sequenced after.
+3. **Phasing:** ELRS/E8 first → prove end-to-end → then DJI acquisition →
+   Chain 3. Chain 2 (MAVLink/WiFi) can run in parallel using SITL (no
+   hardware acquisition needed).
+
+### Remaining open questions
+
+1. **RF test environment:** Do we have or can we get a shielded enclosure for
    RF jamming tests? Or do we develop jamming tools in simulation only?
-4. **CTF facts (SESSION-NOTES §4, Q1–Q9):** Still the primary blocker.
-   If we learn the CTF uses DJI, we prioritize Chain 3. If ELRS/FPV racing,
-   Chain 1. If MAVLink autopilot, Chain 2. Without this, we build breadth.
-5. **E8 WiFi mode testing:** Has the E8 been observed in WiFi mode? Can we
+2. **CTF facts (SESSION-NOTES §4, Q1–Q9):** Still inform priority, but we
+   proceed with ELRS as the default path regardless.
+3. **E8 WiFi mode testing:** Has the E8 been observed in WiFi mode? Can we
    safely trigger it (power cycle without RX in range) without violating
    the no-write constraint? Entering WiFi mode is a read-only operation
    on the controller side, but this needs owner confirmation.

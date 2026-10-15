@@ -1205,3 +1205,54 @@ Validation: all three scripts compile; forger `info`, analyzer simulation, and
 chain dry-run complete; `python3 -B tools/validate-project.py` passes all 102
 structural/provenance/link checks. No hardware or TX was used. Live RF capture
 comparison remains the W8 gate.
+
+---
+
+## 18. Layer 2 wireless attack program — owner direction (2026-10-15)
+
+The owner committed to a Layer 2 / chipset-level wireless attack research
+program. The full analysis is in
+[`research/layer2-wireless-attack-research.md`](research/layer2-wireless-attack-research.md).
+Key decisions recorded here for sequencing:
+
+### Owner decisions
+
+1. **Timeline:** ~1 month (target mid-November 2026).
+2. **Prove on ELRS first:** Build and validate the full Chain 1 (ELRS WiFi
+   mode exploitation → binding phrase extraction → ELRS packet forgery →
+   drone control) end-to-end on the TinyHawk III + E8 before acquiring new
+   hardware.
+3. **DJI sequenced after:** DJI hardware available once Chain 1 is proven.
+   Chain 3 (DJI BLE exploitation, CVE-2026-78306) starts then.
+4. **Chain 2 (MAVLink/WiFi) in parallel:** No hardware acquisition needed —
+   SITL + ALFA cards + laptop are sufficient. Can run alongside Chain 1.
+
+### What this changes about the existing plan
+
+The §2/§5 path commitment question is partially answered: **the owner is
+proceeding with ELRS (Chain 1) as the primary path regardless of the Q1–Q9
+answers.** The CTF facts still inform priority of Chains 2 and 3, but Chain 1
+work is unblocked.
+
+This means Phase B (protocol conformance fixes on the ELRS path — P1-2 OTA
+v3 parameterization, which §16/§17 report as already done for the vendored
+tools) and Phase C (real LoRa PHY + bench RF validation) are now the active
+work. The Layer 2 program adds a new stage *before* the existing ELRS chain:
+wireless entry via controller WiFi mode exploitation.
+
+### Execution sequence (Chain 1, ~1 month)
+
+| Week | Milestone | Depends on |
+|---|---|---|
+| 1 | ELRS WiFi mode recon: confirm E8 enters WiFi mode, document AP name/behavior, build WiFi AP scanner tool | Owner confirms WiFi mode trigger is within no-write constraint |
+| 1–2 | ELRS WiFi config extractor: connect to ELRS WiFi AP, extract binding phrase/UID/config via HTTP | WiFi mode recon |
+| 2 | RF disruption feasibility: characterize ELRS link disruption methods to force WiFi mode timeout | E8+TinyHawk bench setup |
+| 2–3 | End-to-end Chain 1 dry run: force WiFi → extract UID → derive FHSS/CRC → forge packets (simulation, no TX) | Extractor + existing ELRS tools (P1-2 fixed) |
+| 3–4 | Chain 1 live validation: RF capture to confirm forged packets match real ELRS traffic | SDR setup (B205/B210) |
+| 4 | Game-day playbook: document the Chain 1 procedure as a timed operator checklist | All above |
+
+Chain 2 (MAVLink/WiFi) milestones run in parallel:
+- Evil twin / rogue AP automation tool (hostapd + dnsmasq + deauth)
+- MAVLink MitM proxy (transparent, selective packet modification)
+- MAVLink injection over WiFi (combine network access with existing injector)
+- Validated against ArduPilot SITL
