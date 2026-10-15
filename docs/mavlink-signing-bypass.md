@@ -86,10 +86,10 @@ behind the latest accepted timestamp.
 ```
 
 **Key behavior:**
-- ArduPilot accepts messages with timestamps **up to ~60 seconds behind** the most recent accepted timestamp
-- This window exists to handle multi-link setups where packets arrive out-of-order across different physical links
-- The window is per-link_id, so replaying on the same link_id has the narrowest window
-- Replaying on a **different link_id** resets the timestamp tracking for that link_id entirely
+- ArduPilot has a ~60-second **clock tolerance** for out-of-order delivery across physical links
+- This tolerance does NOT eliminate per-stream anti-replay state: the receiver still tracks the highest accepted timestamp per (link_id, system_id, component_id) and rejects duplicates
+- Valid authentication (correct signing key) is always required separately
+- The tolerance window alone does not establish that a replayed packet will be accepted
 
 ### PX4 Implementation
 
@@ -99,36 +99,41 @@ From PX4's `src/modules/mavlink/mavlink_main.cpp`:
 - The default window is similar (~60 seconds)
 - PX4's signing implementation is less mature than ArduPilot's; some builds have signing disabled entirely
 
-### Exploitation
+### Hypothetical Attack Scenarios (not yet validated against a receiver)
 
-**Attack scenario — Same link_id replay:**
+> **Status:** These scenarios are based on spec analysis. None have been
+> validated against a real ArduPilot or PX4 receiver. Acceptance depends on
+> valid authentication, per-stream anti-replay state, and implementation-
+> specific policy. Do not treat these as confirmed bypasses.
+
+**Scenario — Same link_id replay (requires signing key or accept_unsigned):**
 
 1. Capture signed MAVLink packets over the wire (WiFi UDP or serial radio)
-2. Replay the captured packets **within 60 seconds** of original transmission
-3. The receiver accepts them because the timestamp falls within the tolerance window
-4. Critical commands like DISARM, SET_MODE, or DO_REBOOT execute
+2. Replay within the clock tolerance window (~60s)
+3. Acceptance requires: valid signature OR receiver configured with accept_unsigned,
+   AND the receiver's per-stream timestamp tracker has not advanced past the packet's timestamp
 
-**Attack scenario — Cross-link replay (more powerful):**
+**Scenario — Cross-link replay (requires signing key or accept_unsigned):**
 
 1. Capture signed packets on link_id 0 (e.g., serial telemetry radio)
-2. Replay them on link_id 1 (e.g., UDP over WiFi) — or any link_id the receiver hasn't seen
-3. Since the receiver has no timestamp baseline for the new link_id, **any timestamp is accepted**
-4. Effectively unlimited replay window
+2. Replay on a different link_id the receiver hasn't seen
+3. A new link_id may lack a timestamp baseline, but valid authentication is still required
+4. Without the signing key, the replayed packet must be sent unsigned and the
+   receiver must have accept_unsigned enabled for that channel
 
-**Attack scenario — Cold-start replay:**
+**Scenario — Cold-start replay:**
 
-1. Capture signed packets at any time (even days/weeks before)
-2. Wait for the target to reboot (power cycle, crash, battery swap)
-3. After reboot, the timestamp tracker resets to zero
-4. Replay the captured packets — they will be accepted because no baseline exists
-5. The only requirement is that the replayed timestamp is > 0
+1. Capture signed packets at any time
+2. Wait for target reboot (power cycle, crash, battery swap)
+3. After reboot, timestamp tracker resets — but valid authentication is still required
+4. Unchanged authentic packets may be accepted if the receiver has no newer baseline
 
 ### Key Takeaways
 
-| Scenario | Window | Difficulty |
+| Scenario | Constraint | Authentication Required |
 |---|---|---|
-| Same link_id, system running | ~60 seconds | Must replay quickly |
-| Different link_id | Unlimited (first-use) | Just pick an unused link_id |
+| Same link_id, system running | ~60s clock tolerance | Valid signature or accept_unsigned |
+| Different link_id | No timestamp baseline | Valid signature or accept_unsigned |
 | After target reboot | Unlimited | Wait for or cause a reboot |
 
 ---
