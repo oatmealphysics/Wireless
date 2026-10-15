@@ -4,6 +4,11 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# Large source tarballs kept locally (re-download from tagged release)
+firmware/src/ardupilot-Copter-4.7.2.tar.gz
+# Full SDK archives kept locally (protocol files extracted into firmware/tello/dji-sdk-protocol/)
+firmware/tello/dji-tello-python-sdk.tar.gz
+
 # IDA analysis artifacts
 *.id0
 *.id1

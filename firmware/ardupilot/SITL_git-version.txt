@@ -1,0 +1,9 @@
+commit fb773567896014da007bca58358704d4a0d8516f
+Author: Randy Mackay <rmackay9@yahoo.com>
+Date:   Sun Oct 11 10:05:22 2026 +0900
+
+    Plane: version to 4.7.2
+    
+    Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+APMVERSION: ArduCopter V4.7.2

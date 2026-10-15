@@ -1,6 +1,6 @@
-# Firmware Test Corpus — EMAX TinyHawk III & E8 Controller
+# Firmware Test Corpus
 
-Collected 2026-10-14 for offline analysis and security testing in preparation for a wireless drone CTF.
+Collected for offline analysis and security testing in preparation for a wireless drone CTF.
 
 **Handoff evidence note (2026-10-14):** See [the detailed home lab notes](../HOME-LAB-HANDOFF.md) for acquisition status, source-version distinctions, and tool limitations. The particular E8's MCU, installed firmware version, and upstream target mapping remain unconfirmed; ESP32/OLED/Nano mapping below is a hypothesis based on related modules. No E8-specific binary has been positively identified in this corpus. Source checks established two explicit UID fields in the 4.1.0 SYNC struct, while the existing lookup helper assumes three bytes. The complete corpus hash manifest is [SHA256SUMS](SHA256SUMS).
 
@@ -44,6 +44,28 @@ those evidence gaps. None of the eleven samples is confirmed E8-specific.
 | `src/ExpressLRS-4.1.0/` | Extracted source tree |
 | `src/betaflight-2026.6.2.tar.gz` | Betaflight 2026.6.2 source (contains SPI ELRS RX driver) |
 | `src/betaflight-2026.6.2/` | Extracted source tree |
+
+### ArduPilot / MAVLink (autopilot — MAVLink attack path)
+
+| File | Description |
+|---|---|
+| `ardupilot/arducopter_CubeOrange_4.7.2.apj` | ArduCopter 4.7.2 for CubeOrange (STM32H743, board_id 140). APJ = JSON metadata + base64 firmware image. |
+| `ardupilot/arducopter_CubeOrange_4.7.2.elf` | Same build, ELF with symbols — primary RE target for MAVLink handler analysis. |
+| `ardupilot/arducopter_Pixhawk1_4.7.2.apj` | ArduCopter 4.7.2 for Pixhawk1 (STM32F4). Common CTF autopilot board. |
+| `ardupilot/arducopter_Pixhawk1_4.7.2.elf` | Same build, ELF with symbols. |
+| `ardupilot/arducopter_SITL_x86_64_4.7.2` | Software-in-the-loop binary for x86_64 Linux. Runs locally for MAVLink protocol testing, P1-1/P1-3 validation, and fuzzing — no hardware needed. |
+| `src/ardupilot-Copter-4.7.2.tar.gz` | Full ArduPilot source (308 MB, **not committed** — re-download from tagged release). |
+
+All ArduPilot artifacts: version 4.7.2, commit `fb773567`, released 2026-10-14.
+
+### Tello / Wi-Fi drone (Wi-Fi attack path)
+
+| File | Description |
+|---|---|
+| `tello/djitellopy.tar.gz` | DJITelloPy community SDK (21 KB). Clean Python API for Tello control. |
+| `tello/dji-sdk-protocol/` | Protocol-relevant files extracted from the official DJI Tello-Python SDK: `tello.py` (UDP client), `command.txt` (command set), `tello_state.py` (state parser). |
+
+**Tello protocol:** plaintext UDP on port 8889, drone runs as Wi-Fi AP at 192.168.10.1. No authentication, no encryption. Attack: join AP (or deauth + rogue AP), send UDP commands.
 
 ### Reference (from prior collection)
 
@@ -188,6 +210,12 @@ d98f2569e4fba71a3c3054fd798c6329c64b7ee4b686384a2a1abc9e28d9ad0e  betaflight/bet
 7b21b072fede3e23fdc43b4d4722d47276f789f6517573e956ec228b1f6bea94  betaflight/EMAX_TINYHAWKF4SX1280.config
 4b7d5acb364ff1f28265c5e84d1e63bec20a1a1a39f1e292250d7cae251db85a  src/betaflight-2026.6.2.tar.gz
 d1d854d83017dfc09d1c78dfba5ce400952a6c61ae64fdd2a2188fcf16bb36c0  src/expresslrs-4.1.0.tar.gz
+95ab5dee46134dd1c1eb3d245d11d97875f2abcdd26a2a13d95e103cfe7a54c7  ardupilot/arducopter_CubeOrange_4.7.2.apj
+d8cd98b9e2ed256a03253f5abc818de6f023f45df70768f4cdee43f49851bc86  ardupilot/arducopter_CubeOrange_4.7.2.elf
+61a30eab1e09b23024b89a3ad873deb729273a39d0e336a46a19e51da2bcd907  ardupilot/arducopter_Pixhawk1_4.7.2.apj
+c74d088b28c21dad6447d9c7ee1147d234c2d64db59da7e8cb5b7c142d5af2b9  ardupilot/arducopter_Pixhawk1_4.7.2.elf
+caed35e4cb796ec06cac40b09566a18251771486b1cbac5e2bf16b7a5ed5045d  ardupilot/arducopter_SITL_x86_64_4.7.2
+bba1e43f89a435d8e8e5949795155119e5a0812a8353de99cef89cc4259f265d  tello/djitellopy.tar.gz
 ```
 
 ---
@@ -201,3 +229,7 @@ d1d854d83017dfc09d1c78dfba5ce400952a6c61ae64fdd2a2188fcf16bb36c0  src/expresslrs
 - ExpressLRS 4.1.0 release: <https://github.com/ExpressLRS/ExpressLRS/releases/tag/4.1.0>
 - EMAX 2.4 GHz TX update guide: <https://www.expresslrs.org/quick-start/transmitters/emax2400/>
 - SPI ELRS receivers (Betaflight integration): <https://www.expresslrs.org/hardware/spi-receivers/>
+- ArduPilot Copter firmware: <https://firmware.ardupilot.org/Copter/stable/>
+- ArduPilot source: <https://github.com/ArduPilot/ardupilot>
+- DJI Tello SDK (official): <https://github.com/dji-sdk/Tello-Python>
+- DJITelloPy (community): <https://github.com/damiafuentes/DJITelloPy>
