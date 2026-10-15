@@ -38,6 +38,8 @@ identifiers are deliberately omitted from this shared note.
 | Second CRSF attempt | COM4, 115200 | Port-open access denied; no requests sent in this attempt |
 | Subsequent passive open with DTR/RTS false | COM4, 115200 | Open succeeded, zero bytes; earlier denial was transient/unexplained |
 | Vendor Read Configuration | COM4, 115200, 8-N-1, DTR/RTS false; one 64-byte read request | Zero received bytes within three seconds |
+| Vendor Read Configuration after owner reports R4+ startup | Same fixed request and serial settings | Zero received bytes within three seconds |
+| Proposed longer-settle read | Two-second settle and eight-second receive window planned | Port-open access denied before transmission; no request sent |
 
 CRSF requests were `c8042800ea54` and `c80428eeea97`. The vendor query is the
 configurator's fixed read request; no write/update request was sent. An empty
@@ -85,6 +87,14 @@ The reviewed UI exposes rate, telemetry ratio, power and six-byte binding data.
 No dedicated firmware-version display/query was identified in this bounded
 inspection. No version may be inferred from the host title or USB revision.
 
+Additional offline review covered the serial-open handler at `0x4018b0`, its
+open call at `0x401b0c` (ReadWrite argument 3), and success branch
+`0x401de5–0x401f26`, returning through `0x401a3d`. No additional application
+protocol handshake/write was identified on that reviewed success path; it
+enables/updates UI controls. This is bounded static evidence, not a trace of Qt,
+the USB driver, or the controller. It does not establish identical control-line
+behavior under Windows and Wine.
+
 Reproduce static inspection with `tools/inspect-e8-configurator.py` and
 `tools/inspect-e8-serial-handlers.py` (dependencies in their docstrings). The fixed
 reader `tools/e8-read-config.py --port COM4` defaults to dry-run and requires
@@ -100,9 +110,23 @@ The manufacturer's [Nanoscout RTF manual](https://myosuploads3.banggood.com/prod
 describes charging red/complete green separately from startup. Its E8 ELRS serial
 tool section (PDF page 16, printed page 14) requires the R4+ plus power startup
 sequence for serial mode and refers parameter reading to that workflow. This
-may explain a live CDC interface that returns no application data. The owner has
-not yet confirmed this sequence for the unit. Entering a mode and flashing are
-different actions; no firmware file or update operation is needed for a read.
+may explain a live CDC interface that returns no application data. Subsequently
+the owner reported holding the right D-pad right-direction button while powering
+on and observing a flashing green signal/mode LED. The owner also reports a
+previous successful read using EMAX's custom configurator on Ubuntu under Wine;
+those readings and the exact software build are not currently available. These
+are owner-reported observations, not a captured successful read in this session.
+They make the earlier battery/charging-only explanation insufficiently supported.
+Entering a mode and flashing are different actions; no firmware file or update
+operation is needed for a read. **The owner prohibits flashing under any
+circumstances**, including when diagnosing this connection.
+
+COM4 access was intermittently denied, and the owner confirmed another agent was
+also probing the controller. Concurrent access is therefore a coordination issue,
+but the specific process responsible for each denial was not proven. Codex is
+leaving the live port alone and sharing offline evidence through
+[the collaboration handoff](E8-COLLABORATION.md). No successful firmware-version
+response has been obtained by Codex.
 
 ## Research implications
 
