@@ -123,9 +123,11 @@ This means:
 
 **Location:** `src/ExpressLRS-4.1.0/src/lib/OTA/OTA.cpp:28-45`
 
-- CRC initializer = `(UID[4] << 8) | UID[5]` XOR'd with `OTA_VERSION_ID << 8`
-- SYNC packets use CRC init without nonce XOR
-- Non-SYNC packets XOR the nonce into the CRC init
+- CRC initializer is version-dependent: v3 XORs `OTA_VERSION_ID` into the
+  low byte; v4 XORs `OTA_VERSION_ID << 8` into the high byte
+- SYNC packets use CRC init without nonce XOR in both versions
+- Non-SYNC packets XOR the nonce into the CRC init only in v4; the live
+  Betaflight 4.4.2 v3 receiver uses the static CRC initializer
 - CRC14 (poly 0x2E57) for standard 8-byte packets
 - CRC16 (poly 0x3D65) for full-res 13-byte packets
 

@@ -1256,3 +1256,28 @@ Chain 2 (MAVLink/WiFi) milestones run in parallel:
 - MAVLink MitM proxy (transparent, selective packet modification)
 - MAVLink injection over WiFi (combine network access with existing injector)
 - Validated against ArduPilot SITL
+
+---
+
+## 19. ELRS v3 packet correction and RF-TX safety gate (Codex, 2026-10-15)
+
+This supersedes the §17 statement that the reworked forger was already
+protocol-correct for the live 4.4.2 target. That check covered a zero-nonce
+packet only. Source review found that the vendored `elrs_core/ota.py` implements
+v4 nonce mixing and its `ota_version=3` CRC initializer helpers are not v3
+compatible. Per `tools/elrs_core/PROVENANCE.md`, the vendored files remain
+unchanged; a general core fix must be made in the companion repo and re-vendored.
+
+The project-facing tools now apply the version-specific rules: non-SYNC v3
+packets use the static UID-derived CRC initializer, while v4 mixes the nonce;
+v3 and v4 use sync channels 41 and 40 respectively. The ELRS chain also uses
+the domain frequency table (2400.4 MHz for channel 0), rather than the old
+2400.0 MHz offset. This makes v3 sync-channel index 41 approximately
+2441.4 MHz; the earlier 2440.4 MHz statement in the live-config notes was
+corrected. A prior 2440.4 MHz wideband capture is not by itself evidence
+that the link's sync channel was index 40.
+
+The ELRS chain's former `--arm` path sent placeholder IQ samples, not LoRa.
+It now fails closed before opening a TX stream; the dry-run packet preview remains
+available. A real LoRa PHY and bench validation remain Phase C work. Offline
+source-conformance checks do not establish live acceptance by the TinyHawk.

@@ -23,20 +23,27 @@ Phase 1 step 1. These are exact copies — no modifications.
 ## Validation
 
 These modules are self-tested in the companion repo (29 checks pass) and
-round-trip against the pinned `firmware/src/expresslrs-4.1.0` C source:
+round-trip against the pinned `firmware/src/expresslrs-4.1.0` C source for
+the v4 protocol:
 - CRC-14/16 polynomials match `src/lib/CRC/crc.{h,cpp}`
 - OTA packet model matches `src/lib/OTA/OTA.{h,cpp}`
 - FHSS LCG + sequence builder matches `src/lib/FHSS/{random.cpp,FHSS.cpp}`
 - The LCG shift is `>>16` (confirmed against firmware + GNU_Radio_ExpressLRS)
 - The FHSS sequence length rounds DOWN (confirmed against real RF captures)
 
-Evidence class: **VALIDATED** (protocol layer). The PHY layer (gfsk.py,
-lora.py, etc.) is Phase 2 and is not vendored here.
+Evidence class: **VALIDATED for v4** (protocol layer). Betaflight 4.4.2 v3
+consumer adaptations are source-derived and still need a real-capture
+cross-check. The PHY layer (gfsk.py, lora.py, etc.) is Phase 2 and is not
+vendored here.
 
 ## Rules
 
 Per SESSION-NOTES.md §9.6:
 - Do not modify these files directly. Changes go through the companion repo
   and are re-vendored with an updated commit pin.
-- The OTA version (currently 4) is a parameter in `ota.py`, not a constant
-  in the consuming tools. This is the structural fix for P1-2.
+- The vendored `ota.py` implements v4 CRC behavior. Its `ota_version=3`
+  arguments do **not** make `ota_uid_crc_init`, `bind_crc_init`, or
+  non-SYNC `generate_crc`/`validate_crc` conform to Betaflight 4.4.2 v3.
+  Consumers targeting v3 must apply the source-confirmed v3 initializer and
+  omit nonce XOR; a general fix belongs in the companion repo followed by
+  re-vendoring with a new commit pin.

@@ -146,7 +146,8 @@ firmware image. See `HARDWARE-IDENTITY.md` before selecting a device target.
 
 > **The way ahead is in [`SESSION-NOTES.md`](SESSION-NOTES.md).** Read §1–§7
 > for the orchestrator's code-level review and P1 defect list, §16–§17 for the
-> 4.4.2 rewire and vendored-tool fixes, and **§18 for the Layer 2 wireless
+> 4.4.2 rewire and vendored-tool fixes, **§19 for the v3 correction and RF-TX
+> safety gate**, and **§18 for the Layer 2 wireless
 > attack program** (owner-directed, 2026-10-15). The Layer 2 research is in
 > [`research/layer2-wireless-attack-research.md`](research/layer2-wireless-attack-research.md).
 

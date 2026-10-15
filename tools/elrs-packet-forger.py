@@ -56,7 +56,6 @@ from elrs_core.fhss import build_sequence
 
 FHSS_SEQUENCE_LEN = 256
 ISM2G4_FREQ_COUNT = 80
-ISM2G4_SYNC_CHANNEL = ISM2G4_FREQ_COUNT // 2 + 1  # ELRS v3: channel 41
 ISM2G4_FREQ_START_HZ = 2400400000
 ISM2G4_FREQ_STOP_HZ = 2479400000
 
@@ -107,9 +106,25 @@ def uid_to_crc_init(uid: bytes, ota_version: int) -> int:
 # FHSS sequence generation (from FHSS/FHSS.cpp)
 # ---------------------------------------------------------------------------
 
-def generate_fhss_sequence(seed: int, freq_count: int = ISM2G4_FREQ_COUNT) -> list[int]:
-    # Betaflight 4.4.2 / ELRS v3 uses the legacy +1 sync-channel formula.
-    return build_sequence(seed, freq_count, freq_count // 2 + 1, FHSS_SEQUENCE_LEN)
+def sync_channel_for_version(ota_version: int, freq_count: int = ISM2G4_FREQ_COUNT) -> int:
+    """ELRS v3 uses the legacy +1 channel; v4 uses the center channel."""
+    if ota_version not in (3, 4):
+        raise ValueError(f"unsupported OTA version: {ota_version}")
+    return freq_count // 2 + (1 if ota_version == 3 else 0)
+
+
+def generate_fhss_sequence(seed: int, freq_count: int = ISM2G4_FREQ_COUNT,
+                           ota_version: int = 3) -> list[int]:
+    return build_sequence(seed, freq_count,
+                          sync_channel_for_version(ota_version, freq_count),
+                          FHSS_SEQUENCE_LEN)
+
+
+def data_crc_init(crc_init: int, nonce: int, ota_version: int) -> int:
+    """Only OTA v4 mixes the nonce into non-SYNC packet CRCs."""
+    if ota_version not in (3, 4):
+        raise ValueError(f"unsupported OTA version: {ota_version}")
+    return crc_init ^ ((nonce & 0xFF) if ota_version == 4 else 0)
 
 
 def fhss_index_to_freq_hz(channel: int) -> int:
@@ -196,7 +211,8 @@ def build_sync_packet(uid: bytes, nonce: int, fhss_index: int,
 
 def build_rc_packet(channels_us: list[int], nonce: int,
                     crc_init: int, crc_engine: Crc2Byte,
-                    is_armed: bool = False, full_res: bool = False) -> bytes:
+                    is_armed: bool = False, full_res: bool = False,
+                    ota_version: int = 3) -> bytes:
     """Build an OTA RC channel data packet."""
     channels_crsf = [us_to_crsf(ch) for ch in channels_us]
     while len(channels_crsf) < 4:
@@ -211,8 +227,7 @@ def build_rc_packet(channels_us: list[int], nonce: int,
         ch_high = pack_channels_4x10([CRSF_CHANNEL_VALUE_MID] * 4)
         pkt[1:6] = ch_low
         pkt[6:11] = ch_high
-        nonce_xor = nonce & 0xFF
-        crc = crc_engine.calc(bytes(pkt[:11]), crc_init ^ nonce_xor)
+        crc = crc_engine.calc(bytes(pkt[:11]), data_crc_init(crc_init, nonce, ota_version))
         pkt[11] = crc & 0xFF
         pkt[12] = (crc >> 8) & 0xFF
         return bytes(pkt)
@@ -227,8 +242,7 @@ def build_rc_packet(channels_us: list[int], nonce: int,
         else:
             pkt[6] = 0x00
         pkt[6] |= switches & 0x7F
-        nonce_xor = nonce & 0xFF
-        crc = crc_engine.calc(bytes(pkt[:7]), crc_init ^ nonce_xor)
+        crc = crc_engine.calc(bytes(pkt[:7]), data_crc_init(crc_init, nonce, ota_version))
         pkt[0] |= ((crc >> 8) & 0x3F) << 2
         pkt[7] = crc & 0xFF
         return bytes(pkt)
@@ -237,7 +251,7 @@ def build_rc_packet(channels_us: list[int], nonce: int,
 def build_msp_packet(msp_cmd: int, msp_payload: bytes,
                      nonce: int, crc_init: int, crc_engine: Crc2Byte,
                      package_index: int = 0,
-                     full_res: bool = False) -> bytes:
+                     full_res: bool = False, ota_version: int = 3) -> bytes:
     """Build an OTA DATA packet carrying an MSP command (uplink)."""
     if full_res:
         pkt = bytearray(OTA8_PACKET_SIZE)
@@ -252,8 +266,7 @@ def build_msp_packet(msp_cmd: int, msp_payload: bytes,
         msp_frame.extend(msp_payload)
         max_payload = 10  # ELRS8_DATA_UL_BYTES_PER_CALL
         pkt[1:1 + min(len(msp_frame), max_payload)] = msp_frame[:max_payload]
-        nonce_xor = nonce & 0xFF
-        crc = crc_engine.calc(bytes(pkt[:11]), crc_init ^ nonce_xor)
+        crc = crc_engine.calc(bytes(pkt[:11]), data_crc_init(crc_init, nonce, ota_version))
         pkt[11] = crc & 0xFF
         pkt[12] = (crc >> 8) & 0xFF
         return bytes(pkt)
@@ -272,8 +285,7 @@ def build_msp_packet(msp_cmd: int, msp_payload: bytes,
         msp_frame.extend(msp_payload)
         max_payload = 5  # ELRS4_DATA_UL_BYTES_PER_CALL
         pkt[2:2 + min(len(msp_frame), max_payload)] = msp_frame[:max_payload]
-        nonce_xor = nonce & 0xFF
-        crc = crc_engine.calc(bytes(pkt[:7]), crc_init ^ nonce_xor)
+        crc = crc_engine.calc(bytes(pkt[:7]), data_crc_init(crc_init, nonce, ota_version))
         pkt[0] |= ((crc >> 8) & 0x3F) << 2
         pkt[7] = crc & 0xFF
         return bytes(pkt)
@@ -306,7 +318,8 @@ def cmd_info(uid, ota_version, fhss_seed, crc_init, fhss_seq, args):
     print(f"SYNC visible:    {uid[4]:02X}:{uid[5]:02X}  (UID[4:5] in every SYNC packet)")
     print(f"FHSS seed:       0x{fhss_seed:08X}")
     print(f"CRC init:        0x{crc_init:04X}")
-    print(f"Sync channel:    {ISM2G4_SYNC_CHANNEL}  ({fhss_index_to_freq_hz(ISM2G4_SYNC_CHANNEL) / 1e6:.1f} MHz)")
+    sync_channel = sync_channel_for_version(ota_version)
+    print(f"Sync channel:    {sync_channel}  ({fhss_index_to_freq_hz(sync_channel) / 1e6:.1f} MHz)")
     print(f"FHSS seq length: {len(fhss_seq)}")
     mode = "full-res (13B, CRC16)" if args.full_res else "standard (8B, CRC14)"
     print(f"Packet mode:     {mode}")
@@ -332,7 +345,8 @@ def cmd_rc(uid, nonce, crc_init, crc_engine, args):
             channels[i] = int(p.strip())
 
     pkt = build_rc_packet(channels, nonce, crc_init, crc_engine,
-                          is_armed=args.armed, full_res=args.full_res)
+                          is_armed=args.armed, full_res=args.full_res,
+                          ota_version=args.ota_version)
 
     print(f"RC packet (nonce={nonce}, armed={args.armed})")
     print(f"  Channels (us): {channels}")
@@ -348,7 +362,7 @@ def cmd_msp(uid, nonce, crc_init, crc_engine, args):
         msp_payload = bytes.fromhex(args.msp_payload.replace(":", "").replace(" ", ""))
 
     pkt = build_msp_packet(msp_cmd, msp_payload, nonce, crc_init, crc_engine,
-                           full_res=args.full_res)
+                           full_res=args.full_res, ota_version=args.ota_version)
 
     print(f"MSP packet (nonce={nonce}, cmd={msp_cmd} / 0x{msp_cmd:04X})")
     if msp_payload:
@@ -420,7 +434,7 @@ def main():
     uid = phrase_to_uid(args.phrase)
     fhss_seed = uid_to_fhss_seed(uid, ota_version)
     crc_init = uid_to_crc_init(uid, ota_version)
-    fhss_seq = generate_fhss_sequence(fhss_seed)
+    fhss_seq = generate_fhss_sequence(fhss_seed, ota_version=ota_version)
 
     # Select CRC engine
     if args.full_res:

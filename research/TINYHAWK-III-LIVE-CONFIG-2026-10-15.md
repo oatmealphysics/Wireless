@@ -236,8 +236,11 @@ fits in one byte. **No attack impact for v3.**
 **2026.6.2 (v4):** `(freqCount / 2)` (no +1)
 
 **Attack impact:** Sync channel for 2.4 GHz is channel 41 (80/2 + 1) on v3.
-The sniffer must listen on channel 41 (2440.4 MHz), not channel 40 as stated
-in `firmware/README.md` line 109. **This is an error in our documentation.**
+The v3 sync channel is index 41 (approximately 2441.4 MHz): the ISM2400
+table starts at 2400.4 MHz and has 1 MHz steps. 2440.4 MHz is index 40,
+the v4 sync channel. The earlier 2440.4 MHz value attached to v3 channel 41
+was an error in our documentation; it should not be treated as a measured
+center frequency for the live link.
 
 ### 5. CRC validation with nonce (expresslrs.c)
 
