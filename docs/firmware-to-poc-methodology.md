@@ -24,6 +24,7 @@
 ## The shape of the pathway
 
 ```
+W0  FRAME        target facts + rules + success condition → "I know what matters and what is authorized"
 W1  ACQUIRE      blob + provenance + version pin          →  "I know exactly what this is"
 W2  MODEL        target architecture + memory map + toolchain → "I can load it correctly"
 W3  RECON        symbols/strings/entropy/disasm lay-of-the-land → "I know what's in it"
@@ -40,6 +41,35 @@ Each wicket has a **gate**: a specific piece of evidence that must exist before
 you move on. The gates are the honesty contract made concrete — you do not
 claim a vuln you haven't evidence-classed, you do not claim a PoC that hasn't
 round-tripped, and you do not claim "it works" until it works on real gear.
+
+---
+
+## Gate 0 — FRAME (CTF facts, authorization, and the success condition)
+
+**Goal:** establish what “success” means before selecting an image, an attack
+surface, or a PoC. Firmware analysis can be technically correct and still be
+irrelevant if it is for the wrong target, an unavailable interface, or a
+rule-excluded action.
+
+Record a compact target card before W1:
+
+| Fact | Record | Why it is a gate |
+|---|---|---|
+| Target identity | Model, board revision, boot/app/radio/GCS versions | Determines whether the downloaded artifact is relevant. |
+| Flag condition | Where the flag lives and how it is submitted | A packet being accepted may not score. |
+| Exposed interfaces | RF bands/protocols, Wi-Fi, BLE, GCS network, and lab-only ports | Defines what can be reached on game day. |
+| Rules and limits | Allowed active traffic, RF power, proximity, recon window, rate limits | Removes invalid paths before implementation. |
+| Available equipment | What can be used in the lab versus brought to the CTF | Determines whether the design is deliverable. |
+| Lab authority | Exactly which owned targets may be exercised and in what state | Sets the safe validation boundary. |
+
+`SESSION-NOTES.md` §4 is the live owner-question set for this repository. Until
+the applicable facts are answered, a target-specific result remains a
+*hypothesis*, not a capability. In particular, do not begin active target tool
+work merely because a protocol has been recognized.
+
+**Gate 0:** a target card and an authorized lab boundary exist. For this
+repository, the E8 exception is absolute: configuration reads only; no flash,
+settings write, reset/bootloader entry, RF transmission, or fuzzing.
 
 ---
 
@@ -493,6 +523,7 @@ failure modes, and an honest "what does not work" list. The PoC is a
 
 | Wicket | Gate (the evidence that must exist) | Evidence class it produces |
 |---|---|---|
+| W0 FRAME | target card + rule/authority boundary + defined flag condition | — (scope) |
 | W1 ACQUIRE | register entry: hash + version + target + source + `hardware_match` | — (provenance) |
 | W2 MODEL | load recipe the vector table *confirms* (SP + reset fit the map) | — (correctness) |
 | W3 RECON | entropy verdict + string index + code-region map | — (lay-of-the-land) |
@@ -511,6 +542,73 @@ failure modes, and an honest "what does not work" list. The PoC is a
   self-consistent round-trip (W8) is not "it works." This is the line the
   TinyHawk project has held throughout — and it's the line that keeps the PoC
   honest.
+
+---
+
+## Cross-cutting PoC contract (applies from W6 onward)
+
+The design is intentionally as important as the bug. A PoC should establish one
+bounded primitive on one declared build, not quietly grow into an unreviewable
+operational tool. From W6 onward, require each tool to:
+
+- name the accepted model/build/hash and refuse an unknown or mismatched target;
+- default to parsing, fixtures, or dry-run behavior; require explicit opt-in
+  for authorized live interaction;
+- bound its target, packet/input count, duration, retries, and rate;
+- include a deterministic `--self-test` and a negative control against an
+  independent oracle where one exists;
+- log action, tool version, artifact identity, input digest, and result to
+  stderr—without committing binding data, credentials, captures, or flags;
+- document its stop condition, recovery action, and what an unexpected result
+  means.
+
+An encoder and decoder that share the same implementation can agree while both
+are wrong. Use the vendor implementation, pinned source, a separate library,
+or recorded target traffic as the oracle. This is especially important for
+field order, integer widths, CRC coverage, signature coverage, version
+selection, PHY/rate assumptions, and state/anti-replay handling.
+
+### Evidence maturity
+
+| Level | Meaning | Permitted claim |
+|---|---|---|
+| Static lead | Code suggests a condition | Candidate only; not demonstrated. |
+| Synthetic | A local fixture or harness exhibits it | Self-consistent; target reachability unknown. |
+| Reference-validated | Behavior matches an independent reference or real recorded traffic | Protocol primitive validated. |
+| Owned-lab validated | Repeatable result on the matching owned target/build | Lab PoC on the stated interface. |
+| CTF-ready | Rules, target match, end-to-end flag condition, and timed dry run are all confirmed | Game-day candidate, not a guarantee. |
+
+### Finding ledger template
+
+Keep one entry per candidate; this preserves useful dead ends as well as wins.
+
+```markdown
+### F-YYYY-NNN — concise title
+
+- Status: lead | static | synthetic | reference-validated | owned-lab validated
+- Target: model/revision, firmware version, SHA-256, match confidence
+- Interface: transport, exposure, required state, and authorization
+- Claim: one falsifiable sentence
+- Evidence: source file:line and/or binary address; artifact/capture IDs
+- Preconditions: build flags, keys, timing, proximity, and CTF rules
+- Expected observable: measurable accepted/rejected/state result
+- Test plan: fixture -> independent oracle -> owned-lab control + negative control
+- Actual result: repetitions, timestamps, and private log/capture locations
+- Disproof/limits: what failed and what remains unknown
+- CTF relevance: connection to the actual flag condition
+- Next action: smallest unanswered question or regression test to add
+```
+
+### Definition of done
+
+Before calling a firmware-to-PoC effort complete, the team must be able to
+answer: what exact bytes/build/hardware were analyzed; which ingress and trust
+boundary are involved; what falsifiable defect exists; what independently
+checks the protocol/behavior; what the minimal safe reproducer and negative
+control do; what happens on matching owned hardware including recovery; and
+how the primitive reaches the CTF's actual flag condition within the rules. A
+missing answer means the work is still valuable research, but not a CTF-ready
+capability.
 
 ---
 
