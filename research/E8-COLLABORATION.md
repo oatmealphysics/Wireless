@@ -27,6 +27,12 @@ the external Claude app and has asked the owner to relay this note.
 - Owner reports a screenless E8-like handset, R4+ plus power startup with a
   flashing green signal/mode LED, and a previous successful read using EMAX's
   custom configurator on Ubuntu under Wine. The earlier data/build is unavailable.
+- Owner additionally recalls **COM33** in that Wine session and Linux device
+  **`/dev/ttyACM0`**. The exact Wine mapping has not been inspected; COM33 was
+  likely its Windows-style alias for the Linux serial endpoint. These historical
+  names do not require COM33 on this Windows PC or establish a firmware version.
+  Linux's `ttyACM` naming is consistent with the CDC ACM interface observed here;
+  see the [kernel ACM documentation](https://docs.kernel.org/usb/acm.html).
 - The manufacturer-linked configurator inspected offline has SHA-256
   `7ec41368c1d7fe9cbf7e25ba053b05519f7e1aa8542c698e70764162be99362d`.
   Codex has **not executed** this unsigned executable or its bundled loader.

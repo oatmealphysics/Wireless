@@ -25,6 +25,15 @@ variant, board/MCU, or installed firmware.
 | Other serial endpoint | COM3 Prolific USB-to-serial adapter | Not probed; not established as the controller |
 | Installed E8 firmware | Not recovered | No successful application response |
 
+The owner subsequently recalled **COM33** in the earlier Ubuntu/Wine configurator
+session and **`/dev/ttyACM0`** as the Linux device. This is historical,
+owner-reported evidence; the Wine mapping, earlier USB identifiers and successful
+reply have not been recovered. COM33 was likely a Wine alias, not a persistent
+controller property, and does not imply that Windows COM4 is wrong. The Linux
+name is consistent with the observed CDC ACM interface (see the
+[kernel ACM documentation](https://docs.kernel.org/usb/acm.html)), but does not
+identify the board/MCU, application protocol or installed firmware.
+
 Raw captures stay in ignored `work/e8-session/`. No private binding data was
 obtained. The full device instance path/serial and other unrelated USB device
 identifiers are deliberately omitted from this shared note.
