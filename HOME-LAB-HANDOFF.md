@@ -5,6 +5,15 @@
 > The firmware collection is for offline test articles. The owner explicitly said they do not plan to flash the EMAX E8.
 > Concurrent update reviewed: Claude added [SESSION-NOTES.md](SESSION-NOTES.md) in `19260a9` while this handoff was being written; see Section 5 for evidence qualifications.
 
+> **Subsequent diagnostics/evidence update (2026-10-14):** The serial helper now
+> has corrected CRSF constants, passive defaults, raw RX capture, offline decoding
+> and regression tests. Its older limitations below are historical; see
+> [current validation instructions](VALIDATION.md),
+> [hardware identity findings](HARDWARE-IDENTITY.md),
+> [artifact register](firmware/artifact-register.json) and
+> [CVE evidence audit](research/CVE-AUDIT.md). E8-specific identity and USB CRSF
+> support remain unconfirmed. Corpus checksums pass with byte-preserving Git rules.
+
 ## Navigation
 
 - [1. Start here at home](#1-start-here-at-home)

@@ -11,7 +11,7 @@ Collected 2026-10-14 for offline analysis and security testing in preparation fo
 | Device | MCU | RF Chip | Protocol Stack | Firmware Target |
 |---|---|---|---|---|
 | **TinyHawk III** (drone) | STM32F411CEU6 | SX1280 (SPI) | ELRS baked into Betaflight | `EMAX_TINYHAWKF4SX1280` (unified target on `CRAZYBEEF4SX1280` base) |
-| **EMAX E8 TX** (controller) | ESP32 | SX1280 | ExpressLRS standalone | `Unified_ESP32_2400_TX` (closest: `EMAX_2400_TX` / `EMAX_NANO_2400_TX`) |
+| **EMAX E8 TX** (controller) | Unconfirmed for this unit | Unconfirmed for this unit | ELRS variant reported; version unconfirmed | No confirmed target; OLED/Nano entries are related-module references only |
 | **EMAX standalone 2.4GHz RX** | ESP8285 | SX1280 | ExpressLRS standalone | `Unified_ESP8285_2400_RX` |
 
 **Note:** The official ExpressLRS target registry has no E8-specific entry. The EMAX OLED/Nano TX targets are the closest match (ESP32 + SX1280, same `Unified_ESP32_2400_TX` firmware base). The E8 likely uses one of these targets with a different pin layout JSON.
@@ -19,6 +19,12 @@ Collected 2026-10-14 for offline analysis and security testing in preparation fo
 ---
 
 ## Inventory
+
+The machine-readable [artifact register](artifact-register.json) covers every
+manifest entry with size, hash, declared version/target, source project, artifact
+kind, and hardware-match confidence. Missing original download URLs and exact
+commit attribution are explicitly unresolved; a matching hash does not repair
+those evidence gaps. None of the eleven samples is confirmed E8-specific.
 
 ### Betaflight Firmware (TinyHawk III — drone side)
 

@@ -1,78 +1,56 @@
 #!/usr/bin/env python3
 """
-ELRS Serial Interface Probe
+Read-only CRSF serial diagnostics (Python 3.10+, live dependency pyserial==3.5).
 
-Connects to an ELRS TX module over USB serial and:
-1. Passively captures any CRSF frames being sent
-2. Sends CRSF ping to identify the device
-3. Reads device info (firmware version, hardware)
-4. Extracts current configuration if accessible
+Examples:
+  python tools/elrs-serial-probe.py --list-ports
+  python tools/elrs-serial-probe.py -p /dev/ttyACM0 --capture capture.bin
+  python tools/elrs-serial-probe.py --decode capture.bin
+  python tools/elrs-serial-probe.py -p COM3 --probe --dump-params
 
-CRSF frame format:
-    [sync] [len] [type] [payload...] [crc8]
-    sync = 0xC8 (from TX module) or 0xEC (to TX module)
+Default: receive only. --probe explicitly enables discovery/configuration reads.
+No settings writes or firmware updates are sent. Opening a port can still change
+device control lines. USB CRSF support on the E8 remains unconfirmed.
+Capture stores all received bytes, including corrupt packets/noise. JSON lines
+go to stdout; actions and errors go to stderr. Existing captures are preserved.
 """
 
-import serial
 import struct
 import time
 import sys
 import argparse
+from contextlib import ExitStack
+import json
+import math
+from pathlib import Path
+
+# Live serial access requires pyserial==3.5; offline parsing uses only stdlib.
 
 
-# CRSF sync bytes
-CRSF_SYNC_TX = 0xC8   # frames FROM the TX module
-CRSF_SYNC_RX = 0xEC   # frames TO the TX module (from handset)
-CRSF_SYNC_MODULE = 0xEE  # module address
-
-# CRSF frame types
+# Constants from pinned ExpressLRS 4.1.0 src/include/crsf_protocol.h.
+CRSF_SYNC_TX = 0xC8
+CRSF_SYNC_RX = 0xC8
+CRSF_SYNC_MODULE = 0xEE
+CRSF_START_BYTES = (0xC8, 0xEA, 0xEC, 0xEE)
 CRSF_TYPES = {
-    0x02: "GPS",
-    0x07: "VARIO",
-    0x08: "BATTERY_SENSOR",
-    0x09: "BARO_ALTITUDE",
-    0x0A: "HEARTBEAT",
-    0x0B: "VIDEO_TRANSMITTER",
-    0x0E: "LINK_STATISTICS",
-    0x10: "OPENTX_SYNC",
-    0x14: "SUBSET_RC_CHANNELS",
-    0x16: "RC_CHANNELS_PACKED",
-    0x1C: "LINK_RX_ID",
-    0x1D: "LINK_TX_ID",
-    0x21: "ATTITUDE",
-    0x28: "PING_DEVICES",
-    0x29: "DEVICE_INFO",
-    0x2A: "PARAMETER_SETTINGS_ENTRY",
-    0x2B: "PARAMETER_READ",
-    0x2C: "PARAMETER_WRITE",
-    0x2D: "ELRS_STATUS",
-    0x2E: "COMMAND",
-    0x32: "KISS_REQ",
-    0x33: "KISS_RESP",
-    0x36: "DISPLAYPORT_CMD",
-    0x3A: "ARDUPILOT_RESP",
-    0x78: "MSP_REQ",
-    0x79: "MSP_RESP",
-    0x7A: "MSP_WRITE",
-    0x7C: "DISPLAYPORT_CMD_V2",
-    0x80: "CRSF_FRAMETYPE_RADIO_ID",
+    0x02: "GPS", 0x03: "GPS_TIME", 0x07: "VARIO",
+    0x08: "BATTERY_SENSOR", 0x09: "BARO_ALTITUDE", 0x0A: "AIRSPEED",
+    0x0B: "HEARTBEAT", 0x0C: "RPM", 0x0D: "TEMP", 0x0E: "CELLS",
+    0x14: "LINK_STATISTICS", 0x16: "RC_CHANNELS_PACKED",
+    0x1E: "ATTITUDE", 0x21: "FLIGHT_MODE", 0x28: "PING_DEVICES",
+    0x29: "DEVICE_INFO", 0x2B: "PARAMETER_SETTINGS_ENTRY",
+    0x2C: "PARAMETER_READ", 0x2D: "PARAMETER_WRITE", 0x2E: "ELRS_STATUS",
+    0x32: "COMMAND", 0x3A: "HANDSET", 0x78: "KISS_REQ",
+    0x79: "KISS_RESP", 0x7A: "MSP_REQ", 0x7B: "MSP_RESP",
+    0x7C: "MSP_WRITE", 0x80: "ARDUPILOT_RESP",
 }
-
-# CRSF addresses
 CRSF_ADDR = {
-    0x00: "BROADCAST",
-    0x10: "USB",
-    0x12: "BLUETOOTH",
-    0x80: "TBS_CORE_PNP_PRO",
-    0x8A: "RESERVED1",
-    0xC8: "CURRENT_SENSOR",
-    0xCA: "GPS",
-    0xCC: "TBS_BLACKBOX",
-    0xCE: "FLIGHT_CONTROLLER",
-    0xE0: "RESERVED2",
-    0xEA: "RACE_TAG",
-    0xEC: "RADIO_TRANSMITTER",
-    0xEE: "CRSF_TRANSMITTER",
+    0x00: "BROADCAST", 0x10: "USB", 0x12: "BLUETOOTH_WIFI",
+    0x80: "TBS_CORE_PNP_PRO", 0x8A: "RESERVED1",
+    0xC0: "CURRENT_SENSOR", 0xC2: "GPS", 0xC4: "TBS_BLACKBOX",
+    0xC8: "FLIGHT_CONTROLLER", 0xCA: "RESERVED2", 0xCC: "RACE_TAG",
+    0xEA: "RADIO_TRANSMITTER", 0xEC: "CRSF_RECEIVER",
+    0xEE: "CRSF_TRANSMITTER", 0xEF: "ELRS_LUA",
 }
 
 
@@ -90,6 +68,8 @@ def crsf_crc8(data: bytes) -> int:
 
 
 def build_crsf_frame(frame_type: int, payload: bytes, sync: int = CRSF_SYNC_RX) -> bytes:
+    if len(payload) > 60:
+        raise ValueError("CRSF frame exceeds 64 total bytes")
     length = len(payload) + 2  # type + payload + crc
     frame = bytes([sync, length, frame_type]) + payload
     crc = crsf_crc8(frame[2:])  # CRC over type + payload
@@ -100,31 +80,31 @@ def build_ping() -> bytes:
     # CRSF ping: addressed to broadcast
     # Extended frame: [sync][len][type][dest][origin][crc]
     dest = 0x00      # broadcast
-    origin = 0xEC    # radio transmitter
+    origin = 0xEA    # radio transmitter
     payload = bytes([dest, origin])
     return build_crsf_frame(0x28, payload)
 
 
 def build_device_info_request() -> bytes:
     dest = 0xEE      # CRSF transmitter module
-    origin = 0xEC    # radio transmitter
+    origin = 0xEA    # radio transmitter
     payload = bytes([dest, origin])
     return build_crsf_frame(0x28, payload)
 
 
 def build_param_read(param_index: int, chunk: int = 0) -> bytes:
     dest = 0xEE
-    origin = 0xEC
+    origin = 0xEA
     payload = bytes([dest, origin, param_index, chunk])
-    return build_crsf_frame(0x2B, payload)
+    return build_crsf_frame(0x2C, payload)
 
 
 def parse_frame(data: bytes) -> dict | None:
-    if len(data) < 4:
+    if len(data) < 4 or data[0] not in CRSF_START_BYTES:
         return None
     sync = data[0]
     length = data[1]
-    if len(data) < length + 2:
+    if not 2 <= length <= 62 or len(data) < length + 2:
         return None
     frame_type = data[2]
     payload = data[3:2 + length - 1]
@@ -142,206 +122,202 @@ def parse_frame(data: bytes) -> dict | None:
     }
 
 
-def try_read_frames(ser: serial.Serial, timeout: float = 2.0) -> list[dict]:
-    frames = []
-    buf = bytearray()
-    end_time = time.time() + timeout
+class FrameDecoder:
+    """Keep partial frames across reads; resynchronize one byte at a time."""
+    def __init__(self):
+        self.buffer = bytearray()
 
-    while time.time() < end_time:
-        waiting = ser.in_waiting
-        if waiting > 0:
-            buf.extend(ser.read(waiting))
-        else:
-            time.sleep(0.01)
-
-        # Try to find and parse frames in buffer
-        while len(buf) >= 4:
-            # Find a sync byte
-            sync_pos = -1
-            for i, b in enumerate(buf):
-                if b in (CRSF_SYNC_TX, CRSF_SYNC_RX, CRSF_SYNC_MODULE, 0xC8, 0xEC, 0xEE):
-                    sync_pos = i
-                    break
-
-            if sync_pos == -1:
-                buf.clear()
-                break
-            if sync_pos > 0:
-                buf = buf[sync_pos:]
-
-            if len(buf) < 2:
-                break
-            frame_len = buf[1]
-            total_len = frame_len + 2
-
-            if frame_len > 64 or frame_len < 2:
-                buf.pop(0)
+    def feed(self, data: bytes) -> list[dict]:
+        self.buffer.extend(data)
+        frames = []
+        while self.buffer:
+            if self.buffer[0] not in CRSF_START_BYTES:
+                del self.buffer[0]
                 continue
-            if len(buf) < total_len:
+            if len(self.buffer) < 2:
                 break
-
-            frame_data = bytes(buf[:total_len])
-            frame = parse_frame(frame_data)
+            length = self.buffer[1]
+            if not 2 <= length <= 62:
+                del self.buffer[0]
+                continue
+            if len(self.buffer) < length + 2:
+                break
+            frame = parse_frame(bytes(self.buffer[:length + 2]))
             if frame and frame["crc_ok"]:
                 frames.append(frame)
-            buf = buf[total_len:]
+                del self.buffer[:length + 2]
+            else:
+                del self.buffer[0]
+        return frames
 
+
+def try_read_frames(ser, timeout=2.0, decoder=None, capture=None) -> list[dict]:
+    decoder = decoder if decoder is not None else FrameDecoder()
+    frames = []
+    end_time = time.monotonic() + timeout
+    while time.monotonic() < end_time:
+        data = ser.read(min(ser.in_waiting, 4096) or 1)
+        if data:
+            if capture is not None:
+                capture.write(data)
+            frames.extend(decoder.feed(data))
+    if capture is not None:
+        capture.flush()
     return frames
 
 
 def extract_device_info(payload: bytes) -> dict:
-    info = {}
-    if len(payload) < 3:
-        return info
-    info["dest"] = CRSF_ADDR.get(payload[0], f"0x{payload[0]:02X}")
-    info["origin"] = CRSF_ADDR.get(payload[1], f"0x{payload[1]:02X}")
-    # Device name is null-terminated string starting at byte 2
-    name_end = payload.find(0x00, 2)
-    if name_end > 2:
-        info["name"] = payload[2:name_end].decode("ascii", errors="replace")
-        rest = payload[name_end + 1:]
-        if len(rest) >= 12:
-            info["serial_no"] = rest[0:4].hex()
-            info["hw_ver"] = struct.unpack(">I", rest[4:8])[0]
-            info["sw_ver"] = struct.unpack(">I", rest[8:12])[0]
-            if len(rest) >= 13:
-                info["param_count"] = rest[12]
-            if len(rest) >= 14:
-                info["protocol_ver"] = rest[13]
-    return info
+    name_end = payload.find(b"\0", 2)
+    if name_end < 2 or len(payload) < name_end + 15:
+        return {}
+    rest = payload[name_end + 1:]
+    return {
+        "dest": CRSF_ADDR.get(payload[0], f"0x{payload[0]:02X}"),
+        "origin": CRSF_ADDR.get(payload[1], f"0x{payload[1]:02X}"),
+        "name": payload[2:name_end].decode("ascii", errors="replace"),
+        "serial_no": rest[:4].hex(),
+        "hw_ver": struct.unpack(">I", rest[4:8])[0],
+        "sw_ver": struct.unpack(">I", rest[8:12])[0],
+        "param_count": rest[12], "protocol_ver": rest[13],
+    }
 
 
-def main():
-    parser = argparse.ArgumentParser(description="ELRS Serial Interface Probe")
-    parser.add_argument("-p", "--port", default="/dev/ttyACM0", help="Serial port")
-    parser.add_argument("-b", "--baud", type=int, default=460800, help="Baud rate")
-    parser.add_argument("-t", "--timeout", type=float, default=3.0, help="Listen timeout per phase")
-    parser.add_argument("--listen-only", action="store_true", help="Only listen, don't send")
-    parser.add_argument("--dump-params", action="store_true", help="Read all parameter entries")
-    args = parser.parse_args()
+def log(message):
+    print(message, file=sys.stderr)
 
-    print(f"[*] Opening {args.port} at {args.baud} baud")
+
+def emit_frames(frames):
+    for frame in frames:
+        output = {key: value.hex() if isinstance(value, bytes) else value
+                  for key, value in frame.items()}
+        if frame["type"] == 0x29:
+            output["device_info"] = extract_device_info(frame["payload"])
+        print(json.dumps(output))
+
+
+def positive_timeout(value):
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError("timeout must be finite and positive")
+    return number
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("-p", "--port", help="Explicit serial endpoint; use --list-ports first")
+    parser.add_argument("-b", "--baud", type=int, default=460800)
+    parser.add_argument("-t", "--timeout", type=positive_timeout, default=3.0)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--probe", action="store_true", help="Send device-info and parameter-read requests")
+    mode.add_argument("--listen-only", action="store_true", help="Receive only (default)")
+    parser.add_argument("--dump-params", action="store_true", help="Requires --probe")
+    parser.add_argument("--capture", type=Path, help="New raw RX capture; never overwrite")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--decode", type=Path, help="Decode a raw capture offline")
+    source.add_argument("--list-ports", action="store_true", help="List serial descriptors")
+    args = parser.parse_args(argv)
+    if args.dump_params and not args.probe:
+        parser.error("--dump-params requires --probe")
+    if (args.decode or args.list_ports) and (args.port or args.capture or args.probe or args.listen_only):
+        parser.error("offline decoding/port listing cannot be combined with live options")
+    if not args.decode and not args.list_ports and not args.port:
+        parser.error("specify --port or use --list-ports / --decode")
+    if args.baud <= 0:
+        parser.error("baud must be positive")
     try:
-        ser = serial.Serial(args.port, args.baud, timeout=0.1)
-    except serial.SerialException as e:
-        print(f"[!] Failed to open port: {e}")
-        # Try common ELRS baud rates
-        for baud in [420000, 400000, 921600, 115200]:
-            try:
-                print(f"[*] Trying {baud} baud...")
-                ser = serial.Serial(args.port, baud, timeout=0.1)
-                print(f"[+] Connected at {baud}")
-                break
-            except serial.SerialException:
-                continue
-        else:
-            print("[!] Could not connect at any baud rate")
-            sys.exit(1)
+        if args.decode:
+            decoder = FrameDecoder()
+            with args.decode.open("rb") as stream:
+                while data := stream.read(4096):
+                    emit_frames(decoder.feed(data))
+            log(f"Trailing undecoded bytes: {len(decoder.buffer)}")
+            return 0
+        try:
+            import serial
+            from serial.tools import list_ports
+        except ImportError:
+            log("Install live dependency: python -m pip install pyserial==3.5")
+            return 1
+        if args.list_ports:
+            for port in list_ports.comports():
+                print(json.dumps({"port": port.device, "description": port.description,
+                                  "hwid": port.hwid, "vid": port.vid, "pid": port.pid,
+                                  "serial_number": port.serial_number}))
+            return 0
+        with ExitStack() as stack:
+            if args.capture:
+                args.capture.parent.mkdir(parents=True, exist_ok=True)
+            capture = stack.enter_context(args.capture.open("xb")) if args.capture else None
+            log(f"Opening {args.port} at {args.baud}; mode={'probe' if args.probe else 'receive only'}")
+            # Opening a serial device does not prove correct baud or protocol.
+            ser = stack.enter_context(serial.Serial(args.port, args.baud, timeout=0.05))
+            decoder = FrameDecoder()
 
-    ser.reset_input_buffer()
+            def receive(timeout=args.timeout):
+                frames = try_read_frames(ser, timeout, decoder, capture)
+                emit_frames(frames)
+                return frames
 
-    # Phase 1: Passive listen
-    print(f"\n[*] Phase 1: Passive capture ({args.timeout}s)...")
-    frames = try_read_frames(ser, args.timeout)
-    if frames:
-        print(f"[+] Captured {len(frames)} frames:")
-        type_counts = {}
-        for f in frames:
-            t = f["type_name"]
-            type_counts[t] = type_counts.get(t, 0) + 1
-            if len(frames) <= 20:
-                payload_hex = f["payload"].hex() if f["payload"] else "(empty)"
-                print(f"    sync=0x{f['sync']:02X} type={t} len={f['length']} payload={payload_hex}")
-        if len(frames) > 20:
-            for t, c in sorted(type_counts.items(), key=lambda x: -x[1]):
-                print(f"    {t}: {c} frames")
-    else:
-        print("[-] No frames captured during passive listen")
+            def request(frame):
+                log(f"TX {frame.hex()}")
+                ser.write(frame)
+                ser.flush()
+                return receive()
 
-    if args.listen_only:
-        ser.close()
-        return
+            frames = receive()
+            log(f"Passive capture: {len(frames)} valid frames")
+            if not args.probe:
+                return 0
 
-    # Phase 2: Send ping
-    print(f"\n[*] Phase 2: Sending CRSF ping...")
-    ping = build_ping()
-    print(f"    TX: {ping.hex()}")
-    ser.write(ping)
-    ser.flush()
+            def module_info(items):
+                for item in items:
+                    payload = item["payload"]
+                    if item["type"] == 0x29 and payload[:2] == bytes([0xEA, 0xEE]):
+                        info = extract_device_info(payload)
+                        if info:
+                            return info
+                return None
 
-    frames = try_read_frames(ser, args.timeout)
-    device_info = None
-    for f in frames:
-        print(f"    RX: type={f['type_name']} payload={f['payload'].hex()}")
-        if f["type"] == 0x29:  # DEVICE_INFO
-            device_info = extract_device_info(f["payload"])
-            print(f"\n[+] Device Info:")
-            for k, v in device_info.items():
-                print(f"    {k}: {v}")
-
-    # Phase 3: Targeted device info request
-    if not device_info:
-        print(f"\n[*] Phase 3: Requesting device info directly...")
-        req = build_device_info_request()
-        print(f"    TX: {req.hex()}")
-        ser.write(req)
-        ser.flush()
-
-        frames = try_read_frames(ser, args.timeout)
-        for f in frames:
-            print(f"    RX: type={f['type_name']} payload={f['payload'].hex()}")
-            if f["type"] == 0x29:
-                device_info = extract_device_info(f["payload"])
-                print(f"\n[+] Device Info:")
-                for k, v in device_info.items():
-                    print(f"    {k}: {v}")
-
-    # Phase 4: Read parameters
-    if args.dump_params:
-        param_count = device_info.get("param_count", 20) if device_info else 20
-        print(f"\n[*] Phase 4: Reading {param_count} parameters...")
-        for idx in range(1, param_count + 1):
-            req = build_param_read(idx)
-            ser.write(req)
-            ser.flush()
-            time.sleep(0.05)
-
-            frames = try_read_frames(ser, 0.5)
-            for f in frames:
-                if f["type"] == 0x2A:  # PARAMETER_SETTINGS_ENTRY
-                    payload = f["payload"]
-                    if len(payload) > 6:
-                        # Extended header: dest, origin, index, chunks_remaining, parent, type, name...
-                        p_dest = payload[0]
-                        p_origin = payload[1]
-                        p_index = payload[2]
-                        p_chunks = payload[3]
-                        p_parent = payload[4]
-                        p_type = payload[5]
-                        name_start = 6
-                        name_end = payload.find(0x00, name_start)
-                        if name_end > name_start:
-                            name = payload[name_start:name_end].decode("ascii", errors="replace")
-                            value_data = payload[name_end + 1:]
-                            print(f"    [{idx:2d}] parent={p_parent} type={p_type} name=\"{name}\" value={value_data.hex()}")
-                        else:
-                            print(f"    [{idx:2d}] raw={payload.hex()}")
-                elif f["type_name"] != "UNKNOWN(0x00)":
-                    print(f"    [{idx:2d}] unexpected: type={f['type_name']} payload={f['payload'].hex()}")
-
-    # Phase 5: Check for WiFi mode trigger
-    print(f"\n[*] Summary:")
-    if device_info:
-        print(f"    Device: {device_info.get('name', 'unknown')}")
-        print(f"    HW ver: {device_info.get('hw_ver', '?')}")
-        print(f"    SW ver: {device_info.get('sw_ver', '?')}")
-        print(f"    Params: {device_info.get('param_count', '?')}")
-    print(f"    Port: {args.port}")
-    print(f"    Baud: {ser.baudrate}")
-
-    ser.close()
-    print("\n[*] Done.")
+            info = module_info(request(build_ping()))
+            if info is None:
+                info = module_info(request(build_device_info_request()))
+            if info is None:
+                log("No valid module device-info response; USB CRSF support remains unconfirmed")
+                return 1
+            incomplete = False
+            if args.dump_params:
+                for index in range(1, info["param_count"] + 1):
+                    data = bytearray()
+                    previous_remaining = None
+                    for chunk in range(256):
+                        replies = request(build_param_read(index, chunk))
+                        matches = [f["payload"] for f in replies if f["type"] == 0x2B
+                                   and len(f["payload"]) >= 4
+                                   and f["payload"][:3] == bytes([0xEA, 0xEE, index])]
+                        if len(matches) != 1:
+                            log(f"Parameter {index}: expected one response, received {len(matches)}; incomplete")
+                            incomplete = True
+                            break
+                        payload = matches[0]
+                        remaining = payload[3]
+                        if previous_remaining is not None and remaining != previous_remaining - 1:
+                            log(f"Parameter {index}: inconsistent chunk sequence; incomplete")
+                            incomplete = True
+                            break
+                        data.extend(payload[4:])
+                        if remaining == 0:
+                            print(json.dumps({"parameter": index, "raw_data": data.hex(), "complete": True}))
+                            break
+                        previous_remaining = remaining
+                    else:
+                        log(f"Parameter {index}: chunk limit reached; incomplete")
+                        incomplete = True
+            return 1 if incomplete else 0
+    except (OSError, ValueError) as exc:
+        log(f"Diagnostic failed: {exc}")
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

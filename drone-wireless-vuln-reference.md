@@ -4,6 +4,13 @@
 > Covers WiFi, Bluetooth/BLE, and proprietary RF protocols — focused on DoS and RCE attack classes.
 > **Last updated:** 2026-10-14
 
+> **Evidence audit (2026-10-14):** See [CVE audit](research/CVE-AUDIT.md) and
+> [publication index](research/cve-record-index.json). All 97 fully written CVE
+> identifiers were checked: 95 published, one rejected, one lookup with no public
+> record. Sixteen claims received substantive review; remaining entries are
+> research leads with applicability/PoC claims not yet independently verified.
+> No table entry by itself establishes a tested capability on our hardware.
+
 ---
 
 ## Table of Contents
@@ -82,9 +89,9 @@
 | **CVE-2024-20017** | MediaTek MT7915/MT7622 | wappd stack overflow | **RCE** (CVSS 9.8) | WiFi range | No | Yes (public) |
 | **CVE-2025-20685** | MediaTek MT7915/MT7916 | AP driver code exec | **RCE** | WiFi range | No | Unknown |
 | **CVE-2026-68309** | MediaTek mt76 driver | NULL ptr deref | **DoS** (kernel panic) | WiFi range | No | Unknown |
-| **CVE-2025-47401** | Qualcomm WLAN HAL | Buffer overrun | **DoS** | WiFi range | No | Unknown |
-| **CVE-2025-47403** | Qualcomm WLAN firmware | Buffer overrun | **DoS** | WiFi range | No | Unknown |
-| **CVE-2020-26652** | Realtek RTL8812AU | nl80211 DoS | **DoS** | WiFi range | No | Unknown |
+| **CVE-2025-47401** | Qualcomm WLAN HAL | Buffer over-read | **DoS** | Channel-config path; RF reachability unverified | See advisory | Unknown |
+| **CVE-2025-47403** | Qualcomm WLAN firmware | Buffer over-read | **DoS** | Wireless roaming path | No | Unknown |
+| **CVE-2020-26652** | Realtek RTL8812AU | nl80211 DoS | **DoS** | Local fuzzing reported; RF unverified | Unverified | Issue reproducer |
 | **CVE-2017-13077** (KRACK) | All WPA2 clients | Key reinstallation | Decrypt/Inject | WiFi range | No | Yes |
 | **CVE-2020-24588** (FragAttacks) | All WiFi devices | A-MSDU injection | Inject/Leak | WiFi range | No | Yes |
 | **CVE-2017-0781** (BlueBorne) | Android Bluetooth | BNEP RCE | **RCE** | ~10m BT | No | Yes |
@@ -103,15 +110,15 @@
 | **CVE-2018-7080** | TI CC2540/CC2640R2 | OAD firmware overwrite | **RCE** | BLE range | No | Yes |
 | **CVE-2019-16336** (SweynTooth) | Multiple BLE SoCs | LL length overflow | **DoS** (crash) | BLE range | No | Yes |
 | **CVE-2025-27840** | ESP32 | Hidden HCI commands | Config tamper | Physical/HCI | Yes (wired) | PoC |
-| **CVE-2026-45542** | ESP32 (ESP-IDF) | protocomm heap overflow | **RCE** | BLE range | No | Unknown |
-| **CVE-2026-81507** | ESP32 (ESP-IDF) | L2CAP OOB read | **DoS** | BT range | No | Unknown |
+| **CVE-2026-45542** | ESP32 (ESP-IDF) | protocomm Security2 heap overflow | Heap corruption; RCE unproven | BLE provisioning enabled | No | Unknown |
+| **CVE-2026-81507** | ESP32 (ESP-IDF) | L2CAP OOB read | **Memory disclosure** | BT Classic / BlueDroid enabled | No | Unknown |
 | **CVE-2026-78306** | DJI (16 models) | BT command injection | **DoS** / config tamper | BLE range | No | PoC |
 | **CVE-2023-6951** | DJI WiFi | Weak WPA2 credentials | Network access | WiFi range | User interaction | Unknown |
 | N/A | MAVLink v1/v2 | Unencrypted telemetry | **Hijack** / inject | Radio range | No | Multiple |
 | N/A | ExpressLRS 1.x/2.x | Binding phrase leak | **Hijack** | LoS RF range | No | Yes |
 | **CVE-2026-1579** | PX4 Autopilot | MAVLink shell cmd exec | **RCE** (CVSS 9.8) | Radio range | No (no signing) | Unknown |
 | **CVE-2026-86097** | PX4 Autopilot | param file NULL ptr deref | **DoS** (crash) | Shell access | Yes | Unknown |
-| **CVE-2026-102808** | PX4 Autopilot | sd_stress malloc overflow | **DoS** (crash) | Shell access | Yes | Unknown |
+| **CVE-2026-102808** | PX4 Autopilot | sd_stress NULL dereference | **DoS** (crash) | Shell access | Yes | Unknown |
 | **CVE-2026-77812** | DJI (multiple) | BLE WiFi credential leak | Credential theft | BLE range | No | Unknown |
 | **CVE-2019-3944** | Parrot Anafi | WiFi deauth susceptibility | **DoS** | WiFi range | No | Yes |
 | **CVE-2019-3945** | Parrot Anafi | SDK date field crash | **DoS** (web server) | WiFi range | No | Yes |
@@ -146,6 +153,9 @@ Broadcom's BCM43xx family is found in smartphones, IoT devices, and some drone c
 - **Root cause:** Insufficient validation of event data lengths in the brcmfmac Linux driver
 - **Affected:** Linux systems using Broadcom/Cypress WiFi with brcmfmac
 - **Note:** CVE-2019-9503 is a related issue — firmware event frame validation bypass over USB
+- **Prerequisites:** WoWLAN configuration and an event-injection path are required;
+  radio reachability can depend on compromised firmware or the 9503 bypass chain.
+  See [CERT/CC VU#166939](https://kb.cert.org/vuls/id/166939/).
 
 #### CVE-2019-9502 — wl Driver Heap Overflow
 
@@ -153,6 +163,8 @@ Broadcom's BCM43xx family is found in smartphones, IoT devices, and some drone c
 - **Root cause:** Vendor IE data length exceeding 164 bytes triggers overflow in `wlc_wpa_plumb_gtk`
 - **Reported by:** Quarkslab, coordinated through CERT/CC (VU#166939)
 - **Companion CVEs:** CVE-2019-9503 (firmware event bypass), CVE-2019-8564
+- **Evidence qualification:** CERT/CC describes possible RCE in the worst case
+  and DoS as the typical outcome; a working PoC is not established by that label.
 
 #### CVE-2019-15126 — Kr00k
 
@@ -171,13 +183,15 @@ Research from 2020 demonstrated that once code execution is achieved on a Broadc
 
 Qualcomm's WLAN chipsets (Atheros heritage) are found in high-end smartphones, some companion computers, and networking equipment that may serve as drone ground stations.
 
-#### CVE-2025-47401 / CVE-2025-47403 — WLAN Buffer Overruns
+#### CVE-2025-47401 / CVE-2025-47403 — WLAN Buffer Over-reads
 
 - **Impact:** Transient denial of service
 - **Severity:** High (per Qualcomm May 2026 bulletin)
 - **Location:** WLAN HAL (47401) and WLAN firmware (47403)
 - **Auth required:** None — remote
 - **Note:** These are DoS, not confirmed RCE
+- **Reachability:** 47401 concerns channel-configuration power tables; 47403
+  concerns malformed roaming responses. Do not infer identical entry paths.
 
 #### CVE-2026-25254 — Qualcomm Software Center (Critical)
 
@@ -210,8 +224,9 @@ Realtek's RTL8812AU and RTL8811AU are popular USB WiFi adapters, often used in d
 - **CVSS:** 7.5 (High)
 - **Impact:** Denial of service in `nl80211_send_chandef`
 - **Affected:** aircrack-ng's out-of-tree rtl8812au driver v5.6.4.2
-- **Auth required:** None — remote over WiFi
-- **CTF relevance:** If the target uses RTL8812AU with the community driver, this can crash the WiFi stack
+- **Reachability:** The linked original report uses local interface fuzzing.
+  An unauthenticated over-the-air trigger has not been established here.
+- **Evidence:** [Original report](https://github.com/aircrack-ng/rtl8812au/issues/730).
 
 #### CVE-2025-8298 / CVE-2025-8301 — RTL8811AU Driver Bugs
 
@@ -235,6 +250,8 @@ MediaTek WiFi chips appear in routers, access points, and some embedded drone pl
 - **Impact:** Remote code execution on the access point
 - **Root cause:** Stack buffer overflow in the wappd network daemon; attacker-supplied length goes unchecked, overflowing by up to 1433 bytes
 - **Affected chipsets:** MT6890, MT7915, MT7916, MT7981, MT7986, MT7622
+- **Applicability qualification:** Verify the vulnerable wlan service is present;
+  chipset identity alone does not establish this component or its entry path.
 - **Auth required:** None — 0-click, over the air
 - **PoC:** Publicly available
 - **CTF relevance:** High — if the drone or ground station runs OpenWrt on a MediaTek chipset, this is a direct RCE path
@@ -250,6 +267,8 @@ MediaTek WiFi chips appear in routers, access points, and some embedded drone pl
 - **Impact:** Kernel panic / denial of service
 - **Root cause:** NULL pointer dereference in `mt76_connac_mcu_uni_bss_he_tlv`
 - **Affected:** mt76 driver (MT7915 and others)
+- **Reachability qualification:** The kernel fix adds a NULL check; a remote
+  unauthenticated frame trigger is not established by that record alone.
 
 #### CVE-2021-35055 — WPS Out-of-Bounds Write
 
@@ -272,19 +291,24 @@ The ESP32 is extremely common in hobby drones, companion computers, and DIY dron
 
 #### CVE-2026-45542 — protocomm Security2 Heap Overflow
 
-- **Impact:** RCE via heap overflow in Bluetooth provisioning (protocomm Security2)
-- **Fixed in:** ESP-IDF 5.2.8, 5.3.6, 5.5.5, 6.0.3, 6.1-rc1
-- **CTF relevance:** If the target drone uses BLE provisioning, this is exploitable over the air
+- **Impact:** Heap corruption in Bluetooth provisioning (protocomm Security2).
+  Demonstrated RCE is not established by the reviewed vendor advisory.
+- **Fixed in:** ESP-IDF 5.2.7, 5.3.6, 5.4.5, 5.5.5, 6.0.1
+- **Prerequisites:** An affected build exposing the Security2 BLE provisioning
+  session path; generic BLE support alone does not establish exposure.
 
 #### CVE-2026-25508 / CVE-2026-25507 — BLE Provisioning Bugs
 
-- **CVE-2026-25508:** Use-after-free in BLE provisioning
-- **CVE-2026-25507:** Out-of-bounds read in BLE provisioning
+- **CVE-2026-25507:** Use-after-free in BLE provisioning when teardown leaves BLE enabled
+- **CVE-2026-25508:** Prepared-write out-of-bounds read/potential memory corruption in BLE provisioning
+- **Version/transport evidence:** See [audit](research/CVE-AUDIT.md).
 
 #### CVE-2026-81507 — Bluetooth Classic L2CAP OOB Read
 
-- **Impact:** Denial of service — nearby unauthenticated device can trigger
-- **Fixed in:** ESP-IDF 5.2.8, 5.3.6, 5.5.5, 6.0.3, 6.1-rc1
+- **Impact:** Possible disclosure of adjacent Bluetooth stack memory; requires
+  Classic Bluetooth / BlueDroid. Do not describe this as BLE-only or merely DoS.
+- **Fixed versions:** CNA and vendor lists differ; see [audit](research/CVE-AUDIT.md)
+  for both lists and branch-specific patch references.
 
 #### CVE-2026-41429 — Arduino-ESP32 NBNS Memory Corruption
 
@@ -327,7 +351,7 @@ Recent kernel CVEs in the iwlwifi driver are mostly stability/DoS issues, not RC
 |---|---|---|
 | CVE-2025-38656 | Use-after-free (DoS) | Lost error code during DVM startup |
 | CVE-2025-21930 | Instability | Commands sent to unresponsive firmware |
-| CVE-2025-71226 | PTP failure | Missing callback in PTP clock registration |
+| CVE-2025-71226 | **REJECTED identifier** | Historical PTP attribution; exclude from confirmed CVE findings |
 
 ---
 
@@ -668,7 +692,7 @@ PX4 is one of the two dominant open-source autopilot stacks (the other being Ard
 - **Root cause:** `param select` and `param select-backup` commands accept empty path arguments, causing NULL pointer dereference
 - **Requires:** Shell access (via MAVLink or serial console)
 
-#### CVE-2026-102808 — sd_stress Malloc Overflow
+#### CVE-2026-102808 — sd_stress NULL Pointer Dereference
 
 - **Impact:** Flight controller crash (DoS)
 - **Root cause:** The `-b` byte count parameter is parsed without validation before being passed to `malloc()` and `memset()`
@@ -1092,7 +1116,7 @@ The USENIX Security 2020 **Frankenstein** work is a useful counterexample to tre
 | **CVE-2019-11516** | Classic Bluetooth Extended Inquiry Response while the victim scans | Heap overflow; BLOC freelist corruption produced a write-what-where primitive and firmware RCE on tested older Broadcom builds |
 | **CVE-2019-13916** | BLE PDU reception | Four-byte heap overflow; exploitable on some older builds, while a later build's one-byte canary caused a controlled crash and prevented the published RCE technique |
 | **CVE-2019-18614** | ACL traffic between host and controller | Heap overflow caused by advertised/actual buffer-size mismatch on CYW20735; reachability depends on the host path and may require privileges on other builds |
-| **CVE-2019-15063** | WiFi/Bluetooth coexistence registers | Cross-core denial of service and host instability; this is not itself a general arbitrary-write bridge into the WiFi core |
+| **CVE-2019-15063** (unverified identifier) | WiFi/Bluetooth coexistence registers | Historical research attribution; CVE API returned no public record on 2026-10-14. See [audit](research/CVE-AUDIT.md) |
 
 **Reusable exploitation pattern:**
 1. Recover the exact allocator layout and BLOC header fields from the matching firmware.
@@ -1137,7 +1161,7 @@ WiFi driver and shared-stack bugs execute on the host processor and can therefor
 
 | Driver | Chipset Family | Example CVEs | Typical Bug Class |
 |---|---|---|---|
-| **brcmfmac** | Broadcom/Cypress | CVE-2019-9500, CVE-2019-9502 | Heap overflow in event/IE processing |
+| **brcmfmac / proprietary wl** | Broadcom/Cypress | CVE-2019-9500 (brcmfmac), CVE-2019-9502 (wl) | Separate driver event/IE processing paths |
 | **ath9k/ath10k/ath11k** | Qualcomm/Atheros | CVE-2025-39746 | Use-after-free, shutdown races |
 | **iwlwifi** | Intel | CVE-2025-38656, CVE-2023-53524 | Use-after-free, integer overflow |
 | **mt76** | MediaTek | CVE-2026-68309 | NULL ptr deref, HE capability parsing |
@@ -1396,7 +1420,7 @@ Alphabetical index of all CVEs referenced in this document.
 | CVE-2019-10540 | [QualPwn](#qualpwn-escalation-pattern-2019) | Qualcomm WLAN NAN buffer overflow / WLAN-to-modem stage |
 | CVE-2019-11516 | [Frankenstein](#broadcom--cypress-bluetooth-firmware-frankenstein) | Broadcom EIR heap overflow and firmware RCE |
 | CVE-2019-13916 | [Frankenstein](#broadcom--cypress-bluetooth-firmware-frankenstein) | Broadcom/Cypress BLE PDU heap overflow |
-| CVE-2019-15063 | [Frankenstein](#broadcom--cypress-bluetooth-firmware-frankenstein) | WiFi/BT coexistence denial of service |
+| CVE-2019-15063 | [Frankenstein](#broadcom--cypress-bluetooth-firmware-frankenstein) | Unverified identifier; public record unavailable in this lookup |
 | CVE-2019-18614 | [Frankenstein](#broadcom--cypress-bluetooth-firmware-frankenstein) | CYW20735 ACL heap overflow |
 | CVE-2020-10135 | [BIAS](#knob--bias-bluetooth-classic) | BT impersonation / auth bypass |
 | CVE-2020-12351 | [BleedingTooth](#bleedingtooth-a-documented-kernel-rop-chain) | Linux L2CAP/A2MP heap type confusion |
@@ -1415,8 +1439,8 @@ Alphabetical index of all CVEs referenced in this document.
 | CVE-2024-20017 | [MediaTek](#mediatek-mt76xx) | MediaTek wappd stack overflow RCE |
 | CVE-2025-20685 | [MediaTek](#mediatek-mt76xx) | MediaTek AP driver unauth RCE |
 | CVE-2025-27840 | [ESP32](#espressif-esp32) | ESP32 hidden HCI commands |
-| CVE-2025-47401 | [Qualcomm/Atheros](#qualcomm--atheros) | Qualcomm WLAN HAL buffer overrun DoS |
-| CVE-2025-47403 | [Qualcomm/Atheros](#qualcomm--atheros) | Qualcomm WLAN firmware buffer overrun DoS |
+| CVE-2025-47401 | [Qualcomm/Atheros](#qualcomm--atheros) | Qualcomm WLAN HAL buffer over-read DoS |
+| CVE-2025-47403 | [Qualcomm/Atheros](#qualcomm--atheros) | Qualcomm WLAN firmware buffer over-read DoS |
 | CVE-2025-8298 | [Realtek](#realtek-rtl88xx) | RTL8811AU OOB read info disclosure |
 | CVE-2025-8301 | [Realtek](#realtek-rtl88xx) | RTL8811AU heap overflow LPE |
 | CVE-2026-25254 | [Qualcomm/Atheros](#qualcomm--atheros) | Qualcomm Software Center unauth RCE |
@@ -1428,7 +1452,7 @@ Alphabetical index of all CVEs referenced in this document.
 | CVE-2026-78306 | [DJI Bluetooth](#dji-bluetooth-vulnerabilities) | DJI BT command injection |
 | CVE-2026-81507 | [ESP32](#espressif-esp32) | ESP32 BT Classic L2CAP OOB read |
 | CVE-2026-86097 | [PX4 Autopilot](#px4-autopilot) | PX4 param file NULL ptr deref DoS |
-| CVE-2026-102808 | [PX4 Autopilot](#px4-autopilot) | PX4 sd_stress malloc overflow DoS |
+| CVE-2026-102808 | [PX4 Autopilot](#px4-autopilot) | PX4 sd_stress NULL dereference DoS |
 | CVE-2026-102809 | [PX4 Autopilot](#px4-autopilot) | PX4 file2 stack overflow DoS |
 | CVE-2026-1579 | [PX4 Autopilot](#px4-autopilot) | PX4 MAVLink shell command RCE |
 | CVE-2026-77812 | [DJI WiFi](#dji-wifi--droneid) | DJI BLE WiFi credential leak |

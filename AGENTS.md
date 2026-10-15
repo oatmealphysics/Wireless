@@ -48,7 +48,7 @@ Harness/
 | Device | Role | MCU | RF Chip | Protocol |
 |---|---|---|---|---|
 | **EMAX TinyHawk III** | Target drone | STM32F411CEU6 | SX1280 (SPI) | ELRS baked into Betaflight |
-| **EMAX E8 controller** | TX / attack TX | ESP32 | SX1280 | ExpressLRS standalone |
+| **EMAX E8 controller** | TX / attack TX | Unconfirmed (ESP32 is a related-module hypothesis) | Unconfirmed for this unit | ELRS variant reported; installed version unconfirmed |
 | **FPV headset** | Monitor FPV feed | — | — | Analog |
 | **Ettus B205mini** | SDR transceiver | — | — | GPS spoofing, custom RF |
 | **Ettus B210** | SDR transceiver | — | — | Full-duplex, higher BW |
@@ -84,6 +84,9 @@ Know the binding phrase → know every hop → forge valid packets → override 
 - Closest targets: `EMAX_2400_TX` (OLED) and `EMAX_NANO_2400_TX` — both ESP32 + SX1280
 - Firmware base: `Unified_ESP32_2400_TX`
 - Upload methods: UART, WiFi (WiFi mode is an attack surface)
+
+These target/MCU details describe related EMAX modules, not an identified E8
+firmware image. See `HARDWARE-IDENTITY.md` before selecting a device target.
 
 ## Guidelines for Agents
 

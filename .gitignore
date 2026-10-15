@@ -1,0 +1,4 @@
+# Local analysis and captures; original corpus artifacts remain tracked.
+/work/
+__pycache__/
+*.pyc
