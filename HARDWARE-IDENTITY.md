@@ -16,23 +16,40 @@ current Windows endpoint. Port names can change across reconnects and modes.
 The Python runtime available for offline tests is Python 3.12.10; access through
 the restricted shell's WindowsApps alias fails, but an approved invocation works.
 
+## Windows session — 2026-10-15
+
+A second USB device appeared on the Windows home workspace as COM4:
+
+| Property | Value |
+|---|---|
+| Port | COM4 |
+| VID | 0x8888 |
+| PID | 0x2001 |
+| Serial | 00000001 |
+| USB class | CDC ACM (02/02/01) |
+| Bus description | "USB Serial" |
+| Driver | usbser.inf (Microsoft) |
+| HW revision | REV_0100 |
+
+This is distinct from the Prolific adapter on COM3 (VID 067B, PID 23A3).
+
+**Probe results:** Zero bytes received across all tests — MSP v1/v2, CRSF,
+MAVLink, CLI, passive listen, DTR/RTS toggling, ESP32 boot reset, 1200bps
+bootloader touch. Seven baud rates tested (9600 through 921600). The port opens
+and closes without error but produces no data.
+
+**Conclusion:** The E8 needs battery power and the power switch engaged. USB CDC
+enumerates in charging-only mode but the application firmware is not running.
+Full characterization details in `E8-SERIAL-CHARACTERIZATION.md`.
+
 ## Next hardware session
 
-1. Record the label/model variant, board revision if visible, battery/power state,
-   and connection mode. Do not infer a MCU from a USB description alone.
-2. Compare `python tools/elrs-serial-probe.py --list-ports` before and after
-   connecting this controller; record VID/PID, serial number and device path.
-3. On the identified endpoint, receive without transmitting:
-   `python tools/elrs-serial-probe.py -p <device> --capture work/e8-rx.bin`.
-   Opening a port can affect DTR/RTS even in receive-only mode.
-4. Decode that capture offline with `--decode work/e8-rx.bin`. Preserve the
-   original bytes and command/environment notes. Empty output does not establish
-   a firmware failure, wrong baud, or lack of all serial protocols.
-5. Use `--probe` only after CRSF is a plausible protocol for the identified
-   endpoint. Discovery and parameter reads are the only requests supported.
-6. Record reported versions as device-reported evidence; reconcile with product
+1. Power on the E8 (battery + switch) and confirm COM port assignment.
+2. Try CRSF at 460800 baud: `python tools/elrs-serial-probe.py -p COM4 -b 460800 --probe --dump-params`
+3. If CRSF fails, try MSP at 115200 with the msp_probe.py script.
+4. Extract firmware version, UID, binding phrase status, WiFi config, failsafe behavior.
+5. Record reported versions as device-reported evidence; reconcile with product
    and board identification before associating a corpus sample with the unit.
 
 Keep device serial numbers, private configuration and captures under ignored
-`work/`; publish only reviewed, non-sensitive observations. Actual E8 identity
-remains pending a unit-specific hardware session.
+`work/`; publish only reviewed, non-sensitive observations.
