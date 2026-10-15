@@ -724,7 +724,7 @@ capability.
 | W4 SURFACE | **Done.** ELRS RX inputs → CRC boundary → 3 sinks, classified. |
 | W5 VULN | **Done.** Ranked: MSP-injection (top), bind-mode UID (fastest), RC-overflow (dead end). SELF-CONSISTENT. |
 | W6 DESIGN | **Done.** The 5-step chain + preconditions + failure modes. |
-| W7 BUILD | **In progress.** `elrs_core` vendored (protocol layer); forger/analyzer/chain **not yet rewired** (Step 1); TX emulator is a chirp prototype (Phase 2). |
+| W7 BUILD | **Done (protocol layer).** forger/analyzer/chain rewired to `elrs_core`, **v3, sync channel 41** (Step 1, verified working — §17). The TX emulator PHY path (LoRa) is the remaining Phase 2 piece. |
 | W8 VALIDATE-OFFLINE | **Not started.** Needs the rewired tools (W7) + a real capture to cross-check. |
 | W9 VALIDATE-LIVE | **Not started.** Needs W7 + W8 + the owner's bench (TinyHawk + E8 + B205). |
 | W10 GAME-DAY | **Not started.** Needs W9. |
@@ -736,21 +736,27 @@ is the furthest along because it's the one we have a corpus + bench for.
 
 | Protocol | W1–W2 (acquire/model) | W3–W5 (recon/surface/vuln) | W6 (design) | W7 (build) | W8–W9 (validate) |
 |---|---|---|---|---|---|
-| **ELRS** (TinyHawk) | DONE | DONE (P1-2/P2-4/P2-5 known) | DONE | PARTIAL (forger exists, P1-2; `elrs_core` vendored) | NOT STARTED (needs PHY + bench) |
-| **MAVLink** (autopilot/GCS) | PARTIAL (no target firmware yet; pymavlink available) | DONE (v2 spec known; P1-1/P1-3 documented) | DONE | PARTIAL (injector/fuzzer exist, P1-1/P1-3) | NOT STARTED |
-| **Wi-Fi** (Tello/AP-mode) | PARTIAL (no Tello firmware) | DONE (deauth/PMKID/rogue-AP) | DONE | PARTIAL (scripts exist, not reviewed) | NOT STARTED (need a Wi-Fi drone) |
+| **ELRS** (TinyHawk) | DONE | DONE (P1-2 fixed in §17; P2-4/P2-5 PHY remain) | DONE | **DONE (protocol layer, v3, ch 41 — §17)**; TX PHY (LoRa) = Phase 2 | NOT STARTED (needs W8 capture + bench) |
+| **MAVLink** (ArduPilot 4.7.2 + SITL) | DONE (corpus in repo — §15) | DONE (v2 spec known; P1-1/P1-3 documented) | DONE | PARTIAL (injector/fuzzer exist, P1-1/P1-3; SITL x86_64 = W8 oracle) | NOT STARTED (P1-3 fix + SITL validation, offline) |
+| **Wi-Fi** (Tello SDK) | DONE (Tello SDK in repo — §15) | DONE (deauth/PMKID/rogue-AP) | DONE | PARTIAL (scripts exist, not reviewed) | NOT STARTED (need a Wi-Fi drone for W9) |
 | **BLE** | NOT STARTED | PARTIAL (attack surface documented) | NOT STARTED | NOT STARTED | NOT STARTED |
 | **GPS** (spoofing) | NOT STARTED (SDR-based) | DONE (L1 well-understood; concept documented) | PARTIAL | PARTIAL (`gps-spoof-poc` exists) | NOT STARTED |
 
-**The critical path is W7→W9 for ELRS (the FLRC PHY blocker) and W7→W9 for
-MAVLink (the P1-1/P1-3 protocol-conformance fixes).** Both are gated on the
-owner's W0 — the CTF target and flag condition. Everything is deliberately
+**The critical path is W8→W9 for ELRS (the W8 capture cross-check — the
+forger is built and correct, the capture is the missing piece) and W7→W8 for
+MAVLink (the P1-3 fix + SITL validation, fully offline).** Both are gated on
+the owner's W0 — the CTF target and flag condition. Everything is deliberately
 multi-platform: the TinyHawk proves the *pipeline*, but the CTF win depends on
-which platform W0 identifies.
+which platform W0 identifies. The Layer 2 research
+(`research/layer2-wireless-attack-research.md`) broadens the target landscape
+to the controllers + GCS; the E8 WiFi AP / `GET /config` surface (Chain 1) is
+the read-only lab test that would eliminate the UID-recovery step for the ELRS
+path.
 
-**The immediate next wicket (for the furthest-along platform, ELRS) is W7
-completion (Step 1: rewire the tools to `elrs_core`), then W8 (offline
-validation against a real capture), then W9 (live, on the owner's bench).**
+**The immediate next wicket (for the furthest-along platform, ELRS) is W8
+(offline validation against a real capture) — Step 1 (the rewire to
+`elrs_core`, v3, sync channel 41) is done and verified working (§17). Then W9
+(live, on the owner's bench).**
 
 — andeds, orchestrator, 2026-10-15. The firmware→PoC pathway, ten wickets,
 grounded in the TinyHawk run (the test article) but broad across every

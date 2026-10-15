@@ -20,6 +20,18 @@
 > column comes in via the laptop → gitlab01 push (or Nextcloud for files), per
 > the `enclave-ingest` flow. The download *instructions* are here so the laptop
 > side knows exactly what to pull.
+>
+> **Layer 2 target landscape:** this inventory covers the *firmware* we develop
+> on. The broader target landscape — the **controllers and ground stations**,
+> not just the drones — is in
+> [`research/layer2-wireless-attack-research.md`](../research/layer2-wireless-attack-research.md)
+> (three chains: ELRS controller WiFi, WiFi→MAVLink, DJI BLE). The E8 WiFi AP
+> / `GET /config` surface (Chain 1) is tracked here as row **11b** / §A6,
+> because it's the lab test that would eliminate the UID-recovery step for the
+> ELRS path. **§17 (SESSION-NOTES) is the orchestrator's review of the 4.4.2
+> rewire + driver diff + Layer 2 research; the assessments in that review are
+> mirrored into this inventory (the E8/Chain 1 row, the W-states, the
+> "highest-value lab test" call-out).**
 
 ---
 
@@ -236,29 +248,56 @@ W10 GAME-DAY   [last]  Playbook. (GPS spoofing needs the SDR + range — a W0
 
 ---
 
-### A6. E8 (the ELRS TX / handset — the *delivery* device, not the target)
+### A6. E8 (the ELRS TX / handset — delivery device *and* a Layer 2 target)
 
-| Firmware | HAVE / NEED | Version / target | W-state | Notes |
+> **§17 assessment mirrored here (andeds):** the Layer 2 research
+> (`research/layer2-wireless-attack-research.md`, Chain 1) reframes the E8. It
+> is not *only* the delivery device — it is also a **target in its own right**,
+> because the ESP32 TX **auto-starts an open WiFi AP** after link loss, and
+> `GET /config` on that AP **leaks the binding phrase + UID**. A read-only WiFi
+> config read is allowed under the no-flash constraint. **If the E8's WiFi AP
+> is reachable and the config is readable, the UID-recovery step (W8's only
+> unknown for ELRS) is eliminated entirely** — the binding phrase is available
+> directly, no air-recovery needed. This is the highest-value lab test in the
+> project right now.
+
+| Firmware / surface | HAVE / NEED | Version / target | W-state | Notes |
 |---|---|---|---|---|
-| **E8 ELRS TX firmware** | **NEED** | 4.x (ELRS) | reference (not a target) | The E8 is the *transmitter* we use to deliver the ELRS exploit — not a target to exploit. Its firmware matters for (a) the no-flash constraint (we never flash it), (b) the serial protocol for config read (the merged E8 reader), (c) whether it can be reprogrammed to send our forged frames. |
-| **E8 serial protocol** | **HAVE** (in the merged reader) | — | W7 (delivery tool) | The 64-byte TX / 17-byte RX config protocol is confirmed in the `vendor-e8-config-reader`. A live read was attempted but got no bytes (evening notes) — the air-recovery path is primary. |
+| **E8 ELRS TX firmware** | **NEED** (ref) | 4.x (ELRS) | reference (not a flash target) | The E8 is the *transmitter* we use to deliver the ELRS exploit. No-flash constraint is absolute. |
+| **E8 WiFi AP / `GET /config` (Chain 1)** | **NEED** (lab test) | ESP32 ELRS TX | W7 (Chain 1) | **The Layer 2 surface.** Auto-open WiFi AP after link loss; `GET /config` leaks the binding phrase + UID. Read-only lab test on the owned E8 (allowed by the no-flash constraint). If it works, it eliminates the UID-recovery step for the ELRS path. |
+| **E8 serial protocol** | **HAVE** (merged reader) | — | W7 (delivery tool) | 64-byte TX / 17-byte RX config protocol confirmed in the `vendor-e8-config-reader`. A live read got no bytes (evening notes) — air-recovery is the primary UID source *until* the WiFi AP read is tested. |
 
-**Chain to run (E8) — the delivery-device chain, not a target chain:**
+**Chain to run (E8) — the delivery-device chain *plus* the Layer 1 Chain 1
+target chain:**
 
 ```
-W0  FRAME      [owner] Can the E8 be used to TX our forged frames (reprogrammed
-                       via its ELRS firmware), or do we need a separate SDR TX
-                       (the B205)? This decides the W9 delivery path.
-W7  BUILD      [done]  The E8 config reader is merged (dry-run default, no
-                       flash). The ELRS TX emulator is the separate SDR path.
-W9  VALIDATE   [next]  Bench: does the E8 (or the B205) deliver our forged
-     LIVE                FLRC frames to the TinyHawk? (This is the Phase 2 PHY
-                       validation, shared with the ELRS chain.)
+Delivery-device role (the means, not the target):
+W0  [owner] Can the E8 TX our forged frames (reprogrammed via its ELRS
+            firmware), or is the B205 SDR the delivery path?
+W7  [done]  The E8 config reader is merged (dry-run default, no flash).
+W9  [next]  Bench: does the E8 (or the B205) deliver our forged LoRa frames
+            to the TinyHawk? (Shared with the ELRS chain, W9.)
+
+Layer 2 Chain 1 role (the E8 AS A TARGET — the new surface):
+W0  [owner] Is the CTF target an ELRS drone + controller? (Chain 1 applies.)
+W4  [done]  Surface known: the ESP32 TX auto-starts an open WiFi AP after
+            link loss (~60s); GET /config exposes the binding phrase + UID.
+W5  [done]  The "vuln" is the unauthenticated open-AP config read (no 0-day —
+            it's the vendor's default recovery behavior).
+W6  [done]  Design: jam/disrupt the link -> wait for the AP -> connect
+            (ALFA card, lab) -> GET /config -> extract phrase -> derive UID.
+W7  [next]  Build the AP scanner + HTTP config extractor (lab tool, no flash).
+W8/W9 [next]  Lab test on the OWNED E8 (read-only): confirm the AP comes up on
+            link loss, confirm GET /config returns the phrase. THIS is the
+            highest-value lab test — it removes the UID-recovery step for the
+            entire ELRS path.
 ```
 
-> **The E8 is the *means*, not the *target*.** The no-flash constraint is
-> absolute. If the E8 can't be made to TX our forged frames, the B205 SDR is
-> the delivery path (the `elrs-tx-emulator` + `elrs_core.gfsk`/`lora`).
+> **The E8 is the *means* (delivery) and now also a *target* (Chain 1 WiFi
+> config read). The no-flash constraint is absolute — the Chain 1 test is
+> read-only (scan + GET), never a settings write or flash. If the E8's WiFi AP
+> can't be reached, the B205 SDR is the delivery path and air-recovery
+> (`fhss_seed.py`) remains the UID source.
 
 ---
 
@@ -282,6 +321,7 @@ One table: every firmware, have/need, wicket state, the single next action.
 | 9 | BLE target firmware | **NEED** | W4 partial (surface), **W1 (acquire) = blocker** | Confirm at W0: is the CTF BLE? Pull the firmware + confirm a BLE adapter | Owner (laptop) |
 | 10 | GPS target (GNSS SDR spoofing) | **NEED** | W4 done (concept), **W1 (acquire) = blocker** | Confirm at W0: is the CTF GPS-dependent? Confirm a GNSS SDR | Owner (laptop) |
 | 11 | E8 ELRS TX firmware (delivery device) | **NEED** (ref) | W7 (delivery tool) | Confirm at W0: can the E8 TX our frames, or is the B205 SDR the path? | Owner |
+| 11b | **E8 WiFi AP / `GET /config` (Layer 2 Chain 1 — E8 as a TARGET)** | **NEED** (lab test) | W4–W6 done (surface/design), **W7/W8 next** | **Read-only lab test on the owned E8** (allowed by no-flash). If the AP + config read work, the UID-recovery step for ELRS is eliminated. **Highest-value lab test in the project.** | Owner (lab) |
 
 **The "NEED TO DOWNLOAD" items (down from five to three after Claude's
 corpus expansion):**
