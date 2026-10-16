@@ -106,6 +106,24 @@ class SymbolTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "disagrees"):
                 self.symbols.read_iq_window(capture, 800000, 0, 3 / 800000)
 
+    def test_read_window_anchors_resampler_grid(self):
+        import numpy as np
+
+        with tempfile.TemporaryDirectory() as directory:
+            capture = Path(directory) / "grid_sc16.iq"
+            values = np.arange(2048, dtype="<i2")
+            iq = np.column_stack((values, -values)).astype("<i2")
+            capture.write_bytes(iq.tobytes())
+            first, t1 = self.symbols.read_iq_window(
+                capture, 4e6, 1000 / 4e6, 100 / 4e6,
+                align_samples=64)
+            second, t2 = self.symbols.read_iq_window(
+                capture, 4e6, 1004 / 4e6, 100 / 4e6,
+                align_samples=64)
+            self.assertEqual(t1, 960 / 4e6)
+            self.assertEqual(t1, t2)
+            np.testing.assert_array_equal(first[:100], second[:100])
+
     def test_preamble_sync_and_payload(self):
         import numpy as np
 

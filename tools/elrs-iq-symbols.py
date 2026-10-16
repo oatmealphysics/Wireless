@@ -51,7 +51,8 @@ def upchirp() -> np.ndarray:
 
 
 def read_iq_window(path: Path, sample_rate: float, start_s: float,
-                   length_s: float, input_format: str = "auto") -> tuple[np.ndarray, float]:
+                   length_s: float, input_format: str = "auto",
+                   align_samples: int = 1) -> tuple[np.ndarray, float]:
     """Bounded IQ read; BLUE headers/trailers are never treated as samples."""
     size = path.stat().st_size
     if input_format == "auto":
@@ -87,8 +88,12 @@ def read_iq_window(path: Path, sample_rate: float, start_s: float,
     width = widths[input_format]
     if payload_size % width:
         raise ValueError(f"{input_format} data length is not sample-aligned")
-    first = max(0, round(start_s * sample_rate))
-    count = min(payload_size // width - first, round(length_s * sample_rate))
+    if align_samples < 1:
+        raise ValueError("sample-grid alignment must be positive")
+    requested_first = max(0, round(start_s * sample_rate))
+    first = (requested_first // align_samples) * align_samples
+    count = min(payload_size // width - first,
+                round(length_s * sample_rate) + requested_first - first)
     if count <= 0:
         raise ValueError("Requested window is outside the capture")
     with path.open("rb") as stream:
@@ -197,8 +202,13 @@ def analyze(path: Path, sample_rate: float, center_hz: float, channel_hz: float,
     window_start = max(0, packet_start - margin)
     window_length = 0.007 + 2 * margin
     print(f"Reading {window_length * 1000:.2f} ms from {path.name}", file=sys.stderr)
+    # Anchoring input reads to the rational resampler's denominator keeps
+    # output-chip timing on one global grid. Otherwise a 1-2 us change in the
+    # guessed packet start can change polyphase alignment and symbol bins.
+    resample_denominator = Fraction(BW_HZ / sample_rate).limit_denominator(4096).denominator
     iq, actual_start = read_iq_window(path, sample_rate, window_start,
-                                      window_length, input_format)
+                                      window_length, input_format,
+                                      align_samples=resample_denominator)
     baseband, baseband_rate = shift_and_resample(iq, sample_rate, channel_hz - center_hz)
     first = round((packet_start - search_us * 1e-6 - actual_start) * baseband_rate)
     last = round((packet_start + search_us * 1e-6 - actual_start) * baseband_rate)
