@@ -40,6 +40,18 @@ python tools/elrs-iq-symbols.py work/captures/2026-10-08_13-07-21_2450mhz_pred.c
 Keep that JSON output under ignored `work/`; its symbol sequence may contain
 pairing information after a future decoder is available.
 
+`tools/elrs-batch-evidence.py` now wraps this bounded analysis for multiple
+known starts. It refuses tracked output paths and existing filenames, writes
+full candidate records only under ignored `work/`, and prints only aggregate
+quality to the terminal. Four 21-symbol records from each capture were
+generated locally as `work/oct08-2026-10-15-4bursts-symbols.jsonl` and
+`work/oct15-2026-10-15-4bursts-symbols.jsonl`; all eight report 12/12
+preamble consistency, matching sync offsets, and 21/21 symbols over the 0.2
+peak-fraction heuristic. The private JSONL files are **not** uploaded to Git.
+On another machine, regenerate them from the private captures using the
+documented start times and the batch tool rather than inferring bytes from
+this aggregate report.
+
 ## Separate Betaflight 4.4.2 v3 checker
 
 Added `tools/elrs-v3-frame-check.py` for **pre-decoded eight-byte** candidate
