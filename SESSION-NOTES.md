@@ -1676,3 +1676,68 @@ Commit `cc7dbb0` (`docs: onboard E8 and TinyHawk evidence`) was pushed to both
 - Do not open either port concurrently with another agent, and do not infer a
   handoff from an apparently free device node.
 - Do not move private material from `work/` into Git.
+
+---
+
+## 27. ELRS profile evidence gate and connected-SDR intake (Codex, 2026-10-16)
+
+### Starting revision and objective
+
+Started from `a32b0ed` after pulling `main` and rereading `AGENTS.md`, the
+latest session entries, and `SECURITY.md`. The owner asked to continue and
+reported that the E8 and TinyHawk were plugged in, with the controller expected
+to transmit and an SDR attached. The immediate objective was to preserve the
+Gate 2 evidence boundary while reviewing the newly merged v3 compatibility
+layer and attack-profile generator, then assess whether a receive-only SDR
+observation was possible from this Windows checkout.
+
+### Actions and evidence
+
+- Checked the pinned Betaflight 4.4.2 `USE_RX_SX1280` rate table in
+  `firmware/src/betaflight-4.4.2.tar.gz`,
+  `src/main/rx/expresslrs_common.c:61-66`: index 0 = 500 Hz/2000 us,
+  1 = 250 Hz/4000 us, 2 = 150 Hz/6666 us, 3 = 50 Hz/20000 us. The
+  newly merged `tools/elrs-attack-profile.py` instead used a newer seven-rate
+  map for v3 and defaulted to index 4. It also put FHSS channel 41 in the
+  synthetic SYNC `fhss_index` field, where a sequence index belongs.
+- Found that its `--iq-file` branch invoked the archived
+  `tools/elrs-sync-capture.py` prototype. That prototype's entry point is
+  deliberately disabled because SX1280 long-interleaved IQ has not yielded
+  validated packet bytes. The profile's synthetic CRC round-trip cannot
+  substitute for real-frame validation.
+- Updated the profile tool to use the 4.4.2 v3 rate indexes (default 2),
+  reject unsupported v3 indexes, use FHSS index 0 in its synthetic SYNC,
+  fail closed on raw IQ input, label the self-check `synthetic_only`, and
+  block downstream forger/TX handoff. Its optional command display now points
+  only to the offline v3 frame checker and repeats the RF-TX safety gate.
+  Profile schema version is 2. No real UID or captured bytes were used.
+- Added six synthetic regression tests in
+  `tools/tests/test_elrs_attack_profile.py`. The pre-existing 52 v3-core tests
+  also passed. The full offline `tools/tests` suite passed: **86 tests**.
+- Windows read-only enumeration saw an Ettus B205mini, USB
+  `VID_2500&PID_0022`, status OK. No native `uhd_find_devices` or
+  `SoapySDRUtil` command was found. WSL had Python but neither UHD nor Soapy
+  utilities, and no usable SDR device path was established in WSL. Therefore no
+  new IQ recording was attempted. The existing private captures under
+  ignored `work/captures/` were left unchanged.
+
+### Limits, safety, and handoff
+
+This work establishes a corrected **offline parameter representation**, not
+decoded real frames, an exact live-binary match, or receiver acceptance.
+Gate 2 in §20 remains open. No E8 or TinyHawk serial port was opened; no
+settings were written, no firmware was flashed, and no RF was transmitted.
+The user's report that the devices are on is not a serial-access handoff.
+
+Changed files: `tools/elrs-attack-profile.py`,
+`tools/tests/test_elrs_attack_profile.py`, and this running log. The tool/test
+change was committed as `042aac1`; it and the log update were pushed to
+`origin/main` at handoff. Validation used only synthetic/offline fixtures.
+
+Next smallest useful step: make a known receive-only UHD/Soapy environment
+available to this host or the Ubuntu lab machine, then take a bounded passive
+recording with exact sample-rate/center-frequency metadata and a pair-off
+control if the owner can arrange one. Independently, continue the SX1280
+long-interleaver/FEC reference or known-plaintext fixture work before feeding
+any IQ-derived bytes to the v3 CRC checker. Do not use the archived SYNC
+prototype or a synthetic profile status as evidence of a live decode.

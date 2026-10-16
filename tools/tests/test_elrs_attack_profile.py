@@ -65,4 +65,3 @@ class TestV3Profile(TestCase):
         self.assertNotIn("takeover", stderr.getvalue())
         self.assertNotIn("elrs-tx-emulator.py", stderr.getvalue())
         self.assertIn("elrs-v3-frame-check.py", stderr.getvalue())
-
