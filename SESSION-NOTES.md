@@ -1941,3 +1941,7 @@ in the subsequent handoff line. Next step: develop or locate an independently
 validated SX1280 `0x07` inverse; use the private candidate set and held-out
 real frames only after that gate. No additional hardware, transmission,
 flashing, binding, or physical probe is authorized by this offline result.
+
+Handoff status: research/log commit `df227d8` was pushed to `origin/main`.
+This status line is being committed and pushed separately; the worktree
+contains no tracked capture, private UID, installer, or virtual environment.
