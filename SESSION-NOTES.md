@@ -1,4 +1,26 @@
-# Session Notes — 2026-10-15 (andeds, orchestrator)
+# Shared Running Session Log
+
+Started 2026-10-15 by andeds/orchestrator. This is the canonical append-only
+handoff for Claude Code, Codex, and other project agents.
+
+## Running-log convention
+
+Before work, pull `main`, read `AGENTS.md`, and read the newest relevant log
+entries. Before handoff, append a dated, agent-attributed section containing:
+
+1. starting revision and objective;
+2. scope, authorization, and device-specific prohibitions;
+3. actions performed and evidence locations;
+4. what worked and what it establishes;
+5. what failed, was blocked, or remained inconclusive;
+6. private-data handling and safety state;
+7. files changed, validation run, and commit/push status;
+8. the next smallest useful steps and work that should not be repeated.
+
+Do not erase or silently rewrite prior entries. When evidence changes an older
+conclusion, append a correction and name the superseded section. Never place a
+credential, pairing UID, raw private response, identifying capture, or other
+secret in this tracked log; point to an ignored `work/` location instead.
 
 ## THE WAY AHEAD — read this first
 
@@ -1448,3 +1470,209 @@ This corrects the earlier shorthand that the TinyHawk lacked firmware
 acquisition: its official 4.4.2 image, derived analysis binary, source archive,
 and target configuration are already tracked and hashed. They are
 version-matched artifacts, not a dump of installed flash.
+
+---
+
+## 26. Detailed E8/TinyHawk identification handoff (Codex, 2026-10-16)
+
+### Objective and starting state
+
+The owner asked whether the connected EMAX E8 and TinyHawk III Plus had been
+fully identified and authorized read-only work needed to close ordinary
+identification gaps. Work began from `46ff801` after `git pull --ff-only origin
+main` reported that `main` was current. The existing untracked `.claude/`
+directory was treated as user-owned and left untouched.
+
+The active boundary came from `AGENTS.md`, `SECURITY.md`, and
+`research/E8-COLLABORATION.md`: normal identification/configuration reads were
+allowed; the E8 could not be flashed, updated, erased, restored, reset into a
+different mode, written, fuzzed, or used for RF transmission. Port availability
+alone was not accepted as a collaboration handoff. No enclosure opening,
+debug-probe attachment, firmware readout, or TinyHawk state change was assumed
+to be authorized.
+
+### Fresh repository review
+
+The following were reread from disk before device work:
+
+- `AGENTS.md`, including the E8 absolute no-flash rule;
+- `research/E8-COLLABORATION.md` and
+  `research/E8-USB-CHARACTERIZATION.md`;
+- `HARDWARE-IDENTITY.md` and `research/e8-protocol-reconstruction.md`;
+- `research/TINYHAWK-III-LIVE-CONFIG-2026-10-15.md`;
+- `tools/e8-read-config.py`, the firmware manifest, and the new-hardware
+  blueprint/quick-reference/security documents.
+
+This review corrected the initial shorthand about the TinyHawk. Its exact
+installed bytes have not been dumped, but the repository already contains a
+live version/build identity and version-matched official artifacts. The E8's
+normal configuration protocol was already reconstructed, but its exact
+silicon and firmware were still unknown.
+
+### USB enumeration and port ownership
+
+The first sandboxed `lsusb` call failed with `unable to initialize libusb`.
+`lsusb -t` still revealed two CDC devices, so descriptor enumeration was
+repeated through the approved host path. This worked and produced:
+
+| Device | Session endpoint | Descriptor evidence | Meaning and limit |
+|---|---|---|---|
+| TinyHawk | `/dev/ttyACM0` | `0483:5740`, `Betaflight STM32F411`, CDC ACM 1.10, Linux `cdc_acm`; stable by-id product path present | Corroborates the application and MCU family; does not give PCB revision, exact package suffix, or flash bytes |
+| E8 serial personality | `/dev/ttyACM1` | `8888:2001`, `Your Company` / `USB Serial`, CDC ACM 1.10, Linux `cdc_acm`; stable by-id product path present | Confirms the known generic configuration personality; does not identify MCU, RF IC, firmware, or board revision |
+
+Both exposed two interfaces with 64-byte bulk IN/OUT endpoints and an interrupt
+IN endpoint. Device-node numbers are session-local and must be re-enumerated
+after reconnect. `fuser -v /dev/ttyACM0 /dev/ttyACM1` reported no current owner
+before the one permitted E8 read. A free port was used only after the owner's
+explicit read-only handoff in the request; future agents must obtain their own
+current handoff.
+
+### E8 live read: what worked
+
+`python3 tools/e8-read-config.py --port /dev/ttyACM1 --execute` was run once.
+It sent only the documented fixed 64-byte Read Configuration request at 115200
+8-N-1 and received the expected 17-byte response. The parser reconfirmed rate
+index `0x02` as 150 Hz, redacted the six-byte pairing UID on stdout, and kept
+the raw response under ignored `work/e8-session/`.
+
+This establishes that the current connected E8 serial personality and the
+native read path work. It also resolves the older zero-response state in
+`research/E8-USB-CHARACTERIZATION.md`; that older chronology remains relevant
+for mode, power, and port-contention lessons.
+
+The response does **not** contain a firmware version and does not identify the
+MCU or radio. The remaining config indexes were not promoted to named values
+without an independent vendor oracle. No second read was needed. No settings
+write, control-line experiment, mode transition, reset, vendor-program
+execution, update/flash call, fuzzing, or RF action occurred.
+
+### TinyHawk live work: what was deliberately not repeated
+
+The TinyHawk serial port was not opened. The private 2026-10-15 CLI transcript
+already reports Betaflight 4.4.2, build time `2023-11-30 01:55:56`, revision
+`23d066d08`, MSP API 1.45, `STM32F411`/`S411`, target
+`EMAX_TINYHAWKF4SX1280`, EMAX manufacturer ID, and integrated SPI ExpressLRS
+resource assignments. The new USB descriptor observation independently
+corroborated `Betaflight STM32F411`; repeating the CLI query would have added
+little evidence while creating another live interaction.
+
+The firmware corpus was checked rather than reacquired. Hashes matched:
+
+| Artifact | SHA-256 | Classification |
+|---|---|---|
+| `firmware/betaflight/betaflight_4.4.2_STM32F411.hex` | `bed2ed630acf8301b966ed6ac9fadea53ad0337535856ff8d05e45f852ea9729` | Official version/family-matched release image |
+| `firmware/betaflight/betaflight_4.4.2_STM32F411.bin` | `33830bda10262ebc2b3a8c337de611a6f5c9f4b3560bf1b0997f1d1081ffbf3d` | Derived raw analysis binary |
+| `firmware/src/betaflight-4.4.2.tar.gz` | `195b0c6eb66741f6be64f30c63e6a41cc0cf2e990505508f1f7cc270de477c29` | Version-matched source archive |
+| `firmware/betaflight/EMAX_TINYHAWKF4SX1280.config` | `7b21b072fede3e23fdc43b4d4722d47276f789f6517573e956ec228b1f6bea94` | EMAX target/resource configuration; its older header remains qualified |
+
+These artifacts support qualified 4.4.2 source/binary analysis. They are not a
+byte-for-byte dump or attestation of the installed flight-controller flash.
+
+### Public E8 research: what worked and what did not
+
+The public FCC record for `2AL7Y-EMAXE8` was reviewed as a product-family
+reference, not as exact-unit evidence:
+
+- internal-photo exhibit 5536597, SHA-256
+  `6a0791680a096019dc749bde18cdde7478d5c26e96a4e04965476ea539cbe566`;
+- test-report exhibit 5536602, SHA-256
+  `c75f307e436f024fc54f4d3acb6c4046a8e63327b1a1bf850e74d56870d34e58`.
+
+The test report usefully records a 2.4 GHz EMAXE8 family transmitter using
+GFSK/2-FSK and an internal antenna. It does not supply a processor or RF-chip
+part number. The filing lists its block diagram, schematic, and operational
+description as metadata-only/confidential; no attempt was made to bypass that
+restriction.
+
+Rendering the PDF at high resolution and cropping the main square package did
+not recover a legible top-mark. `pdfimages` was then used to extract the
+original embedded 1050×787 JPEGs. This proved the limiting factor was the source
+photograph, not the renderer: the chip marking and board silkscreen remain too
+soft for a defensible part/revision transcription. Upscaling the same pixels
+should not be repeated or treated as new evidence.
+
+The FCC material therefore establishes a related EMAXE8 board layout and RF
+description only. It does not prove that the connected ELRS variant uses that
+revision, and it cannot close the MCU/RF identity gap.
+
+### Documentation produced
+
+Created `references/README.md` as the device completion matrix and two complete
+blueprint dossiers:
+
+- `references/emax-e8_material/`
+- `references/tinyhawk-iii-plus_material/`
+
+Each contains `TARGET-CARD.md`, `INTERFACE-MAP.md`, `ARTIFACTS.md`,
+`EVIDENCE-LEDGER.md`, `TEST-LOG.md`, `OPEN-QUESTIONS.md`, and a summary
+`README.md`. The repository README and the older E8/TinyHawk identity notes now
+link to these dossiers. Claims are separated into live-observed,
+source-derived, related-reference, unproven, and contradicted classes.
+
+The final status recorded there is:
+
+- **E8 — partially identified:** USB personalities and the configuration-read
+  protocol are confirmed; exact PCB revision, MCU, RF IC, architecture,
+  installed firmware version, and firmware image are not.
+- **TinyHawk — functionally identified:** live Betaflight/build/target,
+  STM32F411 family, integrated SPI ELRS/SX1280 resources, and version-matched
+  artifacts are confirmed; exact PCB/top-marks and installed-flash byte identity
+  remain open.
+
+### Privacy, validation, and repository handoff
+
+No UID, raw E8 response, private CLI transcript, capture, or private digest was
+committed. The short response's digest was also omitted because hashing a small,
+structured private payload is not useful public evidence and may aid guessing.
+Only sanitized product descriptors and public-document hashes were tracked.
+
+Validation completed before commit:
+
+- `git diff --check` passed after removing extra blank EOF lines;
+- every local Markdown link in the new/updated files resolved;
+- all four TinyHawk artifact hashes and both FCC exhibit hashes matched;
+- a targeted secret/identifier scan found no newly introduced pairing value;
+- `.claude/` remained untracked and untouched.
+
+Commit `cc7dbb0` (`docs: onboard E8 and TinyHawk evidence`) was pushed to both
+`origin/main` (`oatmealphysics/research-project`) and `enclave/main`.
+
+### Way forward
+
+1. **Exact-unit exterior inventory:** photograph every side, the USB connector,
+   regulatory/model label, packaging, and battery markings for each device.
+   Redact serials and private identifiers before committing any image or note.
+2. **Physical board identity:** if the owner separately authorizes opening,
+   take sharp, square-on photographs of both PCB sides, board revision text,
+   MCU top-mark, RF IC top-mark, memory, oscillator, antenna path, and accessible
+   headers. Opening remains a separate gate; the current request did not require
+   or accomplish it.
+3. **E8 firmware provenance:** ask EMAX for the exact board/firmware identity,
+   a documented read-only version query, and an attributable firmware package
+   for the connected revision. Hash and inspect anything received without
+   executing it. Do not substitute OLED/Nano ExpressLRS targets or the Windows
+   host tool for E8 device firmware.
+4. **TinyHawk strict identity:** use exact-unit photos to confirm the
+   STM32F411CEU6/SX1280 top-marks and PCB revision. The existing 4.4.2 artifacts
+   are sufficient for qualified source analysis; do not pursue a firmware dump
+   merely to make the checklist look complete.
+5. **Any firmware readout:** only if a concrete research question justifies it,
+   write a separate non-writing readout plan with exact target, access method,
+   secrets handling, recovery analysis, and explicit owner approval. This does
+   not weaken the E8's permanent no-flash rule.
+6. **Resume the active ELRS program independently:** physical identity gaps do
+   not block the existing passive/offline Gate 2 work in §§20–23. Continue the
+   real-capture long-interleaving/packet-byte validation without claiming live
+   packet acceptance and without enabling RF TX.
+
+### Do not repeat or overclaim
+
+- Do not rerun broad baud/protocol/reset guessing against the E8; its documented
+  normal read path now works.
+- Do not infer E8 silicon from `8888:2001`, `REV_0100`, related EMAX OLED/Nano
+  targets, or `Serial Update Tool 2.1`.
+- Do not upscale the existing FCC photo again and claim a chip identification.
+- Do not call the official TinyHawk 4.4.2 artifact an installed-flash dump.
+- Do not open either port concurrently with another agent, and do not infer a
+  handoff from an apparently free device node.
+- Do not move private material from `work/` into Git.

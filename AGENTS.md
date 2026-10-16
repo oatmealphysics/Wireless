@@ -18,6 +18,14 @@ This repo is co-edited by **Claude Code** and **Codex**, back and forth. Both ag
 6. **Serialize access to the connected E8.** See `research/E8-COLLABORATION.md`.
    Codex has stopped opening COM4 while Claude may be testing. Do not infer a
    hardware-access handoff from a free port; confirm it with the other operator.
+7. **Use `SESSION-NOTES.md` as the single shared running log.** Read its latest
+   entries before starting work and append a dated, agent-attributed entry before
+   handoff. Record the starting revision, objective, actions, evidence, what
+   worked, what failed or remained inconclusive, safety boundaries, changed
+   files, validation, commit/push status, and concrete next steps. Preserve
+   earlier entries; correct them with a new cross-referenced entry rather than
+   rewriting history. Keep secrets and raw private device data under ignored
+   `work/` and put only sanitized conclusions in the log.
 
 ## Connected E8: Absolute No-Flashing Constraint
 

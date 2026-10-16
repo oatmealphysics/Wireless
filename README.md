@@ -16,7 +16,7 @@ Start with [the detailed home lab handoff](HOME-LAB-HANDOFF.md) for current evid
 - [Security and safety guardrails](SECURITY.md)
 - [Firmware → Vulnerability Analysis → PoC methodology](docs/firmware-to-poc-methodology.md)
 - [Firmware inventory & development chain](docs/firmware-inventory-and-chain.md)
-- [Claude's companion session notes](SESSION-NOTES.md)
+- [Shared append-only running session log](SESSION-NOTES.md)
 - [Detailed evening session notes — October 14, 2026](research/SESSION-2026-10-14-EVENING.md)
 - [Offline validation and serial diagnostics](VALIDATION.md)
 - [E8 hardware identity evidence](HARDWARE-IDENTITY.md)
