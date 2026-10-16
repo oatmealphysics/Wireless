@@ -39,7 +39,9 @@ For practical protocol and firmware research, this device is identified well
 enough to use the 4.4.2 evidence lane with explicit version/target qualifiers.
 To satisfy the blueprint's strict physical identity, add exact-unit exterior
 and PCB photographs showing board revision and chip markings. Opening the
-airframe/enclosure and any firmware readout require separate gates. No flash or
+airframe/enclosure and any firmware readout require separate gates. The owner
+has now prohibited **any firmware flash, update, erase, restore, or recovery
+flash on this drone under any circumstances** (see `AGENTS.md`). No
 configuration write is needed to close the ordinary documentation gaps.
 
 ## Records

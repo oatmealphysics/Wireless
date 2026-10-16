@@ -27,19 +27,26 @@ This repo is co-edited by **Claude Code** and **Codex**, back and forth. Both ag
    rewriting history. Keep secrets and raw private device data under ignored
    `work/` and put only sanitized conclusions in the log.
 
-## Connected E8: Absolute No-Flashing Constraint
+## Owned E8 and TinyHawk: Absolute No-Flashing Constraint
 
-The owner explicitly instructed: **Do not flash the EMAX controller with anything
-under any circumstances.** This overrides the generic tool flags and research
-plans below. Do not upload, erase, replace, restore, or update its firmware; do
-not run bootloader loaders or firmware update tools against it. An earlier probe
-or research document is not authorization to repeat those operations.
+The owner explicitly instructed: **Do not flash the EMAX E8 controller or the
+TinyHawk III Plus drone with anything under any circumstances.** This overrides
+generic tool flags, separate-approval language, and research plans below.
+For either device, do not upload, erase, replace, restore, or update firmware;
+do not run bootloader loaders or firmware update tools against it. An earlier
+probe or research document is not authorization to repeat those operations.
 
 Current controller work is identification and normal configuration reads only.
 Do not write settings, issue reset/bootloader-entry sequences, fuzz the live
 device, or transmit RF as part of this characterization. Preserve private
 configuration/captures under ignored `work/`. Entering the documented serial
 mode does not authorize any update operation.
+
+For the TinyHawk, continue only passive capture, offline analysis, and
+separately authorized read-only identification within the active ELRS
+benchmark. No firmware update, recovery flash, or reflash is an available
+validation or repair step. Other state-changing work still has its own gate
+under `SECURITY.md`; the no-flashing rule cannot be bypassed by that gate.
 
 ## Repository Structure
 

@@ -3,7 +3,7 @@
 This file defines the operating guardrails for research code and laboratory
 work in this repository. It does not grant authorization. The controlling
 scope is the project owner's direction in [`AGENTS.md`](AGENTS.md), especially
-**Security and Scope**, **Connected E8: Absolute No-Flashing Constraint**, and
+**Security and Scope**, **Owned E8 and TinyHawk: Absolute No-Flashing Constraint**, and
 any device-specific handoff such as
 [`research/E8-COLLABORATION.md`](research/E8-COLLABORATION.md).
 
@@ -24,8 +24,9 @@ working inside an authorized boundary; it cannot expand that boundary.
   successful read does not authorize a write. A documented update path does
   not authorize flashing it.
 - Device-specific restrictions override generic tool capabilities and later
-  research ideas. For the connected EMAX E8, the no-flash/no-write/no-reset/
-  no-fuzz/no-RF-TX constraint in `AGENTS.md` is absolute.
+  research ideas. The EMAX E8 and TinyHawk III Plus have an absolute no-flash
+  rule in `AGENTS.md`. The E8's additional no-write/no-reset/no-fuzz/no-RF-TX
+  characterization boundary also remains in force.
 
 ## Default posture
 
@@ -54,7 +55,8 @@ does not imply approval for another:
 4. crafted-input or fuzzing test against live hardware;
 5. live output or transmission, including RF/network replay, injection,
    interference, actuator drive, or another physical effect;
-6. firmware update, recovery, erase, restore, or flash;
+6. firmware update, recovery, erase, restore, or flash (this gate is **not
+   available** for the owned E8 or TinyHawk under their absolute prohibition);
 7. opening the enclosure, attaching debug probes, or modifying hardware.
 
 The sign-off record must name the exact target and revision, action, tool,
@@ -84,7 +86,7 @@ must:
 
 For firmware operations, `--flash` is only a software interlock. It is not
 authorization. A device-specific prohibition can make that path unavailable
-under all circumstances.
+under all circumstances; this applies to both the E8 and TinyHawk.
 
 ## Artifact and code handling
 

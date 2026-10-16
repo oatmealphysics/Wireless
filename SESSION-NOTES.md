@@ -1741,3 +1741,42 @@ control if the owner can arrange one. Independently, continue the SX1280
 long-interleaver/FEC reference or known-plaintext fixture work before feeding
 any IQ-derived bytes to the v3 CRC checker. Do not use the archived SYNC
 prototype or a synthetic profile status as evidence of a live decode.
+
+---
+
+## 28. TinyHawk absolute no-flash direction and B205mini readiness (Codex, 2026-10-16)
+
+Started from `d70a453` after a current `git pull --ff-only`. The owner
+explicitly extended the E8's absolute no-flashing rule to the owned TinyHawk
+III Plus drone. Neither device may be flashed, updated, erased, restored, or
+recovery-flashed under any circumstances. This direction overrides generic
+approval gates and any earlier suggestion to use a firmware update for
+validation. Other TinyHawk state-changing work still requires its separate
+gate. No hardware operation was undertaken for this rule change.
+
+The user also asked what is needed for passive B205mini capture. Read-only
+Windows enumeration confirmed USB `VID_2500&PID_0022`, `WINUSB` service,
+Ettus Research driver provider, version `4.9.0.0`, and device status OK.
+No UHD or Soapy receive utilities were found on this Windows PATH; the
+available WSL instance likewise lacked them. This narrows the immediate
+missing component to a host receive application/UHD runtime rather than an
+unbound Windows USB driver. Official Ettus UHD Windows installation guidance
+is at https://files.ettus.com/manual/page_install_binary.html and its
+receive-only example inventory is at
+https://files.ettus.com/manual/page_gsg_examples.html. Software was not
+downloaded, installed, or executed, and no IQ recording was made.
+
+Changed files: `AGENTS.md`, `SECURITY.md`,
+`references/tinyhawk-iii-plus_material/README.md`, and this log.
+Validation: checked the no-flash wording across these files and confirmed
+the worktree diff has no formatting errors. Commit/push status: this update
+was committed and pushed to `origin/main` at handoff. No UID, raw capture,
+or device response was added.
+
+Next step for receive-only capture: install/locate an official Windows UHD
+runtime compatible with the existing B205mini driver, verify device discovery,
+then use an RX-only bounded IQ recorder with metadata and private storage.
+This is a host-software change, not permission to flash either drone device
+or transmit RF. Independently, continue offline Betaflight 4.4.2 failsafe
+and MSP-path validation; classify source reachability separately from a
+confirmed live exploit.
