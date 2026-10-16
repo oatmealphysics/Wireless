@@ -2104,3 +2104,49 @@ firmware, or device setting was accessed or changed. Changed tracked files:
 `tools/elrs-rc-overlap.py`, `tools/tests/test_elrs_rc_overlap.py`, and this
 append-only log. Commit and push to `origin/main` follow this entry; the next
 step is to verify all four replacement matrix jobs complete successfully.
+
+---
+
+## 38. Read-only serial viability check (Codex, 2026-10-16)
+
+Starting revision `f59be5a`; `git pull --ff-only` reported current. The owner
+asked whether the connected devices could be accessed through their serial
+ports and whether that path could be useful. Windows enumerated the expected
+E8 endpoint on COM4 (`8888:2001`) and TinyHawk endpoint on COM5
+(`0483:5740`). Only the repository's previously reviewed, identity-gated
+read helpers were used. No firmware was flashed or read out, no setting was
+written, and no reset, binding, bootloader, CLI, arming, motor, RF transmit,
+or fuzzing command was issued.
+
+The immutable E8 Read Configuration request returned the expected 17-byte
+response and confirmed the existing 150 Hz rate. The two unlabeled config
+bytes remained `0x01` and `0x03`; their power/telemetry interpretations are
+still tentative. The response also contained the private UID, which remains
+redacted and stored only in an ignored `work/e8-session/` capture. This
+endpoint still exposes no identified installed-firmware-version query. The
+E8 was necessarily in its USB serial/update personality, so the successful
+wired read is not evidence that this parser is wirelessly reachable and the
+normal RF application is not expected to transmit concurrently.
+
+The TinyHawk read-only MSP helper independently verified Betaflight 4.4.2,
+board identifier `S411`, and craft name `TH III Plus`, then obtained six
+stable sixteen-channel `MSP_RC` samples over three seconds. The first four
+values were `[1500, 1500, 1500, 885]` while the E8 remained in serial mode.
+This is a useful receiver-output/failsafe observation, not raw SX1280 FIFO
+access and not proof of a serial exploit. The TinyHawk USB endpoint can remain
+the ground-truth oracle during a later normally transmitting E8/SDR capture:
+it can validate channel mapping, timing, and link-loss behavior without
+opening or flashing the drone.
+
+No source file changed. This append-only log is the only tracked change. The
+practical next step is a synchronized passive run with the E8 booted normally,
+TinyHawk COM5 channel/status observations started first, and the SDR recording
+the over-air link. That can test decoded RC-to-channel correspondence and
+failsafe transitions. The existing pinned 4.4.2 source review already traces
+an ELRS MSP-data packet through `processRFMspPacket()` and the CRSF/MSP
+reassembler into the same `mspFcProcessCommand()` dispatcher used by USB.
+That makes serial a valid application-layer oracle for an OTA canary, but does
+not solve radio delivery. The remaining proof is a correctly encoded,
+CRC-valid, synchronized SX1280 long-interleaved transmission accepted by the
+live receiver. Ordinary USB MSP access alone remains physical access, not a
+game-day wireless vector.
