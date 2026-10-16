@@ -35,6 +35,16 @@ Until all three conditions are met, classify this as a **potential command-abuse
 
 ## Safe next actions
 
+Update, 2026-10-16: the offline forward LI encoder and a read-only
+`MSP_API_VERSION` three-fragment canary now pass independent TX16S off-air
+symbol vectors, the Betaflight CRSF/MSP unit fixture, v3 CRC checks, and an
+ideal waveform recovery test. See
+`elrs-msp-api-canary-forward-path-2026-10-16.md`. This closes packet/symbol
+construction, not live RF acceptance. A later bench check transmitted only
+one off-hop synthetic-UID fragment at minimum configured gain; it could not
+form a command and was not recovered on the B205mini receive path. No live-UID
+packet was transmitted.
+
 - Continue receive-only decoding of the existing private IQ, using a known-good SX1280 PHY reference or independent packet-byte oracle. Do not publish raw UID/captures.
 - Build a host-only test using the pinned source to assert MSP command dispatch and motor-array behavior with mocked outputs. Include a regression case for insufficient/malformed MSP chunks. This would strengthen the source result without touching hardware.
 - If a later owner-approved live plan is considered, require removed propellers, isolated/verified outputs, a designated serial/RF operator, explicit target and count/rate/power limits, stop conditions, and an approved recovery path. **Never flash either device.**

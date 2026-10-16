@@ -2150,3 +2150,83 @@ not solve radio delivery. The remaining proof is a correctly encoded,
 CRC-valid, synchronized SX1280 long-interleaved transmission accepted by the
 live receiver. Ordinary USB MSP access alone remains physical access, not a
 game-day wireless vector.
+
+---
+
+## 39. Offline ELRS MSP canary forward encoder (Codex, 2026-10-16)
+
+Starting revision `7524625`; `git pull --ff-only` reported current. Following
+the owner's direction to pursue serial-validated commands delivered over the
+air, implemented `tools/elrs-li-forward.py`. It performs no device or SDR I/O.
+The tool builds a zero-payload, read-only MSPv1 `MSP_API_VERSION` request in
+the exact CRSF/MSP buffer form consumed by Betaflight 4.4.2, fragments it into
+the source-defined stubborn-uplink package order `1`, `2`, final `0`, wraps
+each five-byte fragment in a CRC14-valid standard ELRS v3 MSP packet, and
+encodes each eight-byte packet into the live SF7/4-8-LI mode's 21 canonical
+payload symbols.
+
+The forward long-interleaver is not supported only by a circular synthetic
+round trip: it reproduces all symbols in both independent 13-byte TX16S
+off-air vectors published with the empirically measured WaveShark map. Tests
+also match Betaflight's independent `crsfPidRequest` fixture, verify all three
+canary packets through the maintained v3 CRC checker, recover arbitrary
+eight-byte packets with zero FEC corrections, and recover all payload symbols
+from an ideal preamble/sync/delimiter/CSS waveform. The ideal waveform test is
+integration evidence, not a hardware-radio oracle.
+
+Generated a live-UID-derived canary plan privately under ignored
+`work/e8-session/msp-api-version-canary.json`. The default CLI omits packet
+bytes, symbols, UID, and derived CRC values; private output is restricted to
+the ignored `work/` tree. Also generated three bounded, unscheduled
+complex-float32 IQ fixtures under ignored `work/`, each 23,840 samples at
+4.0625 MS/s and amplitude 0.25, with SHA-256 values in a private manifest
+that explicitly records `transmit_enabled: false`. UHD's file-transmit and
+TX/RX-loopback examples are installed locally.
+
+The B205mini cannot be opened by separate RX and TX processes at once, so the
+first file-transmit attempt failed before transmission while the receiver
+owned the device. A private, ignored one-process UHD helper then made three
+bounded bench attempts. Each sent only the first fragment of a synthetic-UID
+canary at 2482 MHz, above the pair's highest 2479.4 MHz hop, with TX gain set
+to the device minimum. One synthetic fragment cannot complete an MSP request
+and cannot pass the live link's UID-derived CRC. Correcting the helper to pull
+RX concurrently and increasing only RX gain still produced receiver noise
+and short unrelated transients, not a recoverable 5.87 ms frame. The normal
+extractor found no 12-symbol preamble or valid PHY candidate. This leaves the
+SDR RF path gated on confirmed antenna/port coupling; a UHD sent-sample count
+is not treated as waveform validation. No live-UID frame was transmitted.
+
+COM5 was then opened only by the existing bounded read-only MSP observer with
+the propellers removed. It reverified `BTFL` 4.4.2, `S411`, and `TH III Plus`
+and returned fifteen stable 16-channel samples over three seconds. The
+accepted `MSP_API_VERSION` payload was `00 01 2d`, establishing the exact
+application-layer response expected from the OTA canary. No setting, motor,
+binding, bootloader, reset, or firmware operation was performed.
+
+Implemented `tools/elrs-v3-canary-schedule.py` and synthetic tests. The tool
+combines a private canary plan with the latest CRC-valid decoded SYNC frame,
+advances nonce and the four-packet FHSS state, and assigns the three fragments
+to future frequencies. Output is restricted to ignored `work/`, marked
+`transmit_enabled: false`, and explicitly capture-relative/fresh-SYNC-only.
+On the two private capture sets, all **14/14** adjacent decoded SYNC pairs
+matched the predicted 150 Hz nonce and FHSS transitions; maximum timestamp
+residual was 521.8 microseconds. The resulting ignored private plan uses a
+16-slot guard and records that this link advertised no telemetry.
+
+No target accepted an RF canary and no target state changed. The absolute
+no-opening/no-flashing limits remain in force for both devices.
+
+Detailed evidence and remaining gates are in
+`research/elrs-msp-api-canary-forward-path-2026-10-16.md`. The older packet
+forger's single-fragment MSP output and the existing SDR emulator's prototype
+modulator are not this validated path and must not be used for live testing.
+Changed tracked files: the forward encoder and tests, the capture-relative
+scheduler and tests, the new research note, the MSP motor-path cross-link, and
+this append-only log. Final test and tracked-file counts are recorded after
+the validation run. Next: resolve the B205mini RF coupling/port arrangement,
+then turn the replay-validated planner into a fresh-SYNC receive clock before
+any live-UID canary is considered.
+
+Final validation: **115 tests passed**; `tools/validate-project.py` passed
+syntax, JSON, corpus hashes/provenance, rainbow data, CVE coverage, and local
+links across **182 tracked files**; `git diff --check` passed.
