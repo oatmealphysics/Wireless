@@ -1,5 +1,11 @@
 # TinyHawk III Plus — Live Betaflight Identification and Configuration Summary
 
+> **Current consolidated status:** See the
+> [TinyHawk III Plus evidence dossier](../references/tinyhawk-iii-plus_material/README.md)
+> for the strict hardware/software/firmware completion matrix. The device is
+> functionally identified, while exact PCB/top-mark evidence and installed
+> flash byte identity remain open.
+
 **Evidence class:** LIVE OBSERVATION (read-only Betaflight CLI transcript)
 
 **Observed:** 2026-10-15 from the owner’s connected flight controller. This is
@@ -110,6 +116,15 @@ Diffed `src/main/rx/expresslrs_common.h` between 4.4.2 and 2026.6.2:
    - `firmware/src/betaflight-4.4.2.tar.gz` — version-matched source (18 MB)
 3. Source diff confirms OTA v3 only, LoRa only, no FLRC.
 4. Controller remains in read-only mode. No flash, reset, or settings write performed.
+
+## USB descriptor corroboration (2026-10-16)
+
+Without opening the serial port or changing device state, the already connected
+flight controller enumerated on `/dev/ttyACM0` as USB `0483:5740`, manufacturer
+`Betaflight`, product `Betaflight STM32F411`, CDC ACM 1.10, bound to Linux
+`cdc_acm`. This independently corroborates the MCU family and application type
+reported by the earlier CLI transcript. It does not identify the precise
+package suffix, PCB revision, or exact installed flash contents.
 
 ## Remaining actions
 

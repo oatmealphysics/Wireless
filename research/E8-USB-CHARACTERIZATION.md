@@ -1,5 +1,16 @@
 # E8 USB characterization — 2026-10-14
 
+> **2026-10-16 supplement:** The normal vendor read now succeeds on the
+> connected Linux endpoint. `/dev/ttyACM1` enumerated as the same CDC ACM
+> `8888:2001` personality, and `tools/e8-read-config.py --execute` received the
+> expected 17-byte response at 115200 8-N-1. The private response/UID remains
+> under ignored `work/e8-session/`. This validates the read interface but still
+> supplies no firmware-version, MCU, radio, or board-revision identity. No
+> write, reset/mode transition, update, flash, fuzzing, or RF TX occurred. See
+> the [current E8 dossier](../references/emax-e8_material/README.md). The
+> unsuccessful 2026-10-14 chronology below remains useful evidence about state
+> and port-contention prerequisites.
+
 Starting repository revision: `2da17ce`, after syncing concurrent work. Scope:
 USB descriptor discovery, passive reads, standard CRSF discovery, and one fixed
 vendor Read Configuration request. No persistent settings writes, firmware

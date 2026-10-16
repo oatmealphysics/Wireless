@@ -1412,3 +1412,39 @@ direction in `AGENTS.md` and target-specific constraints always control. In
 particular, nothing in these documents changes the E8's absolute no-flash,
 no-write, no-reset/bootloader, no-fuzz, and no-RF-TX boundary. No hardware was
 accessed and no downloaded program was executed while preparing the documents.
+
+---
+
+## 25. E8 and TinyHawk blueprint onboarding (Codex, 2026-10-16)
+
+Applied the new-hardware blueprint to both connected EMAX devices under
+`references/`. Each dossier now has a target card, interface map, artifact
+manifest, claim-by-claim evidence ledger, test log, and prioritized open
+questions. Raw identifiers and captures remain under ignored `work/`.
+
+Read-only USB enumeration found the TinyHawk on `/dev/ttyACM0` as
+`0483:5740` / `Betaflight STM32F411` and the E8 serial personality on
+`/dev/ttyACM1` as `8888:2001` / `USB Serial`. No port paths should be assumed
+after reconnect.
+
+After confirming no process owned either endpoint, the existing bounded E8
+reader was run once. It received the expected 17-byte configuration response
+and reconfirmed the 150 Hz rate. The raw response and pairing UID remain
+private. No settings write, reset/mode transition, downloaded-program
+execution, update/flash operation, fuzzing, or RF transmission occurred.
+
+The resulting status is deliberately precise:
+
+- **E8:** configuration interface confirmed; exact PCB revision, MCU, RF IC,
+  installed firmware version, and firmware image remain unknown. A public FCC
+  filing supplies only a related EMAXE8 board/RF reference because its chip
+  marks are unreadable and the connected unit revision has not been matched.
+- **TinyHawk III Plus:** live Betaflight 4.4.2/revision/target, STM32F411
+  family, integrated SPI ELRS/SX1280 resources, and version-matched official
+  artifacts are confirmed. Exact chip top-marks/PCB revision and byte identity
+  of installed flash remain unproven.
+
+This corrects the earlier shorthand that the TinyHawk lacked firmware
+acquisition: its official 4.4.2 image, derived analysis binary, source archive,
+and target configuration are already tracked and hashed. They are
+version-matched artifacts, not a dump of installed flash.
