@@ -1820,3 +1820,15 @@ confirmed `git diff --check`. Commit/push status: committed and pushed to
 `origin/main` at handoff. Next step: use the existing private capture for
 offline decoder work; take a new bounded receive-only capture only if it
 answers a specific unresolved measurement question.
+
+---
+
+## 30. ELRS source-level attack feasibility and MSP motor path (Codex, 2026-10-16)
+
+Starting revision: `97fbb6b`; `git pull --ff-only` reported current before edits. The owner asked to weaponize the source-level non-RC/failsafe finding or look for other vectors, including firmware research and device probing within reason. Work stayed offline/read-only under `AGENTS.md` and `SECURITY.md`; no device port was opened, no SDR transmitted, no settings were changed, no motors were driven, and neither device was flashed.
+
+Rechecked the existing pinned Betaflight 4.4.2 source SHA-256 (`195b0c6eb66741f6be64f30c63e6a41cc0cf2e990505508f1f7cc270de477c29`). No new firmware acquisition or live readout was needed or authorized. The non-RC finding remains a source-level candidate; the existing single-channel passive SYNC observations do not establish a sustained accepted non-RC stream across the hopping link. The PHY remains undecoded, so no accepted forged frame or packet delivery is established.
+
+Traced a more direct source-level candidate: CRC-valid ELRS MSP packet -> connected/model-matched reassembly -> CRSF/MSP dispatcher -> `MSP_SET_MOTOR` (214) -> `motor_disarmed[]` -> disarmed mixer output. The handler lacks an adjacent arming guard; `MSP_EEPROM_WRITE`, by contrast, rejects when armed. This is potential radio-mediated abuse of an intentional MSP function, **not** confirmed unauthorized access, arbitrary code execution, or a live exploit. The live runtime `feature -TELEMETRY` setting is not itself proof that this receive path is absent; source/config support a compiled path, but installed-binary identity and live command acceptance remain unproven. Detailed evidence and prerequisites: `research/betaflight-442-elrs-msp-motor-path-2026-10-16.md`.
+
+What worked: source-chain and provenance verification. What remained inconclusive: exact installed binary, UID/CRC delivery, real OTA bytes, command acceptance, motor effect, and failsafe behavior. Changed files: the new research note and this append-only log. Validation: source paths, guards, source hash, and `git diff --check`; no hardware tests. Commit/push status: committed and pushed to `origin/main` at handoff. Next step: passive PHY byte recovery and/or host-only mocked MSP/motor test; any live crafted-input or output test requires a separate bounded owner-approved bench plan with props removed, and flashing remains prohibited.
