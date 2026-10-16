@@ -86,3 +86,35 @@ tests, eleven offline tests
 pass. **No real candidate bytes have been supplied yet, so no real CRC or UID
 match has been claimed.** Claude's independently validated SX1280 long-
 interleaving decoder remains the next integration input.
+
+## Version-matched FHSS cross-check ready for decoded candidates
+
+`tools/elrs-v3-fhss-check.py` adds a separate, offline Gate 2 check for
+pre-decoded JSONL records containing `packet_bytes_hex` and a measured
+`channel_hz`. It requires a private UID file: a candidate SYNC's own visible
+UID suffix does not count as independent evidence. For each candidate it
+checks the 4.4.2 CRC and visible UID fields, then compares the SYNC-advertised
+FHSS index with the frequency recorded for that frame. It prints only
+aggregate category counts, never raw frames, UID, indices, paths, or individual
+frequencies. Missing or unmappable frequencies are counted separately;
+malformed values stop with a line-number-only error.
+
+The sequence model is ported from Betaflight 4.4.2
+`src/main/rx/expresslrs_common.c::fhssGenSequence/rngN`: 80 channels,
+240 sequence entries, v3 sync channel 41, and a UID-seeded 31-bit LCG.
+Nominal 2.4 GHz channels are 2400.4 MHz plus 1 MHz per index; the CLI's
+default 100 kHz carrier tolerance accommodates the offset measured in the
+private recordings without silently mapping an adjacent channel. The
+advertised index is compared to the recorded channel as a **source-derived
+candidate relationship**, not a live-link validation result. The tool cannot
+tell whether `channel_hz` was independently measured or just copied from a
+tuning plan; the integration report must record that provenance before
+counting a channel match as independent evidence.
+
+Five synthetic tests cover a fixed independent sequence vector, block
+permutations, frequency mapping, CRC gating, a UID seed byte not checked by
+the CRC, and privacy-safe aggregate output. The related offline suite has
+15 passing tests; NumPy/SciPy symbol
+tests are skipped in the current Ubuntu environment because those optional
+libraries are absent. The repository validator passes. No real decoded bytes
+exist yet, so no real CRC/UID/FHSS match has been claimed.
