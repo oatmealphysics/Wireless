@@ -37,6 +37,17 @@ class RcOverlapTests(unittest.TestCase):
             "x", self.tool.parse_utc("2026-10-16T00:01:00Z"))
         self.assertEqual(result["matched"], 0)
 
+    def test_parse_utc_normalizes_submicrosecond_precision(self):
+        expected = self.tool.parse_utc("2026-10-16T17:45:48.403259+00:00")
+        self.assertEqual(
+            self.tool.parse_utc("2026-10-16T17:45:48.4032590Z"), expected)
+        self.assertEqual(
+            self.tool.parse_utc("2026-10-16T13:45:48.4032599-04:00"), expected)
+
+    def test_parse_utc_rejects_naive_timestamp(self):
+        with self.assertRaisesRegex(ValueError, "include Z or an offset"):
+            self.tool.parse_utc("2026-10-16T17:45:48.403259")
+
 
 if __name__ == "__main__":
     unittest.main()

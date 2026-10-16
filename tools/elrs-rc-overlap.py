@@ -22,12 +22,28 @@ from bisect import bisect_left
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
+import re
 import statistics
 import sys
 
 
+ISO_FRACTION_RE = re.compile(
+    r"(?P<prefix>T\d{2}:\d{2}:\d{2}\.)(?P<fraction>\d+)(?P<suffix>Z|[+-]\d{2}:\d{2})$"
+)
+
+
 def parse_utc(value: str) -> datetime:
-    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    # Python 3.10 rejects the seven-digit fractional seconds emitted by the
+    # Windows capture clock. Datetime stores microseconds, so explicitly
+    # truncate sub-microsecond precision before parsing on every Python version.
+    match = ISO_FRACTION_RE.search(value)
+    if match and len(match.group("fraction")) > 6:
+        value = (value[:match.start("fraction")]
+                 + match.group("fraction")[:6]
+                 + value[match.end("fraction"):])
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None:
         raise ValueError("UTC timestamps must include Z or an offset")
     return parsed.astimezone(timezone.utc)

@@ -2074,3 +2074,33 @@ tests), project validation passed across 177 tracked files, and
 `git diff --check` passed. Next: boot the E8 normally and take a short
 receive-only wideband capture to close G4; only then restate a separately
 bounded RF test plan for owner approval.
+
+---
+
+## 37. Python 3.10 CI timestamp compatibility fix (Codex, 2026-10-16)
+
+Starting revision `7d0a3bb`; `git pull --ff-only` had already reported the
+checkout current before diagnosis. GitHub Actions run `38979000441` passed on
+Ubuntu and Windows with Python 3.12, but failed on both platforms with Python
+3.10. The new full test-discovery step exposed a pre-existing compatibility
+problem in `tools/elrs-rc-overlap.py`: the published Windows USB log contains
+seven fractional-second digits, while Python 3.10's
+`datetime.fromisoformat()` accepts at most the six digits representable as
+microseconds.
+
+Updated `parse_utc()` to explicitly truncate sub-microsecond digits before ISO
+parsing. The normalization applies to both `Z` and numeric-offset timestamps,
+preserves the existing rejection of timezone-naive input, and behaves the
+same on every supported Python version. Added regression coverage using the
+exact seven-digit timestamp shape from the published capture, plus a
+non-UTC-offset equivalent and a naive-timestamp rejection check.
+
+The full local suite passed (**102 tests**) under the available Python 3.12
+project environment; project validation passed across 177 tracked files and
+`git diff --check` passed. Python 3.10 is not installed on this workstation,
+so the cross-version confirmation is delegated to the replacement GitHub
+Actions matrix run after push. No hardware, serial port, SDR, RF transmitter,
+firmware, or device setting was accessed or changed. Changed tracked files:
+`tools/elrs-rc-overlap.py`, `tools/tests/test_elrs_rc_overlap.py`, and this
+append-only log. Commit and push to `origin/main` follow this entry; the next
+step is to verify all four replacement matrix jobs complete successfully.
