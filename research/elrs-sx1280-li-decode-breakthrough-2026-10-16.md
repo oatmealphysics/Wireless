@@ -34,3 +34,32 @@ The one-bin alternative is consistent with imperfect baseline/frequency estimati
 2. Compare the 38 decoded RC channel values against the 2026-10-16 USB `MSP_RC` observation over the limited timestamp overlap. That would tie over-air control data to measured stick movement, not merely CRC-valid frames.
 3. Recover the eight low-confidence frames, if practical, by constrained ranked-symbol search. Keep raw bytes, UID and captures under ignored `work/`.
 4. Treat any live crafted-input or RF-TX test as a **separate** authorization and safety plan. No-flash and no-opening constraints remain absolute for the owned E8 and TinyHawk.
+
+## Publication and stick-motion follow-up (2026-10-16)
+
+The owner subsequently authorized publishing the relevant captures. The two
+IQ files, ranked-symbol JSONL files, October 16 USB/MSP stick log, hashes,
+and privacy-safe decoded summary are now under `captures/`. The large IQ files
+are Git LFS objects; see `captures/README.md` for format, timing, reproduction,
+and disclosure caveats. The separate wired E8 configuration response remains
+unpublished. An attributed GPL-3.0-or-later offline decoder and independent
+tests are now in `tools/elrs-li-offline.py` and `tools/tests/`; the experimental
+ignored script is no longer needed to reproduce the result. This is a
+correction to remaining gate 1 above, not a change to its original evidence.
+
+The USB comparison used the October 16 IQ file's *predeclared* original local
+creation time as sample-zero estimate, with no clock shift fitted. Five of
+the CRC-valid RC packets fall within 120 ms of a USB sample in the overlap;
+the nearest-sample gaps are 10–36 ms. Source-derived OTA analog fields map to
+the observed MSP order as `[1,2,3,0]`. Three stationary channels match exactly
+in all five comparisons; the moving right-stick channel has mean absolute
+difference 13.6 channel units, including one exact match. This supports the
+decoded channel interpretation, but the timestamp anchor and USB polling rate
+do not prove exact packet-to-stick timing. `tools/elrs-rc-overlap.py` performs
+this fixed-anchor comparison reproducibly.
+
+Both published IQ copies were rescanned from sample zero with the existing
+receive-only PHY scanner: 34 and 28 candidates. The completed LI decoder
+again produced 32 and 22 CRC-valid frames respectively, for the same 54/62
+total. The full 99-test offline suite passed in the writable publication
+checkout. No hardware was accessed during this follow-up.

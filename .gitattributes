@@ -7,3 +7,6 @@
 /firmware/px4/** -text
 /firmware/tello/*.tar.gz -text
 /firmware/SHA256SUMS text eol=lf
+captures/*.iq filter=lfs diff=lfs merge=lfs -text
+captures/*.jsonl text eol=lf
+captures/SHA256SUMS.txt text eol=lf
