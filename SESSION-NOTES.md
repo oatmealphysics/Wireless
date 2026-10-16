@@ -1985,3 +1985,54 @@ read-only offline decoder, recover ranked alternatives if useful, and compare
 decoded RC changes against the limited paired USB channel observation. The
 owner's no-flash and no-opening limits remain in force. Commit/push status is
 recorded by the subsequent handoff.
+
+---
+
+## 35. Capture publication and maintained offline LI decoder (Codex, 2026-10-16)
+
+Starting revision `d27faa2`. The owner authorized publishing the captures
+and requested completion of the offline decoder and comparison against the
+right-stick USB log. The original Desktop checkout became read-only in this
+session, so work continued in a new writable local clone at
+`C:\Users\Board\Documents\Codex\elrs-li-capture-publication`. It was fetched
+against GitHub `main` before editing. The original checkout was not changed.
+No controller/drone port, SDR, RF transmitter, firmware updater, or hardware
+probe was opened during this work. The owner's absolute no-flash and
+no-opening boundaries remain in force.
+
+Published the October 15 and October 16 pair IQ recordings under `captures/`
+through Git LFS (320,000,000 and 240,040,000 bytes), plus their ranked-symbol
+JSONL files, the October 16 read-only USB/MSP RC log, a privacy-safe decoded
+summary, capture format/timing README, and a verified SHA-256 manifest. This
+publication makes over-air pairing-related data derivable by others; it is an
+explicit owner-directed disclosure. The separate wired E8 configuration
+response and full private UID were **not** published. Git LFS uploaded both
+objects successfully: **560 MB, 2/2**.
+
+Completed `tools/elrs-li-offline.py`, an attributed GPL-3.0-or-later offline
+implementation of the externally measured WaveShark SF7/4-8-LI inverse. Its
+tests use two independent TX16S off-air vectors and both published real
+ranked-symbol files. It checks the source-matched Betaflight v3 CRC and by
+default omits packet bytes/UID from output. The result remains **54 CRC-valid
+frames of 62** (16 SYNC, 38 RC, eight unresolved). Added the upstream GPL
+license text and a separate fixed-anchor `tools/elrs-rc-overlap.py`.
+
+The original October 16 IQ creation timestamp (not a fitted offset) anchors
+the USB comparison. Five CRC-valid RC frames lie within 120 ms of USB samples;
+three stationary channel values agree exactly and the moving right-stick
+channel has 13.6 mean absolute channel-unit difference. Nearest USB sample
+gaps are 10–36 ms, so this supports the channel interpretation without
+claiming exact frame-to-stick association. Fresh full rescans of the two
+**published IQ copies** reproduced 34/28 PHY candidates and 32/22 CRC-valid
+frames. All six capture-manifest SHA-256 hashes matched. The full offline
+test suite passed (**99 tests**), and `git diff --cached --check` was clean.
+
+Changed tracked files: `.gitattributes`, `captures/` (two LFS IQ files and
+six small evidence/documentation files), `tools/elrs-li-offline.py`,
+`tools/elrs-rc-overlap.py`, their tests, GPL license text, and the research
+note update. The work/tool/capture commit `510cd11` was pushed to
+`origin/main`; this append-only status entry is being committed/pushed as a
+separate handoff. Next: compare held-out motion at a tighter synchronized
+clock if the owner wants exact per-frame association, and try constrained
+ranked-bin recovery for the eight unresolved frames. Neither changes the
+separate authorization gate for active RF testing.
