@@ -1367,3 +1367,24 @@ plaintext hardware vector, then validate multiple real frames. The 2026-10
 GitHub draft release was still being uploaded at last check; its assets were
 not available in this local checkout. Keep new raw data and symbol outputs
 under ignored `work/`.
+
+---
+
+## 23. Older private wideband capture validated offline (Codex, 2026-10-15)
+
+The October 2026 draft release assets are now available. One 739.7 MB
+`.cdif` recording and its SHA-256 manifest were downloaded into ignored
+`work/captures/`; the checksum matches. Its BLUE header declares 28 MS/s
+`cf32le` IQ at 2450 MHz with 92,461,824 complex samples (3.302208 seconds),
+not raw sc16le. The intake tool now parses this container and its real IQ
+data boundaries. The bounded symbol tool now accepts BLUE/`cf32le` input
+directly and verifies the declared rate. Five offline tests pass.
+
+The 2441.3788 MHz channel shows four 150 Hz bursts near 0.407 seconds and
+another four near 2.540 seconds. All eight have 12/12 consistent SF7 preamble
+chirps and expected sync offsets; the revisit interval is 2.133 seconds.
+This independently reinforces the PHY/timing evidence but does not prove the
+older capture came from the same physical transmitter. No packet bytes, UID,
+or CRC were recovered; Gate 2 remains open. The precise provenance, timing,
+and limits are in
+[`research/2026-10-08-blue-capture-offline.md`](research/2026-10-08-blue-capture-offline.md).

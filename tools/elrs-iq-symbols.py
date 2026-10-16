@@ -15,6 +15,10 @@ Example (known channel-41 visit in our private 20-second capture):
       --sample-rate 4000000 --center-hz 2441000000 \
       --channel-hz 2441378800 --packet-start 1.18793
 
+  python tools/elrs-iq-symbols.py work/captures/2026-10-08_13-07-21_2450mhz_pred.cdif \
+      --sample-rate 28000000 --center-hz 2450000000 \
+      --channel-hz 2441378800 --packet-start 0.40729
+
 Keep stdout and the raw capture under ignored ``work/`` if saving the result.
 This script never transmits, opens a device, or modifies the input file.
 """
@@ -24,7 +28,9 @@ from __future__ import annotations
 import argparse
 from fractions import Fraction
 import json
+import math
 from pathlib import Path
+import struct
 import sys
 
 import numpy as np
@@ -44,22 +50,63 @@ def upchirp() -> np.ndarray:
     return np.exp(1j * np.pi * (n * n / N - n)).astype(np.complex64)
 
 
-def read_sc16_window(path: Path, sample_rate: float, start_s: float,
-                     length_s: float) -> tuple[np.ndarray, float]:
+def read_iq_window(path: Path, sample_rate: float, start_s: float,
+                   length_s: float, input_format: str = "auto") -> tuple[np.ndarray, float]:
+    """Bounded IQ read; BLUE headers/trailers are never treated as samples."""
     size = path.stat().st_size
-    if size % 4:
-        raise ValueError("sc16le file length is not a multiple of four bytes")
+    if input_format == "auto":
+        input_format = "blue" if path.suffix.lower() == ".cdif" else "sc16le"
+    offset, payload_size = 0, size
+    if input_format == "blue":
+        if size < 512:
+            raise ValueError("Truncated BLUE header")
+        with path.open("rb") as stream:
+            header = stream.read(512)
+        if header[:12] != b"BLUEEEEIEEEI":
+            raise ValueError("Unsupported BLUE header or byte order")
+        if struct.unpack_from("<i", header, 48)[0] not in (1000, 1001):
+            raise ValueError("Unsupported BLUE record type")
+        input_format = {b"CF": "cf32le", b"CI": "sc16le"}.get(header[52:54], "")
+        if not input_format:
+            raise ValueError("Unsupported BLUE IQ datatype")
+        start, length = struct.unpack_from("<dd", header, 32)
+        if (not math.isfinite(start) or not math.isfinite(length)
+                or start < 512 or length < 0 or not start.is_integer()
+                or not length.is_integer() or start + length > size):
+            raise ValueError("Invalid BLUE data boundaries")
+        offset, payload_size = int(start), int(length)
+        interval = struct.unpack_from("<d", header, 264)[0]
+        if not math.isfinite(interval) or interval <= 0:
+            raise ValueError("Invalid BLUE sample interval")
+        header_rate = 1 / interval
+        if abs(header_rate / sample_rate - 1) > 1e-6:
+            raise ValueError("--sample-rate disagrees with BLUE header")
+    widths = {"sc16le": 4, "cf32le": 8}
+    if input_format not in widths:
+        raise ValueError("Unsupported IQ input format")
+    width = widths[input_format]
+    if payload_size % width:
+        raise ValueError(f"{input_format} data length is not sample-aligned")
     first = max(0, round(start_s * sample_rate))
-    count = min(size // 4 - first, round(length_s * sample_rate))
+    count = min(payload_size // width - first, round(length_s * sample_rate))
     if count <= 0:
         raise ValueError("Requested window is outside the capture")
     with path.open("rb") as stream:
-        stream.seek(first * 4)
-        raw = np.frombuffer(stream.read(count * 4), dtype="<i2")
-    if len(raw) != count * 2:
+        stream.seek(offset + first * width)
+        raw = stream.read(count * width)
+    if len(raw) != count * width:
         raise ValueError("Short read: capture may still be copying")
-    iq = raw.astype(np.float32).view(np.complex64)
+    if input_format == "sc16le":
+        iq = np.frombuffer(raw, dtype="<i2").astype(np.float32).view(np.complex64)
+    else:
+        iq = np.frombuffer(raw, dtype="<c8")
     return iq, first / sample_rate
+
+
+def read_sc16_window(path: Path, sample_rate: float, start_s: float,
+                     length_s: float) -> tuple[np.ndarray, float]:
+    """Backward-compatible raw sc16le helper for offline callers."""
+    return read_iq_window(path, sample_rate, start_s, length_s, "sc16le")
 
 
 def shift_and_resample(iq: np.ndarray, sample_rate: float,
@@ -140,7 +187,8 @@ def extract_payload_symbols(iq: np.ndarray, preamble_start: int,
 
 
 def analyze(path: Path, sample_rate: float, center_hz: float, channel_hz: float,
-            packet_start: float, search_us: float, max_symbols: int) -> dict:
+            packet_start: float, search_us: float, max_symbols: int,
+            input_format: str = "auto") -> dict:
     if sample_rate <= 0 or packet_start < 0 or search_us <= 0 or max_symbols < 0:
         raise ValueError("invalid rate, packet start, search span, or symbol count")
     if abs(channel_hz - center_hz) >= sample_rate / 2:
@@ -149,7 +197,8 @@ def analyze(path: Path, sample_rate: float, center_hz: float, channel_hz: float,
     window_start = max(0, packet_start - margin)
     window_length = 0.007 + 2 * margin
     print(f"Reading {window_length * 1000:.2f} ms from {path.name}", file=sys.stderr)
-    iq, actual_start = read_sc16_window(path, sample_rate, window_start, window_length)
+    iq, actual_start = read_iq_window(path, sample_rate, window_start,
+                                      window_length, input_format)
     baseband, baseband_rate = shift_and_resample(iq, sample_rate, channel_hz - center_hz)
     first = round((packet_start - search_us * 1e-6 - actual_start) * baseband_rate)
     last = round((packet_start + search_us * 1e-6 - actual_start) * baseband_rate)
@@ -171,7 +220,9 @@ def analyze(path: Path, sample_rate: float, center_hz: float, channel_hz: float,
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("capture", type=Path, help="Raw interleaved little-endian signed 16-bit IQ")
+    parser.add_argument("capture", type=Path, help="Raw sc16le/cf32le IQ or MIDAS/BLUE .cdif")
+    parser.add_argument("--input-format", choices=("auto", "sc16le", "cf32le", "blue"),
+                        default="auto", help="IQ format (auto: BLUE for .cdif, otherwise sc16le)")
     parser.add_argument("--sample-rate", required=True, type=float, help="Complex samples per second")
     parser.add_argument("--center-hz", required=True, type=float, help="IQ center frequency")
     parser.add_argument("--channel-hz", required=True, type=float, help="Observed RF channel frequency")
@@ -182,7 +233,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         result = analyze(args.capture, args.sample_rate, args.center_hz,
-                         args.channel_hz, args.packet_start, args.search_us, args.max_symbols)
+                         args.channel_hz, args.packet_start, args.search_us,
+                         args.max_symbols, args.input_format)
         print(json.dumps(result, indent=2))
         return 0 if result["phy_candidate"] else 1
     except (OSError, ValueError) as exc:
