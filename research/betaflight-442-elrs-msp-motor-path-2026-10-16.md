@@ -1,7 +1,8 @@
 # Betaflight 4.4.2 SPI ELRS: MSP motor-output abuse candidate
 
-Status: **source-level attack hypothesis, not a live exploit**  
-Reviewed: 2026-10-16  
+Status: **source-level attack hypothesis, not a live exploit**
+
+Reviewed: 2026-10-16
 Target: owned TinyHawk III Plus, live-reported Betaflight 4.4.2 / `EMAX_TINYHAWKF4SX1280`
 
 ## Result
