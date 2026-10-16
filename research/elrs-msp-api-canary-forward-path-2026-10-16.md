@@ -138,11 +138,14 @@ not be used for this test.
 2. Turn the now replay-validated slot planner into a receive-clocked backend
    that consumes a newly observed SYNC and proves its scheduled timestamps
    without transmitting a live-UID frame.
-3. Because the observed SYNC ratio is no-telemetry, pair any eventual RF
-   canary with the read-only COM5 `MSP_RC` oracle or choose an equally safe
-   observable. Do not claim acceptance from UHD sent-sample counts.
-4. Only after those gates pass, consider one bounded, low-power,
-   `MSP_API_VERSION` RF request with the drone disarmed and propellers removed.
-   No setting write, arming, motor, reset, bootloader, bind, or firmware command
-   belongs in that first acceptance test. The absolute no-flashing rule for
-   both devices remains unchanged.
+3. The observed SYNC ratio is no-telemetry, and COM5 `MSP_RC` cannot reveal
+   acceptance of an `MSP_API_VERSION` query. Keep that query as the safest
+   transport fixture, but do not call it a live acceptance test without a
+   downlink. The observable alternative is one replayed, previously captured
+   hybrid-RC frame with low throttle and disarm held, while COM5 watches for
+   its brief stick value; that needs its own offline safety validator first.
+4. Only after those gates pass, consider one bounded, low-power observable
+   canary with the drone disarmed and propellers removed. No setting write,
+   arming, motor, reset, bootloader, bind, or firmware command belongs in that
+   first acceptance test. The absolute no-flashing rule for both devices
+   remains unchanged.

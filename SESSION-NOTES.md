@@ -2227,6 +2227,14 @@ the validation run. Next: resolve the B205mini RF coupling/port arrangement,
 then turn the replay-validated planner into a fresh-SYNC receive clock before
 any live-UID canary is considered.
 
+Important observation rule: because decoded SYNC advertises no telemetry,
+COM5 cannot show whether an over-air `MSP_API_VERSION` request was accepted;
+it only establishes the expected application response. The next observable
+canary should therefore be a separately validated one-slot replay of an
+already captured low-throttle, disarmed hybrid-RC frame while COM5 watches the
+corresponding stick value. Do not substitute a setting or motor write merely
+to make the result visible.
+
 Final validation: **115 tests passed**; `tools/validate-project.py` passed
 syntax, JSON, corpus hashes/provenance, rainbow data, CVE coverage, and local
 links across **182 tracked files**; `git diff --check` passed.
