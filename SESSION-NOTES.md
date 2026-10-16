@@ -1842,3 +1842,58 @@ Starting revision: `61dec1a`; `git pull --ff-only` reported current before edits
 Using only the saved 20-second receive-only IQ, the pinned 4.4.2 source, and the Semtech SX1280 Rev 3.3 datasheet, extended symbol extraction to retain top-three relative FFT-bin hypotheses and top-two power margins. Reprocessed 34 real bursts to a new ignored private file `work/oct15-ranked-2026-10-16.jsonl`: 34/34 satisfy the existing preamble/sync PHY candidate checks, with 714 analyzed payload-symbol positions (21 per frame). Of those, 157 have a top-two margin below 3 dB; this is a power measure, not calibrated probability. A private ±3-sample payload-timing test yielded only 0.0114 mean dominant-bin power-fraction gain and 0.177 dB mean margin gain. These observations do not produce or validate packet bytes. The SX1280 `0x07` long-interleaver, FEC, and scrambling inverse still lacks an independent known-answer vector; do not use the quarantined raw-bin packer or call CRC on invented bytes a decode.
 
 Changed tracked files: `tools/elrs-iq-symbols.py`, `tools/elrs-batch-evidence.py`, their two test modules, `research/elrs-packet-decode-progress-2026-10-16.md`, and this append-only log. The full offline suite passed (87 tests); `git diff --check` passed. Commit/push status: committed and pushed to `origin/main` at handoff. No E8/drone port or SDR device was opened, no firmware was read or flashed, no RF was transmitted, and private UID/capture/symbol data stayed ignored. Next step: obtain an independently labeled SX1280 4/8-LI IQ-plus-FIFO-byte oracle or authoritative inverse, then implement and verify the byte decoder before testing the private capture's CRC/FHSS fields. Any physical tap, pairing change, or live crafted-input experiment needs its own scoped approval; the absolute no-flashing constraint remains.
+
+---
+
+## 32. No-extra-SX1280 route and paired RC/IQ observation (Codex, 2026-10-16)
+
+Starting revision `6c0c39d`; `git pull --ff-only` was attempted before edits
+but this host could not connect to GitHub. The worktree was clean. The owner
+asked to pursue the offline decoder, TinyHawk USB channel oracle, and passive
+SPI tap. The owner explicitly declined opening the drone, so **no SPI tap was
+attempted**. A software oscilloscope cannot expose the internal SPI bus through
+stock Betaflight USB. Absolute no-flashing for both devices remains in force.
+
+Offline review confirmed the existing 34 PHY candidate frames / 714 symbol
+positions remain **undecoded**. A privacy-safe aggregate found 28 distinct
+21-symbol vectors, one repeated four times; this is repeatability evidence,
+not byte or CRC validation. The Semtech SX1280 Rev 3.3 datasheet confirms
+`0x07` is 4/8 long interleaving but does not publish the bit permutation.
+`research/elrs-no-extra-sx1280-path-2026-10-16.md` records the evidence bar
+for an SDR-only decoder and a separate USB-level check. No proposed inverse
+was promoted to a validated decoder merely from a synthetic round-trip.
+
+With the owner reporting the TinyHawk USB port free and propellers removed,
+read-only Windows enumeration identified the board at COM5 (`0483:5740`).
+MSP read queries verified Betaflight 4.4.2 and craft name `TH III Plus` and
+returned stable baseline RC channels. The first paired SDR background launch
+failed before writing IQ due missing UHD DLL lookup. A half-second direct UHD
+receive-only preflight succeeded after adding the installed UHD bin directory
+to that process's PATH. A second background launch failed due a Windows
+`Start-Process` duplicate `Path`/`PATH` environment-key error, but its USB
+observation logged 159 samples with right-stick movement. COM5 briefly
+disappeared and reappeared; no reset, reconfiguration, or alternate-port guess
+was used. The owner reported both devices remained connected and powered.
+
+The direct foreground UHD retry succeeded: 15.002507 seconds, 60,010,000
+complex samples at 4 MS/s, 2441 MHz center, RX2, receive-only, with 114
+private MSP_RC samples. Channel 0 ranged 1311–1710; throttle channel 3 stayed
+988. Filesystem timestamp overlap is approximately 3.6 seconds with 30 USB
+samples and channel 0 spanning 1313–1633 in that interval. The IQ and channel
+logs, hashes, and timing caveats are in the research note; raw files remain
+ignored under `work/captures/`. This establishes a live decoded-channel
+observation concurrent with RF acquisition, **not** a byte decode, exact
+packet association, or exploitability. The E8 port was not opened; no RF was
+transmitted; no device setting, firmware, motor, or physical probe action was
+taken.
+
+Changed tracked files: a dry-run-default, identity-gated read-only MSP
+observer and synthetic tests under `tools/`, the research note, and this log.
+The configured Windows Python venv has a missing base interpreter, so the new
+tests could not run here; `git diff --check` is the available local validation.
+Next: run the synthetic tests on a working Python 3.10+ environment, extract
+PHY candidates from the private new IQ, and continue seeking an independently
+validated long-interleaver inverse. For a cleaner USB/IQ correlation, begin
+USB logging before SDR initialization or extend it through the full receive
+window. No SPI access is authorized while the owner's no-opening direction
+stands.
