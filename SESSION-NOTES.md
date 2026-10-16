@@ -1945,3 +1945,43 @@ flashing, binding, or physical probe is authorized by this offline result.
 Handoff status: research/log commit `df227d8` was pushed to `origin/main`.
 This status line is being committed and pushed separately; the worktree
 contains no tracked capture, private UID, installer, or virtual environment.
+
+---
+
+## 34. Externally measured SX1280 LI map unlocks real v3 bytes (Codex, 2026-10-16)
+
+Starting revision `418c77e`; `git pull --ff-only` was current and the worktree
+was clean. Objective: investigate the owner's Gemini proposal and seek a
+non-circular solution to the SX1280 4/8 long-interleaver decoding gap. No
+device port or SDR was opened, no RF was transmitted, and neither owned
+device was modified, opened, or flashed.
+
+Found the original WaveShark SX128x long-interleaver source at pinned commit
+`62b513a7b699fd3a6928908102902abf9d9b2650`. Its SF7 4/8-LI mapping
+comes from an RP2 one-bit-at-a-time hardware measurement and independent
+TX16S off-air confirmation, rather than a self-consistent synthetic encoder.
+An attributed **private, ignored** Python experiment at `work/try_li.py`
+first reproduced WaveShark's independent 13-byte off-air fixture, then
+decoded our two previously captured eight-byte frame sets. WaveShark's
+GPL-3.0-or-later code was not vendored into tracked files.
+
+Of 62 existing PHY candidates, 54 distinct frames passed strict FEC and the
+source-matched Betaflight v3 CRC: 16 SYNC and 38 RC. They used the published
+map with positive bin orientation and relative-bin offset 0 or +1, not a
+packet-specific guessed permutation. All SYNC frames agreed on one private
+two-byte UID suffix, hybrid switch encoding, and air-rate code 7; the pinned
+Betaflight 4.4.2 mapping converts over-air code 7 to local rate index 2,
+matching the 150 Hz link. All 38 RC frames passed CRC using the UID suffix
+derived from *different* SYNC frames. SYNC self-derived CRC alone is not an
+independent identity proof. Eight lower-confidence candidates remain
+unresolved. No raw bytes or UID are printed or committed.
+
+Detailed counts, provenance, Gemini-method assessment, and remaining gates are
+in `research/elrs-sx1280-li-decode-breakthrough-2026-10-16.md`. Changed
+tracked files: that note and this append-only log. Validation: the independent
+off-air fixture and 54 real v3 CRC matches; no live acceptance, RF-TX, or
+control-channel correlation claimed. Next: package a license-compliant
+read-only offline decoder, recover ranked alternatives if useful, and compare
+decoded RC changes against the limited paired USB channel observation. The
+owner's no-flash and no-opening limits remain in force. Commit/push status is
+recorded by the subsequent handoff.
