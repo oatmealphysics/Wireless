@@ -14,6 +14,19 @@ sign-off in that specific change** (AGENTS.md §2, SECURITY.md). The blueprint
 is a *method*, not a license: it tells you *how to proceed carefully*; it does
 not waive the boundary.
 
+**Standing preconditions (always true before any phase — not a step).**
+These are the frame the whole blueprint assumes; they aren't done "in a
+phase," they're the condition for starting at all:
+- **Ownership + authorization** — the device is ours, on the bench, in our
+  space (AGENTS.md §0). Without it, don't start.
+- **Bench isolation** — no live system above the bench, no third-party link in
+  range we'd act on, and the device's *output* side (a radio transmitter, a
+  network egress, an actuator) is **off / disconnected / disabled** until an
+  output step is explicitly signed off. For a device with a transmission or
+  network front-end, keep it passive (no power to the output section, a
+  loopback, a shielded box, no egress cable, or no supply to the output
+  stage).
+
 **The three standing rules that apply at every step** (from AGENTS.md):
 1. **Honesty contract** — label every finding VALIDATED / SELF-CONSISTENT /
    SYNTHETIC. "I think it's X" is not a finding; "X, confirmed by <evidence>"
@@ -33,45 +46,6 @@ read-only surfaces.
 
 ---
 
-## Phase 0 — Intake & safety setup (do this before touching anything)
-
-**Goal:** establish the safety frame + a record of what the device is, *before*
-any probing. Nothing in Phase 0 modifies the device.
-
-0.1. **Confirm ownership + authorization.** Verify the device is ours, on the
-bench, in our space. Record: model, serial number, where it was obtained, the
-date. (This is the AGENTS.md §0 authorization — without it, stop.)
-
-0.2. **Bench isolation.** Confirm the bench is isolated: no live system above
-it, no third-party link in range that we'd act on, and the device's
-*output* side (a radio transmitter, a network egress, an actuator) is **off /
-disconnected / disabled** until an output step is explicitly signed off. For
-a device with a transmission or network front-end, note how to keep it
-passive (no power to the output section, a loopback, a shielded box, no
-egress cable, or simply no supply to the output stage).
-
-0.3. **Power + physical inventory.** Photograph the device (top, bottom,
-connectors, board if visible). List every physical interface: USB (type +
-count), UART pads, debug/programming headers (SWD/JTAG/SWD/UART), network
-ports (RJ45/USB-Ethernet/Bluetooth/Wi-Fi antenna), RF connectors, buttons,
-LEDs, battery contacts, storage (SD/eMMC/USB). Note the power requirements
-(voltage, current, connector polarity).
-**Danger note:** do not power a device whose polarity/supply you haven't
-confirmed — a reversed supply or an over-voltage is the most common way to
-damage an owned device before we've learned anything from it.
-
-0.4. **Create the per-device folder.** `references/<device>_material/` with a
-`README.md` (stub: device name, intake date, owner, a "confirmed vs unproven"
-table to fill in) + a `manifest.json` (empty artifact list) + a `.gitignore`
-that excludes `downloads/` + `upstream/` (binaries/firmware/images stay out of
-git; provenance + notes are tracked).
-
-0.5. **Write the intake entry** in the orchestrator's notes: device intake,
-what's in scope, the safety frame, the first open questions.
-
-**Gate 0→1:** ownership confirmed, bench isolated, physical interface list
-done, device folder created. No device modification.
-
 ---
 
 ## Phase 1 — Identify the device (hardware, software, firmware)
@@ -81,7 +55,26 @@ firmware or software, its OS (if any), its interfaces — from evidence, not
 from the box label or the marketing page. This phase is all observation +
 passive inspection.
 
-### 1a. Hardware identification
+### 1a. Intake record (the first thing, before any probing)
+
+- **Physical inventory.** Photograph the device (top, bottom, connectors,
+  board if visible). List every physical interface: USB (type + count), UART
+  pads, debug/programming headers (SWD/JTAG/UART), network ports
+  (RJ45/USB-Ethernet/Bluetooth/Wi-Fi antenna), RF connectors, buttons, LEDs,
+  battery contacts, storage (SD/eMMC/USB). Note the power requirements
+  (voltage, current, connector polarity).
+  **Danger note:** do not power a device whose polarity/supply you haven't
+  confirmed — a reversed supply or an over-voltage is the most common way to
+  damage an owned device before we've learned anything from it.
+- **Create the per-device folder.** `references/<device>_material/` with a
+  `README.md` (stub: device name, intake date, owner, a "confirmed vs
+  unproven" table to fill in) + a `manifest.json` (empty artifact list) + a
+  `.gitignore` that excludes `downloads/` + `upstream/` (binaries/firmware/
+  images stay out of git; provenance + notes are tracked).
+- **Write the intake entry** in the orchestrator's notes: device intake,
+  what's in scope, the first open questions.
+
+### 1b. Hardware identification
 
 - **The bus/descriptor signals (the first, cheapest evidence).** Connect the
   device (with the output section off if separable) and observe what the host
@@ -132,7 +125,7 @@ passive inspection.
   This is a physical-modification step — it's on *owned* hardware, but record
   it.
 
-### 1b. Software / firmware / OS identification
+### 1c. Software / firmware / OS identification
 
 - **The host tool / management software (if the vendor ships one).** If the
   device has a vendor configurator/host/management tool (a `.exe`, a `.app`,
@@ -160,9 +153,9 @@ passive inspection.
   firmware binary), or a general-purpose OS (a filesystem, `/dev`, an init
   system, a shell). **Do not assume.** The honest answer format is "no shell
   or filesystem interface *established*" — not "the device has no OS." Record
-  what's evidenced vs what's unproven (see 1e).
+  what's evidenced vs what's unproven (see 1f).
 
-### 1c. The interface map (the key deliverable of Phase 1)
+### 1d. The interface map (the key deliverable of Phase 1)
 
 Produce a one-page **interface map** for the device — the thing every later
 phase builds on:
@@ -195,18 +188,18 @@ CONFIRMED:   <list, each with its evidence>
 UNPROVEN:    <list, each with "why it's not yet confirmed">
 ```
 
-### 1d. Danger notes (Phase 1)
+### 1e. Danger notes (Phase 1)
 
-- **Power polarity/voltage** — the #1 damage risk (0.3).
+- **Power polarity/voltage** — the #1 damage risk (1a).
 - **Output exposure** — keep the transmitter/egress/actuator off/disabled
-  during hardware ID (0.2, 1a). Don't have a live output radiating or
+  during hardware ID (the bench-isolation precondition, 1b). Don't have a live output radiating or
   connecting while you're unplugging things.
-- **Don't infer the processor/OS from the host tool** (1a, 1b).
+- **Don't infer the processor/OS from the host tool** (1b, 1c).
 - **Don't write anything to "test" the update path** — that's a write step,
   Phase 5, needs sign-off. In Phase 1 you *identify* the update mechanism, you
   don't *use* it.
 
-### 1e. The CONFIRMED / UNPROVEN table (the honesty contract, applied)
+### 1f. The CONFIRMED / UNPROVEN table (the honesty contract, applied)
 
 For every claim in the interface map, mark it:
 - **VALIDATED** — confirmed by direct evidence (a descriptor read, a board
@@ -308,7 +301,7 @@ Acquire: the user manual, the service/repair manual, any schematic or board
 files the vendor publishes, the support articles that describe the device's
 modes + update procedure. Record each with its URL + hash. The manual is where
 the **mode-switch procedures** live (how to get the device into
-download/update/serial mode) — that's Phase 1a's input.
+download/update/serial mode) — that's Phase 1b's input.
 
 ### 2e. Danger notes (Phase 2)
 
@@ -458,7 +451,7 @@ If Phase 2 obtained the firmware/software image:
 - The **native reader** (the read-only client, if the protocol is decoded).
 - The **binary analysis notes** (the processor, OS/RTOS, memory layout,
   mitigations, the console/filesystem answer — or "still unproven").
-- The updated **interface map** (Phase 1c, now with the decoded protocols +
+- The updated **interface map** (Phase 1d, now with the decoded protocols +
   the input-handling surfaces).
 
 ### 3e. Danger notes (Phase 3)
@@ -491,7 +484,7 @@ read-only surfaces, on the bench, with the device connected. This is where
 "SELF-CONSISTENT" becomes "VALIDATED on the owned device." Still read-only /
 query-only; no state changes.
 
-4.1. **Connect the device** in the relevant mode (from Phase 1a's mode map),
+4.1. **Connect the device** in the relevant mode (from Phase 1b's mode map),
 with the output section off (if the validation is on the control interface,
 not the output). Confirm the descriptors/interfaces match Phase 1's records —
 a mismatch is a finding (the device isn't in the mode you think).
@@ -645,15 +638,14 @@ is updated; the notes are current; the open items are tracked.
 ```
 NEW DEVICE ONBOARDING — <name>, intake <date>, owner <who>
 
-Phase 0 — Intake & safety (read-only)
+STANDING PRECONDITIONS (always true before any phase — not a step)
   [ ] Ownership + authorization confirmed (AGENTS.md §0)
   [ ] Bench isolated (no live/third-party target; output section off/disabled)
+
+Phase 1 — Identify (read-only / observe)
   [ ] Physical inventory (connectors, power, markings — photographed)
   [ ] references/<device>_material/ created (README + manifest + .gitignore)
   [ ] Intake note written
-  GATE 0→1: safety frame set, device unmodified
-
-Phase 1 — Identify (read-only / observe)
   [ ] Identifiers — ALL modes/personalities, recorded
   [ ] Board markings (processor + output chip + board rev) — photographed
   [ ] Output front-end(s) identified (band/protocol/role/connector)

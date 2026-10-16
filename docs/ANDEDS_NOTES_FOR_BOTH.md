@@ -12,6 +12,15 @@ method is the same regardless of the device class. (First draft was anchored
 to the controller/RX under study; operator directed it be generalized to
 anything. Rewritten clean.)
 
+**2026-10-15 update:** operator directed Phase 0 (Intake & safety) be removed
+— ownership + bench isolation are standing preconditions, always true, not a
+step. Folded them into the intro as "Standing preconditions (always true
+before any phase — not a step)." The physical inventory + per-device folder +
+intake note (the actionable parts of old Phase 0) moved into Phase 1 as
+"1a. Intake record." Phases are now 1–6 (was 0–6); all cross-refs + the
+quick-reference checklist renumbered. The checklist now leads with the two
+preconditions, then Phase 1 (which starts with the intake record boxes).
+
 - **Phase 0 — Intake & safety** (read-only): ownership/authorization, bench
   isolation, physical inventory, the `references/<device>_material/` folder.
 - **Phase 1 — Identify** (observe): USB descriptors (ALL personalities/modes),
