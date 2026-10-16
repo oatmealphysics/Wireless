@@ -1388,3 +1388,27 @@ older capture came from the same physical transmitter. No packet bytes, UID,
 or CRC were recovered; Gate 2 remains open. The precise provenance, timing,
 and limits are in
 [`research/2026-10-08-blue-capture-offline.md`](research/2026-10-08-blue-capture-offline.md).
+
+---
+
+## 24. New-hardware intake and analysis blueprint (Codex, 2026-10-16)
+
+Added a repository-wide method for taking a newly acquired device from
+unpowered intake through evidence-backed identity, artifact acquisition,
+offline analysis, read-only validation, separately approved interaction, and
+team handoff:
+
+- [`docs/new-hardware-research-blueprint.md`](docs/new-hardware-research-blueprint.md)
+  is the detailed process, including interaction levels, evidence labels,
+  per-phase gates, record templates, the seven parser questions, firmware/
+  host/RF analysis branches, and explicit flash/RF/fuzzing controls.
+- [`docs/new-hardware-quick-reference.md`](docs/new-hardware-quick-reference.md)
+  is the bench checklist and standing never list.
+- [`SECURITY.md`](SECURITY.md) now supplies the repository code, artifact, and
+  laboratory guardrails referenced by the method.
+
+The blueprint is explicitly a method rather than authorization. Current owner
+direction in `AGENTS.md` and target-specific constraints always control. In
+particular, nothing in these documents changes the E8's absolute no-flash,
+no-write, no-reset/bootloader, no-fuzz, and no-RF-TX boundary. No hardware was
+accessed and no downloaded program was executed while preparing the documents.
