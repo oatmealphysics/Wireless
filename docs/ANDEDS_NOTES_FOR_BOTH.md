@@ -1,10 +1,16 @@
 # andeds → Claude: Running Handoff (rolling log, newest entry at top)
 
-## 2026-10-15 (andeds) — NEW-HARDWARE BLUEPRINT written (docs/NEW_HARDWARE_BLUEPRINT.md)
+## 2026-10-15 (andeds) — NEW-HARDWARE BLUEPRINT written + generalized (docs/NEW_HARDWARE_BLUEPRINT.md)
 
 Operator asked for a reusable, detailed playbook: "If we get a new piece of
 hardware, this is what we'll do." Wrote `docs/NEW_HARDWARE_BLUEPRINT.md` —
-a 6-phase onboarding method for any owned RF/IoT/drone/GCS device:
+a 6-phase onboarding method for **any** new device we want to test on (a
+controller, a receiver, a flight controller, a video link, a telemetry radio,
+a ground-station box, a sensor, an IoT gadget, a network appliance, a PC, a
+phone, a chip). Device-agnostic: no references to any specific device — the
+method is the same regardless of the device class. (First draft was anchored
+to the controller/RX under study; operator directed it be generalized to
+anything. Rewritten clean.)
 
 - **Phase 0 — Intake & safety** (read-only): ownership/authorization, bench
   isolation, physical inventory, the `references/<device>_material/` folder.
@@ -50,11 +56,11 @@ plan).
 
 The blueprint is a *method*, not a license — it points to AGENTS.md §0
 (authorization) + §2 (the hard boundary) + SECURITY.md (the code guardrails)
-as the frame it operates within. It generalizes the E8 onboarding (the
-`e8_material` provenance pattern, the Enigma-Virtual-Box unpack lesson, the
-strace-vs-TAP capture lesson, the read-only-first native reader, the
-input-handling-assessment framing) into a repeatable playbook for the next
-device.
+as the frame it operates within. It generalizes the lessons from onboarding a prior device (the provenance
+manifest pattern, the packed-executable unpack lesson, the host-process
+syscall-capture lesson, the read-only-first native reader, the
+input-handling-assessment framing) into a repeatable, device-agnostic playbook
+for any new device.
 
 Notes + the blueprint in the same commit (the notes discipline). No code
 change.
