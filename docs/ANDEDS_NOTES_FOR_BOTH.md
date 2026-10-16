@@ -1,5 +1,68 @@
 # andeds → Claude: Running Handoff (rolling log, newest entry at top)
 
+## 2026-10-15 (andeds) — NEW-HARDWARE BLUEPRINT written (docs/NEW_HARDWARE_BLUEPRINT.md)
+
+Operator asked for a reusable, detailed playbook: "If we get a new piece of
+hardware, this is what we'll do." Wrote `docs/NEW_HARDWARE_BLUEPRINT.md` —
+a 6-phase onboarding method for any owned RF/IoT/drone/GCS device:
+
+- **Phase 0 — Intake & safety** (read-only): ownership/authorization, bench
+  isolation, physical inventory, the `references/<device>_material/` folder.
+- **Phase 1 — Identify** (observe): USB descriptors (ALL personalities/modes),
+  board markings (MCU/radio/board rev), the RF front-end, the firmware source
+  + revision, the OS/RTOS status, the one-page interface map, every claim
+  labeled CONFIRMED/UNPROVEN. Danger notes: power polarity, RF exposure,
+  don't infer the MCU from the host tool.
+- **Phase 2 — Research + acquire** (no code executed): the firmware (public /
+  host-tool / gated / dumped — the honest outcomes), the host tool (+ unpack
+  if packed), the upstream source @ matching revision, the docs. The
+  `e8_material` manifest discipline (URL + SHA-256 + classification +
+  revision; downloads/ + upstream/ untracked). Danger notes: provenance
+  mandatory, verify the artifact matches the target, don't run downloaded
+  code.
+- **Phase 3 — Analysis** (offline, read-only on the device): Track A
+  (protocol/interface decode — the E8 method: static + dynamic + the CRC
+  test vector + the native reader) + Track B (the input-handling assessment —
+  the 7 questions asked of every parser: bounds-checking, the CRC gate order,
+  reflected reads, state-changing writes, the update path's validation, error
+  handling, the OS/RTOS context). The firmware binary analysis (when in hand).
+  Danger notes: offline + read-only, label every finding, don't act on the
+  findings in this phase.
+- **Phase 4 — Validate on the device** (read-only live check): connect in the
+  right mode, exercise the read-only surfaces (the native reader), watch for
+  unsolicited output (the honest limit), redact the identity, close cleanly.
+  Danger notes: query-only, RF off, redact the UID, one process per port.
+- **Phase 5 — Gated interaction** (writes + TX — EACH STEP SIGNED OFF): the
+  standing gate (bench/owned, explicit per-change sign-off, the real TX gate
+  replacing QC-001, positive commands first, per-protocol sign-off) + the
+  gated steps (config write, firmware read/dump, firmware update/flash, live
+  RF transmit, crafted-input test). Danger notes: per-step sign-off,
+  bench-only, recoverability, log everything.
+- **Phase 6 — Integrate**: the per-device folder complete, the native tooling
+  in `tools/`, the WaveRaider surface updated (if RF), the notes current, the
+  open items tracked.
+
+Plus a one-page quick-reference checklist + the standing "never" list (owned
+hardware only, no live/third-party TX, per-change sign-off, no secrets in
+code, no overclaiming, no assumptions, no running downloaded code, no
+conflating the host tool with the firmware, no bricking without a recovery
+plan).
+
+The blueprint is a *method*, not a license — it points to AGENTS.md §0
+(authorization) + §2 (the hard boundary) + SECURITY.md (the code guardrails)
+as the frame it operates within. It generalizes the E8 onboarding (the
+`e8_material` provenance pattern, the Enigma-Virtual-Box unpack lesson, the
+strace-vs-TAP capture lesson, the read-only-first native reader, the
+input-handling-assessment framing) into a repeatable playbook for the next
+device.
+
+Notes + the blueprint in the same commit (the notes discipline). No code
+change.
+
+— andeds
+
+---
+
 ## 2026-10-14 (andeds) — the "guiding light" roadmap is now `docs/GUIDING_LIGHT.md`
 
 Per the operator: the major goal is **Detect → Identify → Execute** a
