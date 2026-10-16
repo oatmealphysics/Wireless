@@ -114,7 +114,67 @@ counting a channel match as independent evidence.
 Five synthetic tests cover a fixed independent sequence vector, block
 permutations, frequency mapping, CRC gating, a UID seed byte not checked by
 the CRC, and privacy-safe aggregate output. The related offline suite has
-15 passing tests; NumPy/SciPy symbol
-tests are skipped in the current Ubuntu environment because those optional
-libraries are absent. The repository validator passes. No real decoded bytes
-exist yet, so no real CRC/UID/FHSS match has been claimed.
+15 passing tests at the time of that addition; NumPy/SciPy symbol tests were
+then skipped because those optional libraries were absent. The repository
+validator passed. No real decoded bytes exist yet, so no real CRC/UID/FHSS
+match has been claimed. The updated test result appears below.
+
+## Automatic offline PHY candidate survey (2026-10-15)
+
+`tools/elrs-phy-scan.py` now surveys a bounded interval of a **recorded** IQ
+file at one specified channel. It uses coarse energy regions to limit work,
+then the existing SF7 preamble and two LoRa sync-word chirp checks. It can
+find adjacent 150 Hz bursts even when their energy regions merge. It does not
+open an SDR, demodulate packet bytes, or distinguish an ELRS SYNC packet from
+another ELRS packet type. `packet_bytes_decoded` is always false. Full symbol
+bins and capture paths go only to a new JSONL file under ignored `work/`;
+terminal output gives aggregate counts, and an existing output is never
+overwritten.
+
+Example for the private October 15 recording:
+
+```text
+python3 tools/elrs-phy-scan.py \
+  --capture work/captures/e8_tinyhawk_pair_on_2026-10-15_2441MHz_4Msps_rx2_sc16.iq \
+  --sample-rate 4000000 --center-hz 2441000000 --channel-hz 2441378800 \
+  --start-seconds 0 --duration-seconds 20 \
+  --output work/auto-phy-2026-10-15.jsonl
+```
+
+On the local files, this heuristic found **34** PHY candidates in the 20 s
+October 15 sc16le recording and **8** in the 3.302208 s October 8 BLUE
+recording at the same candidate channel. The October 8 result consists of
+four candidates in each previously documented visit and zero outside those
+visits. A 60 ms October 15 spot check found four of four expected adjacent
+bursts. The count is **not** a completeness guarantee: thresholding can miss
+weak packets or admit unrelated LoRa-like signals. No candidate has passed a
+byte-level CRC check.
+
+The 21-symbol payload window used by default is consistent with the observed
+approximately 5.9 ms on-air packet and source-selected SF7/BW812.5 kHz,
+12-symbol preamble, implicit header, and hardware CRC-off settings; it is not
+a proof of byte or packet-type identity. Four new synthetic tests cover
+adjacent preambles, a quiet-noise negative control, private-output guards,
+and end-to-end cf32le file intake.
+
+This is a reconstructed offline survey, not Claude's unpublished capture
+draft.
+
+For new observations, `tools/elrs-sync-channel-record.py` supplies a small
+receive-only SoapySDR recorder. It defaults to the earlier B205mini setup:
+2441.0 MHz center, 4 MS/s, 2 MHz analog bandwidth, RX2, 35 dB gain. That
+span includes the **nominal** Betaflight 4.4.2 v3 fixed channel-41 frequency
+of 2441.4 MHz. It saves cf32le IQ and actual settings/completeness metadata
+under ignored `work/`, refuses overwrites, and never configures TX or opens
+the E8. It is intentionally a **channel recorder**, not a SYNC packet
+classifier. Its driver calls and output were tested with a fake SDR; it has
+not been exercised against live hardware here. Pass `--input-format cf32le`
+to the offline scanner for its output. With NumPy and SciPy installed in the
+local Ubuntu environment, the related suite now runs **24 passing tests**
+(including an existing symbol timing assertion relaxed to its one-baseband-
+sample resolution).
+
+The byte-decoder gate remains open. The numeric SX1280 coding setting `0x07`
+needs a validated long-interleaving inverse and independent known-answer
+evidence before these symbol candidates can be promoted to decoded SYNC/RC
+frames. A synthetic encoder/decoder round-trip alone would not meet that bar.
