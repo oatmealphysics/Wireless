@@ -5,6 +5,8 @@ This is the synchronization/demodulation front end for the E8–TinyHawk
 Betaflight 4.4.2 150 Hz benchmark. It intentionally does NOT call symbol bins
 packet bytes: SX1280 long interleaving (modulation parameter 0x07) still needs
 an independently validated deinterleaver, FEC and scrambling implementation.
+Ranked FFT-bin alternatives and power margins are demodulation hints, not
+calibrated probabilities or decoded bits.
 No UID or packet field is emitted as a claimed decode.
 
 Requires NumPy and SciPy (Python 3.10+). Reads at most one short packet window;
@@ -178,22 +180,40 @@ def find_preamble(iq: np.ndarray, first: int, last: int) -> dict:
 
 
 def extract_payload_symbols(iq: np.ndarray, preamble_start: int,
-                            baseline_bin: int, max_symbols: int) -> list[dict]:
+                            baseline_bin: int, max_symbols: int,
+                            top_k: int = 3) -> list[dict]:
+    if not 1 <= top_k <= N:
+        raise ValueError("top_k must be between 1 and the number of LoRa bins")
     # The quarter-downchirp is part of the LoRa frame delimiter.
     first = preamble_start + round((PREAMBLE_SYMBOLS + SYNC_SYMBOLS + DOWNCHIRP_SYMBOLS) * N)
     count = min(max_symbols, max(0, (len(iq) - first) // N))
     if not count:
         return []
     power = symbol_spectrum(iq, first, count, upchirp())
-    peaks = np.argmax(power, axis=1)
-    return [{"bin": int(k), "relative_bin": int((k - baseline_bin) % N),
-             "peak_power_fraction": round(float(power[i, k]), 4)}
-            for i, k in enumerate(peaks)]
+    ranked = np.argsort(power, axis=1)[:, ::-1][:, :top_k]
+    result = []
+    for i, candidates in enumerate(ranked):
+        winner = int(candidates[0])
+        runner_up = float(power[i, candidates[1]]) if top_k > 1 else 0.0
+        result.append({
+            "bin": winner,
+            "relative_bin": (winner - baseline_bin) % N,
+            "peak_power_fraction": round(float(power[i, winner]), 4),
+            "margin_db": (round(10 * math.log10(float(power[i, winner]) /
+                                                 max(runner_up, 1e-30)), 2)
+                          if top_k > 1 else None),
+            "alternatives": [
+                {"relative_bin": (int(k) - baseline_bin) % N,
+                 "power_fraction": round(float(power[i, k]), 6)}
+                for k in candidates
+            ],
+        })
+    return result
 
 
 def analyze(path: Path, sample_rate: float, center_hz: float, channel_hz: float,
             packet_start: float, search_us: float, max_symbols: int,
-            input_format: str = "auto") -> dict:
+            input_format: str = "auto", top_k: int = 3) -> dict:
     if sample_rate <= 0 or packet_start < 0 or search_us <= 0 or max_symbols < 0:
         raise ValueError("invalid rate, packet start, search span, or symbol count")
     if abs(channel_hz - center_hz) >= sample_rate / 2:
@@ -214,7 +234,7 @@ def analyze(path: Path, sample_rate: float, center_hz: float, channel_hz: float,
     last = round((packet_start + search_us * 1e-6 - actual_start) * baseband_rate)
     preamble = find_preamble(baseband, first, last)
     payload = extract_payload_symbols(baseband, preamble["start_sample"],
-                                      preamble["baseline_bin"], max_symbols)
+                                      preamble["baseline_bin"], max_symbols, top_k)
     phy_candidate = (preamble["preamble_consistent"] >= 10 and
                      preamble["sync_consistent"] and preamble["score"] >= 0.2)
     return {"capture": str(path), "sample_rate_hz": sample_rate,
@@ -240,11 +260,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--search-us", type=float, default=120,
                         help="Search ± this many microseconds around start (default 120)")
     parser.add_argument("--max-symbols", type=int, default=22, help="Maximum candidate payload symbols")
+    parser.add_argument("--top-k", type=int, default=3,
+                        help="Ranked bin hypotheses per payload symbol (default 3)")
     args = parser.parse_args(argv)
     try:
         result = analyze(args.capture, args.sample_rate, args.center_hz,
                          args.channel_hz, args.packet_start, args.search_us,
-                         args.max_symbols, args.input_format)
+                         args.max_symbols, args.input_format, args.top_k)
         print(json.dumps(result, indent=2))
         return 0 if result["phy_candidate"] else 1
     except (OSError, ValueError) as exc:

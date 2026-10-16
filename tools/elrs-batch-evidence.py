@@ -17,6 +17,7 @@ Requires NumPy and SciPy (Python 3.10+). Example:
       --max-symbols 21 --output work/oct08-symbols.jsonl
 
 Only aggregate quality and the output basename are printed to the terminal.
+Ranked symbol hypotheses stay in the private JSONL, never terminal summaries.
 No capture or device settings are changed.
 """
 
@@ -57,6 +58,9 @@ def summarize(result: dict, threshold: float = 0.2) -> dict:
             "sync_consistent": result["preamble"]["sync_consistent"],
             "strong_symbols": sum(item["peak_power_fraction"] > threshold
                                   for item in payload),
+            "low_margin_symbols_lt3db": sum(item.get("margin_db") is not None
+                                               and item["margin_db"] < 3
+                                               for item in payload),
             "reported_symbols": len(payload)}
 
 
@@ -71,6 +75,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="Approximate preamble time; repeat for each burst")
     parser.add_argument("--search-us", type=float, default=120)
     parser.add_argument("--max-symbols", type=int, default=21)
+    parser.add_argument("--top-k", type=int, default=3,
+                        help="Ranked bin hypotheses per payload symbol (default 3)")
     parser.add_argument("--output", type=Path, required=True,
                         help="New JSONL filename under ignored work/")
     args = parser.parse_args(argv)
@@ -83,7 +89,8 @@ def main(argv: list[str] | None = None) -> int:
         for guess in args.packet_start:
             item = symbols.analyze(args.capture, args.sample_rate,
                                    args.center_hz, args.channel_hz, guess,
-                                   args.search_us, args.max_symbols)
+                                   args.search_us, args.max_symbols,
+                                   top_k=args.top_k)
             item["packet_start_guess_seconds"] = guess
             results.append(item)
             print(json.dumps(summarize(item), sort_keys=True), file=sys.stderr)

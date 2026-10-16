@@ -151,6 +151,29 @@ class SymbolTests(unittest.TestCase):
         payload = modem.extract_payload_symbols(
             iq, result["start_sample"], result["baseline_bin"], 2)
         self.assertEqual([item["relative_bin"] for item in payload], [32, 35])
+        self.assertEqual([item["alternatives"][0]["relative_bin"]
+                          for item in payload], [32, 35])
+        self.assertTrue(all(item["margin_db"] is not None for item in payload))
+        self.assertTrue(all(len(item["alternatives"]) == 3 for item in payload))
+
+    def test_ranked_symbol_hypotheses(self):
+        import numpy as np
+
+        modem = self.symbols
+        n = np.arange(modem.N)
+        up = modem.upchirp()
+        strong = up * np.exp(2j * np.pi * 9 * n / modem.N)
+        weak = up * np.exp(2j * np.pi * 21 * n / modem.N)
+        payload_start = round((modem.PREAMBLE_SYMBOLS + modem.SYNC_SYMBOLS
+                               + modem.DOWNCHIRP_SYMBOLS) * modem.N)
+        iq = np.zeros(payload_start + modem.N, dtype=np.complex64)
+        iq[payload_start:] = strong + 0.5 * weak
+        item = modem.extract_payload_symbols(iq, 0, 0, 1, top_k=2)[0]
+        self.assertEqual([candidate["relative_bin"]
+                          for candidate in item["alternatives"]], [9, 21])
+        self.assertAlmostEqual(item["margin_db"], 6.02, places=1)
+        with self.assertRaisesRegex(ValueError, "top_k"):
+            modem.extract_payload_symbols(iq, 0, 0, 1, top_k=0)
 
 
 if __name__ == "__main__":

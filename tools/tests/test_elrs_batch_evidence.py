@@ -37,7 +37,9 @@ class BatchEvidenceTests(unittest.TestCase):
         class FakeSymbols:
             @staticmethod
             def analyze(_capture, _sample_rate, _center, _channel, guess,
-                        _search_us, _max_symbols):
+                        _search_us, _max_symbols, *, top_k=3):
+                if top_k != 3:
+                    raise AssertionError("batch did not pass the default ranked-symbol count")
                 return {"capture": "private-test.iq",
                         "preamble_start_seconds": guess,
                         "phy_candidate": True,
@@ -65,6 +67,7 @@ class BatchEvidenceTests(unittest.TestCase):
             self.assertEqual(len(records), 2)
             self.assertEqual(records[0]["payload_symbols"][0]["relative_bin"], 99)
             self.assertIn('"strong_symbols": 1', log.getvalue())
+            self.assertIn('"low_margin_symbols_lt3db": 0', log.getvalue())
             self.assertNotIn("relative_bin", log.getvalue())
             self.assertNotIn('"capture"', log.getvalue())
 
