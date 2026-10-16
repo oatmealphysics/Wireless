@@ -2230,3 +2230,7 @@ any live-UID canary is considered.
 Final validation: **115 tests passed**; `tools/validate-project.py` passed
 syntax, JSON, corpus hashes/provenance, rainbow data, CVE coverage, and local
 links across **182 tracked files**; `git diff --check` passed.
+
+Handoff status: encoder/scheduler/research commit `07343ad` was pushed to
+`origin/main`. This status line is being committed and pushed separately;
+all UID-derived plans, hardware captures, and local UHD helpers remain ignored.
