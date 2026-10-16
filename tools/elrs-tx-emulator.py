@@ -76,7 +76,6 @@ import time
 
 FHSS_SEQUENCE_LEN = 256
 ISM2G4_FREQ_COUNT = 80
-ISM2G4_SYNC_CHANNEL = ISM2G4_FREQ_COUNT // 2  # channel 40
 ISM2G4_FREQ_START_HZ = 2400400000
 ISM2G4_FREQ_STOP_HZ = 2479400000
 
@@ -144,6 +143,15 @@ SX1280_TX_TIMEOUT_NONE = 0x0000
 
 
 # ---------------------------------------------------------------------------
+# Version-aware sync channel
+# ---------------------------------------------------------------------------
+
+def sync_channel_for_version(freq_count: int, ota_version: int) -> int:
+    """v3 sync channel = freq_count//2 + 1; v4 = freq_count//2."""
+    return freq_count // 2 + (1 if ota_version <= 3 else 0)
+
+
+# ---------------------------------------------------------------------------
 # UID / crypto derivation (matches elrs-packet-forger.py)
 # ---------------------------------------------------------------------------
 
@@ -158,7 +166,12 @@ def uid_to_fhss_seed(uid: bytes, ota_version: int) -> int:
 
 
 def uid_to_crc_init(uid: bytes, ota_version: int) -> int:
-    return ((uid[4] << 8) | uid[5]) ^ (ota_version << 8)
+    init = (uid[4] << 8) | uid[5]
+    if ota_version <= 3:
+        init ^= ota_version
+    else:
+        init ^= ota_version << 8
+    return init
 
 
 # ---------------------------------------------------------------------------
@@ -185,8 +198,9 @@ class ElrsRng:
 # FHSS sequence generation (from FHSS/FHSS.cpp)
 # ---------------------------------------------------------------------------
 
-def generate_fhss_sequence(seed: int, freq_count: int = ISM2G4_FREQ_COUNT) -> list[int]:
-    sync_ch = freq_count // 2
+def generate_fhss_sequence(seed: int, freq_count: int = ISM2G4_FREQ_COUNT,
+                           ota_version: int = 3) -> list[int]:
+    sync_ch = sync_channel_for_version(freq_count, ota_version)
     seq_count = (FHSS_SEQUENCE_LEN // freq_count) * freq_count
 
     sequence = [0] * seq_count
@@ -304,12 +318,35 @@ def build_sync_packet(uid: bytes, nonce: int, fhss_index: int,
         return bytes(pkt)
 
 
+def _nonce_xor_for_version(ota_version: int, nonce: int,
+                           pkt_type: int, switch_wide: bool = False) -> int:
+    """Compute the nonce XOR value mixed into the CRC for non-SYNC packets.
+
+    v3 rules:
+      - SM_WIDE RC_DATA: nonce & 0xFFFF
+      - SM_HYBRID RC_DATA: 0
+      - MSP / DATA: 0
+    v4 rules:
+      - all non-SYNC: nonce & 0xFFFF
+    """
+    if ota_version <= 3:
+        if pkt_type == PACKET_TYPE_RCDATA and switch_wide:
+            return nonce & 0xFFFF
+        return 0
+    else:
+        return nonce & 0xFFFF
+
+
 def build_rc_packet(channels_us: list[int], nonce: int,
                     crc_init: int, crc_engine: Crc2Byte,
-                    is_armed: bool = False, full_res: bool = False) -> bytes:
+                    is_armed: bool = False, full_res: bool = False,
+                    ota_version: int = 3, switch_wide: bool = False) -> bytes:
     channels_crsf = [us_to_crsf(ch) for ch in channels_us]
     while len(channels_crsf) < 4:
         channels_crsf.append(CRSF_CHANNEL_VALUE_MID)
+
+    nonce_xor = _nonce_xor_for_version(ota_version, nonce,
+                                       PACKET_TYPE_RCDATA, switch_wide)
 
     if full_res:
         pkt = bytearray(OTA8_PACKET_SIZE)
@@ -320,7 +357,6 @@ def build_rc_packet(channels_us: list[int], nonce: int,
         ch_high = pack_channels_4x10([CRSF_CHANNEL_VALUE_MID] * 4)
         pkt[1:6] = ch_low
         pkt[6:11] = ch_high
-        nonce_xor = nonce & 0xFF
         crc = crc_engine.calc(bytes(pkt[:11]), crc_init ^ nonce_xor)
         pkt[11] = crc & 0xFF
         pkt[12] = (crc >> 8) & 0xFF
@@ -334,7 +370,6 @@ def build_rc_packet(channels_us: list[int], nonce: int,
             pkt[6] = 0x80
         else:
             pkt[6] = 0x00
-        nonce_xor = nonce & 0xFF
         crc = crc_engine.calc(bytes(pkt[:7]), crc_init ^ nonce_xor)
         pkt[0] |= ((crc >> 8) & 0x3F) << 2
         pkt[7] = crc & 0xFF
@@ -344,7 +379,11 @@ def build_rc_packet(channels_us: list[int], nonce: int,
 def build_msp_packet(msp_cmd: int, msp_payload: bytes,
                      nonce: int, crc_init: int, crc_engine: Crc2Byte,
                      package_index: int = 0,
-                     full_res: bool = False) -> bytes:
+                     full_res: bool = False,
+                     ota_version: int = 3) -> bytes:
+    nonce_xor = _nonce_xor_for_version(ota_version, nonce,
+                                       PACKET_TYPE_DATA, switch_wide=False)
+
     if full_res:
         pkt = bytearray(OTA8_PACKET_SIZE)
         pkt[0] = (PACKET_TYPE_DATA & 0x03) | ((package_index & 0x1F) << 3)
@@ -357,7 +396,6 @@ def build_msp_packet(msp_cmd: int, msp_payload: bytes,
         msp_frame.extend(msp_payload)
         max_payload = 10
         pkt[1:1 + min(len(msp_frame), max_payload)] = msp_frame[:max_payload]
-        nonce_xor = nonce & 0xFF
         crc = crc_engine.calc(bytes(pkt[:11]), crc_init ^ nonce_xor)
         pkt[11] = crc & 0xFF
         pkt[12] = (crc >> 8) & 0xFF
@@ -375,7 +413,6 @@ def build_msp_packet(msp_cmd: int, msp_payload: bytes,
         msp_frame.extend(msp_payload)
         max_payload = 5
         pkt[2:2 + min(len(msp_frame), max_payload)] = msp_frame[:max_payload]
-        nonce_xor = nonce & 0xFF
         crc = crc_engine.calc(bytes(pkt[:7]), crc_init ^ nonce_xor)
         pkt[0] |= ((crc >> 8) & 0x3F) << 2
         pkt[7] = crc & 0xFF
@@ -734,13 +771,16 @@ class DryRunBackend:
 class ElrsTxEmulator:
     """FHSS-synchronized ELRS TX emulator."""
 
-    def __init__(self, phrase: str, backend, ota_version: int = 4,
+    def __init__(self, phrase: str, backend, ota_version: int = 3,
                  rate_enum: int = 4, full_res: bool = False):
         self.uid = phrase_to_uid(phrase)
         self.ota_version = ota_version
         self.fhss_seed = uid_to_fhss_seed(self.uid, ota_version)
         self.crc_init = uid_to_crc_init(self.uid, ota_version)
-        self.fhss_seq = generate_fhss_sequence(self.fhss_seed)
+        self.fhss_seq = generate_fhss_sequence(self.fhss_seed,
+                                               ota_version=ota_version)
+        self.sync_channel = sync_channel_for_version(ISM2G4_FREQ_COUNT,
+                                                     ota_version)
         self.rate_enum = rate_enum
         self.full_res = full_res
 
@@ -778,7 +818,7 @@ class ElrsTxEmulator:
 
     def _is_sync_slot(self) -> bool:
         channel = self.fhss_seq[self.fhss_index % len(self.fhss_seq)]
-        return channel == ISM2G4_SYNC_CHANNEL
+        return channel == self.sync_channel
 
     def takeover(self, channels_us: list[int], is_armed: bool = True,
                  duration_s: float = 0, msp_cmd: int = None,
@@ -819,14 +859,16 @@ class ElrsTxEmulator:
                 elif msp_cmd is not None and not msp_sent:
                     pkt = build_msp_packet(
                         msp_cmd, msp_payload, self.nonce,
-                        self.crc_init, self.crc_engine, full_res=self.full_res)
+                        self.crc_init, self.crc_engine, full_res=self.full_res,
+                        ota_version=self.ota_version)
                     msp_sent = True
                     print(f"[*] MSP command {msp_cmd} injected at nonce={self.nonce}",
                           file=sys.stderr)
                 else:
                     pkt = build_rc_packet(
                         channels_us, self.nonce, self.crc_init,
-                        self.crc_engine, is_armed=is_armed, full_res=self.full_res)
+                        self.crc_engine, is_armed=is_armed, full_res=self.full_res,
+                        ota_version=self.ota_version)
 
                 self.backend.transmit(pkt)
                 pkt_count += 1
@@ -889,15 +931,18 @@ class ElrsTxEmulator:
                     # Send MSP command in first few slots
                     pkt = build_msp_packet(
                         msp_cmd, msp_payload, self.nonce,
-                        self.crc_init, self.crc_engine, full_res=self.full_res)
+                        self.crc_init, self.crc_engine, full_res=self.full_res,
+                        ota_version=self.ota_version)
                 elif channels_us:
                     pkt = build_rc_packet(
                         channels_us, self.nonce, self.crc_init,
-                        self.crc_engine, is_armed=is_armed, full_res=self.full_res)
+                        self.crc_engine, is_armed=is_armed, full_res=self.full_res,
+                        ota_version=self.ota_version)
                 else:
                     pkt = build_rc_packet(
                         [1500, 1500, 1000, 1500], self.nonce, self.crc_init,
-                        self.crc_engine, is_armed=False, full_res=self.full_res)
+                        self.crc_engine, is_armed=False, full_res=self.full_res,
+                        ota_version=self.ota_version)
 
                 self.backend.transmit(pkt)
                 self._advance_hop()
@@ -924,7 +969,8 @@ def cmd_info(args):
     ota_version = args.ota_version
     fhss_seed = uid_to_fhss_seed(uid, ota_version)
     crc_init = uid_to_crc_init(uid, ota_version)
-    fhss_seq = generate_fhss_sequence(fhss_seed)
+    fhss_seq = generate_fhss_sequence(fhss_seed, ota_version=ota_version)
+    sync_ch = sync_channel_for_version(ISM2G4_FREQ_COUNT, ota_version)
 
     uid_hex = ":".join(f"{b:02X}" for b in uid)
     print(f"Binding phrase:  \"{args.phrase}\"")
@@ -934,7 +980,7 @@ def cmd_info(args):
     print(f"SYNC visible:    {uid[4]:02X}:{uid[5]:02X}  (sent in every SYNC packet)")
     print(f"FHSS seed:       0x{fhss_seed:08X}")
     print(f"CRC init:        0x{crc_init:04X}")
-    print(f"Sync channel:    {ISM2G4_SYNC_CHANNEL}  ({fhss_index_to_freq_hz(ISM2G4_SYNC_CHANNEL)/1e6:.1f} MHz)")
+    print(f"Sync channel:    {sync_ch}  ({fhss_index_to_freq_hz(sync_ch)/1e6:.1f} MHz)")
     print(f"FHSS seq length: {len(fhss_seq)}")
 
     rate_us = RATE_INTERVAL_US.get(args.rate, 10000)
@@ -946,7 +992,7 @@ def cmd_info(args):
     for i in range(min(20, len(fhss_seq))):
         ch = fhss_seq[i]
         freq = fhss_index_to_freq_hz(ch)
-        marker = " <-- SYNC" if ch == ISM2G4_SYNC_CHANNEL else ""
+        marker = " <-- SYNC" if ch == sync_ch else ""
         print(f"  [{i:3d}] ch={ch:2d}  {freq/1e6:.1f} MHz{marker}")
 
 
@@ -1065,8 +1111,8 @@ def main():
 
     parser.add_argument("--phrase", required=True,
                         help="ELRS binding phrase")
-    parser.add_argument("--ota-version", type=int, default=4, choices=[3, 4],
-                        help="OTA version (3 or 4, default: 4)")
+    parser.add_argument("--ota-version", type=int, default=3, choices=[3, 4],
+                        help="OTA version (3 or 4, default: 3 for Betaflight 4.4.2)")
     parser.add_argument("--rate", type=int, default=4, choices=range(7),
                         help="ELRS rate enum: 0=500Hz, 1=250Hz, 2=200Hz, 3=150Hz, "
                              "4=100Hz (default), 5=50Hz, 6=25Hz")

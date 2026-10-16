@@ -253,3 +253,37 @@ def v3_build_sync(uid: bytes, fhss_index: int, nonce: int,
     ])
     v3_generate_crc(raw, uid)
     return bytes(raw)
+
+
+# ---------------------------------------------------------------------------
+# Version-parameterized wrappers — tools that support --ota-version 3|4
+# import these instead of the v3-only functions above.
+# ---------------------------------------------------------------------------
+DEFAULT_OTA_VERSION = 3
+
+
+def uid_crc_init(uid: bytes, ota_version: int = DEFAULT_OTA_VERSION) -> int:
+    """CRC init from UID, version-correct for v3 and v4."""
+    if len(uid) != 6:
+        raise ValueError("UID must be 6 bytes")
+    init = (uid[4] << 8) | uid[5]
+    if ota_version <= 3:
+        init ^= ota_version
+    else:
+        init ^= ota_version << 8
+    return init & 0xFFFF
+
+
+def uid_fhss_seed(uid: bytes, ota_version: int = DEFAULT_OTA_VERSION) -> int:
+    """FHSS seed from UID, version-correct for v3 and v4."""
+    if len(uid) != 6:
+        raise ValueError("UID must be 6 bytes")
+    return ((uid[2] << 24) + (uid[3] << 16) +
+            (uid[4] << 8) + (uid[5] ^ ota_version))
+
+
+def sync_channel(freq_count: int, ota_version: int = DEFAULT_OTA_VERSION) -> int:
+    """Sync channel index, version-correct for v3 and v4."""
+    if ota_version <= 3:
+        return freq_count // 2 + 1
+    return freq_count // 2

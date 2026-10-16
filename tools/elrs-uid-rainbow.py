@@ -11,11 +11,12 @@ The ELRS binding phrase is hashed as:
 
 From the UID:
     FHSS seed = (UID[2] << 24) | (UID[3] << 16) | (UID[4] << 8) | (UID[5] ^ OTA_VERSION_ID)
-    CRC init  = ((UID[4] << 8) | UID[5]) ^ (OTA_VERSION_ID << 8)
+    CRC init  = ((UID[4] << 8) | UID[5]) ^ OTA_VERSION_ID              (v3)
+              = ((UID[4] << 8) | UID[5]) ^ (OTA_VERSION_ID << 8)      (v4)
 
 OTA_VERSION_ID depends on the firmware build:
-    - ELRS 4.x / Betaflight with USE_ELRSV4: OTA_VERSION_ID = 4 (default)
-    - ELRS 3.x / Betaflight without USE_ELRSV4: OTA_VERSION_ID = 3
+    - ELRS 3.x / Betaflight 4.4.2: OTA_VERSION_ID = 3 (default)
+    - ELRS 4.x / Betaflight with USE_ELRSV4: OTA_VERSION_ID = 4
     The FHSS seed and CRC init differ between versions for the same UID.
 
 SYNC packet UID exposure by version:
@@ -28,8 +29,8 @@ SYNC packet UID exposure by version:
     - The table always stores all 3 sync bytes for maximum coverage.
 
 Usage:
-    python3 elrs-uid-rainbow.py                       # generate table (OTA v4 default)
-    python3 elrs-uid-rainbow.py --ota-version 3       # generate table for OTA v3 targets
+    python3 elrs-uid-rainbow.py                       # generate table (OTA v3 default)
+    python3 elrs-uid-rainbow.py --ota-version 4       # generate table for OTA v4 targets
     python3 elrs-uid-rainbow.py -w wordlist.txt       # use external wordlist
     python3 elrs-uid-rainbow.py -o table.csv          # output to CSV
     python3 elrs-uid-rainbow.py --lookup AA:BB        # reverse lookup UID[4:5] from SYNC capture
@@ -44,7 +45,7 @@ import json
 from pathlib import Path
 
 
-DEFAULT_OTA_VERSION = 4
+DEFAULT_OTA_VERSION = 3
 
 
 def phrase_to_uid(phrase: str) -> bytes:
@@ -57,7 +58,10 @@ def uid_to_fhss_seed(uid: bytes, ota_ver: int = DEFAULT_OTA_VERSION) -> int:
 
 
 def uid_to_crc_init(uid: bytes, ota_ver: int = DEFAULT_OTA_VERSION) -> int:
-    return ((uid[4] << 8) | uid[5]) ^ (ota_ver << 8)
+    init = (uid[4] << 8) | uid[5]
+    if ota_ver <= 3:
+        return (init ^ ota_ver) & 0xFFFF
+    return (init ^ (ota_ver << 8)) & 0xFFFF
 
 
 def uid_hex(uid: bytes) -> str:

@@ -92,7 +92,7 @@ ENDPOINT_OPTIONS = "/options.json"
 ENDPOINT_HARDWARE = "/hardware.json"
 
 OTA_VERSION_IDS = {3: "ELRS v3.x", 4: "ELRS v4.x"}
-DEFAULT_OTA_VERSION = 4
+DEFAULT_OTA_VERSION = 3
 
 # FHSS domain table (matching tools/elrs_core/fhss.py)
 FHSS_DOMAINS = {
@@ -125,8 +125,11 @@ def uid_seed(uid: bytes, ota_version: int = DEFAULT_OTA_VERSION) -> int:
 
 
 def crc_init(uid: bytes, ota_version: int = DEFAULT_OTA_VERSION) -> int:
-    """((UID[4]<<8)|UID[5]) ^ (OTA_VERSION_ID<<8)."""
-    return (((uid[4] << 8) | uid[5]) ^ (ota_version << 8)) & 0xFFFF
+    """v3: ((UID[4]<<8)|UID[5]) ^ ota_version; v4: ^ (ota_version<<8)."""
+    init = (uid[4] << 8) | uid[5]
+    if ota_version <= 3:
+        return (init ^ ota_version) & 0xFFFF
+    return (init ^ (ota_version << 8)) & 0xFFFF
 
 
 class _Lcg:

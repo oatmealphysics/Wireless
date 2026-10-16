@@ -373,12 +373,13 @@ def cmd_msp(uid, nonce, crc_init, crc_engine, args):
 
 
 def cmd_fhss(fhss_seq, args):
+    sync_ch = sync_channel_for_version(args.ota_version)
     print(f"FHSS hopping sequence ({len(fhss_seq)} entries, {ISM2G4_FREQ_COUNT} channels)")
-    print(f"Sync channel: {ISM2G4_SYNC_CHANNEL}")
+    print(f"Sync channel: {sync_ch}")
     print()
     for i, ch in enumerate(fhss_seq):
         freq = fhss_index_to_freq_hz(ch)
-        marker = " <-- SYNC" if ch == ISM2G4_SYNC_CHANNEL else ""
+        marker = " <-- SYNC" if ch == sync_ch else ""
         print(f"  [{i:3d}] ch={ch:2d}  {freq / 1e6:.1f} MHz{marker}")
 
 

@@ -91,7 +91,6 @@ from elrs_core.fhss import (
     DEFAULT_2G4_DOMAIN,
     build_sequence,
     sync_channel_candidates,
-    uid_seed,
 )
 from elrs_core.ota import (
     OTA4_PACKET_SIZE,
@@ -100,8 +99,13 @@ from elrs_core.ota import (
     PACKET_TYPE_SYNC,
     decode_full,
     decode_std,
-    ota_uid_crc_init,
     validate_crc,
+)
+from elrs_core.v3_compat import (
+    uid_crc_init as v3_uid_crc_init,
+    uid_fhss_seed,
+    sync_channel,
+    DEFAULT_OTA_VERSION,
 )
 
 # Optional numpy — required for IQ demodulation, not for stdin-raw mode
@@ -175,12 +179,13 @@ def lookup_uid_fragment(uid4: int, uid5: int, rainbow: dict) -> list[dict]:
     return rainbow.get(key, [])
 
 
-def derive_link_params(uid_hex: str, domain_name: str = DEFAULT_2G4_DOMAIN) -> dict:
+def derive_link_params(uid_hex: str, domain_name: str = DEFAULT_2G4_DOMAIN,
+                       ota_version: int = DEFAULT_OTA_VERSION) -> dict:
     """From a full UID, derive FHSS sequence, CRC init, and seed."""
     uid = bytes.fromhex(uid_hex.replace(":", ""))
     domain = DOMAINS[domain_name]
-    seed = uid_seed(uid)
-    crc_init = ota_uid_crc_init(uid)
+    seed = uid_fhss_seed(uid, ota_version)
+    crc_init = v3_uid_crc_init(uid, ota_version)
 
     candidates = sync_channel_candidates(domain.freq_count)
     sequences = {}
@@ -259,9 +264,11 @@ def try_decode_sync(raw: bytes, freq_hz: float = 0, rssi: float = 0,
 class SyncTracker:
     """Accumulates SYNC observations, does rainbow lookups, reports results."""
 
-    def __init__(self, rainbow: dict, one_shot: bool = False):
+    def __init__(self, rainbow: dict, one_shot: bool = False,
+                 ota_version: int = DEFAULT_OTA_VERSION):
         self.rainbow = rainbow
         self.one_shot = one_shot
+        self.ota_version = ota_version
         self.transmitters: dict[str, dict] = {}
         self.sync_count = 0
         self.total_frames = 0
@@ -312,7 +319,7 @@ class SyncTracker:
                         "uid_fragment": info["uid_fragment_hex"],
                         "phrase": phrase,
                         "full_uid": full_uid,
-                        "link_params": derive_link_params(full_uid),
+                        "link_params": derive_link_params(full_uid, ota_version=self.ota_version),
                         "first_sync": info,
                     }
                     self.matched = True
@@ -681,7 +688,8 @@ class LoRaDemodulator:
 # ---------------------------------------------------------------------------
 def scan_iq_for_syncs(iq: "np.ndarray", sample_rate: float, center_freq: float,
                       tracker: SyncTracker, channels: list[int] | None = None,
-                      json_output: bool = False, sf: int = 7) -> None:
+                      json_output: bool = False, sf: int = 7,
+                      ota_version: int = DEFAULT_OTA_VERSION) -> None:
     """Scan IQ data for ELRS SYNC packets across FHSS channels.
 
     For each target channel:
@@ -751,7 +759,8 @@ def scan_iq_for_syncs(iq: "np.ndarray", sample_rate: float, center_freq: float,
                 uid4 = info["uid4"]
                 uid5 = info["uid5"]
                 is_full = len(raw) == OTA8_PACKET_SIZE
-                test_init = ((uid4 << 8) | uid5) ^ (OTA_VERSION_ID << 8)
+                test_init = v3_uid_crc_init(
+                    bytes([0, 0, 0, 0, uid4, uid5]), ota_version)
                 if validate_crc(raw, is_full, test_init, 0, PACKET_TYPE_SYNC):
                     info["crc_validated"] = True
                     result = tracker.process_sync(info)
@@ -783,7 +792,8 @@ def _emit_sync(info: dict, match_result: dict | None, json_output: bool) -> None
 # Input: live SDR capture (--sdr)
 # ---------------------------------------------------------------------------
 def run_sdr_capture(tracker: SyncTracker, args: argparse.Namespace,
-                    json_output: bool) -> None:
+                    json_output: bool,
+                    ota_version: int = DEFAULT_OTA_VERSION) -> None:
     """Live SDR capture via SoapySDR, hopping across FHSS channels."""
     try:
         from sdr_common import SDRDevice, add_sdr_args
@@ -848,7 +858,8 @@ def run_sdr_capture(tracker: SyncTracker, args: argparse.Namespace,
                         uid4 = info["uid4"]
                         uid5 = info["uid5"]
                         is_full = len(raw) == OTA8_PACKET_SIZE
-                        test_init = ((uid4 << 8) | uid5) ^ (OTA_VERSION_ID << 8)
+                        test_init = v3_uid_crc_init(
+                            bytes([0, 0, 0, 0, uid4, uid5]), ota_version)
                         if validate_crc(raw, is_full, test_init, 0, PACKET_TYPE_SYNC):
                             info["crc_validated"] = True
                             result = tracker.process_sync(info)
@@ -865,17 +876,19 @@ def run_sdr_capture(tracker: SyncTracker, args: argparse.Namespace,
 # ---------------------------------------------------------------------------
 # Self-test with simulated frames
 # ---------------------------------------------------------------------------
-def run_selftest(tracker: SyncTracker, json_output: bool) -> None:
+def run_selftest(tracker: SyncTracker, json_output: bool,
+                 ota_version: int = DEFAULT_OTA_VERSION) -> None:
     """Generate synthetic SYNC frames and verify the pipeline end-to-end."""
     from elrs_core.ota import build_sync
 
     test_phrases = ["iloveflying", "default", "raceday", "expresslrs"]
-    log(f"Self-test: generating SYNC frames for {len(test_phrases)} phrases")
+    log(f"Self-test: generating SYNC frames for {len(test_phrases)} phrases "
+        f"(OTA version {ota_version})")
 
     for phrase in test_phrases:
         raw_input = f'-DMY_BINDING_PHRASE="{phrase}"'
         uid = hashlib.md5(raw_input.encode()).digest()[:6]
-        crc_init = ota_uid_crc_init(uid)
+        crc_init = v3_uid_crc_init(uid, ota_version)
 
         for rate_enum in (4, 5):
             sync_raw = build_sync(
@@ -898,7 +911,8 @@ def run_selftest(tracker: SyncTracker, json_output: bool) -> None:
 
             # Validate CRC with derived init
             is_full = len(sync_raw) == OTA8_PACKET_SIZE
-            test_init = ((info["uid4"] << 8) | info["uid5"]) ^ (OTA_VERSION_ID << 8)
+            test_init = v3_uid_crc_init(
+                bytes([0, 0, 0, 0, info["uid4"], info["uid5"]]), ota_version)
             if not validate_crc(sync_raw, is_full, test_init, 0, PACKET_TYPE_SYNC):
                 log_err(f"  FAIL: CRC mismatch for phrase={phrase}")
                 continue
@@ -974,6 +988,14 @@ For pre-demodulated frames (from GNU Radio, etc.), use --stdin-raw.
     sdr_group.add_argument("--sdr-channel", type=int, default=0,
                            help="SDR channel index (default: 0)")
 
+    proto_group = parser.add_argument_group("Protocol options")
+    proto_group.add_argument(
+        "--ota-version", type=int, default=DEFAULT_OTA_VERSION,
+        choices=[3, 4],
+        help=f"ELRS OTA version: 3 for Betaflight 4.4.2, 4 for ELRS master "
+             f"(default: {DEFAULT_OTA_VERSION})",
+    )
+
     scan_group = parser.add_argument_group("Scan options")
     scan_group.add_argument(
         "--channels", metavar="LIST",
@@ -1007,6 +1029,10 @@ For pre-demodulated frames (from GNU Radio, etc.), use --stdin-raw.
     )
 
     args = parser.parse_args()
+    ota_version = args.ota_version
+
+    log(f"OTA version: {ota_version} "
+        f"({'Betaflight 4.4.2 / ELRS v3' if ota_version == 3 else 'ELRS master / v4'})")
 
     # Auto-detect rainbow table
     rainbow_path = args.rainbow
@@ -1028,7 +1054,8 @@ For pre-demodulated frames (from GNU Radio, etc.), use --stdin-raw.
     else:
         log("No rainbow table loaded (use --rainbow to specify)")
 
-    tracker = SyncTracker(rainbow=rainbow, one_shot=args.one_shot)
+    tracker = SyncTracker(rainbow=rainbow, one_shot=args.one_shot,
+                          ota_version=ota_version)
 
     # Handle graceful shutdown
     def handle_sigint(sig, frame):
@@ -1067,16 +1094,17 @@ For pre-demodulated frames (from GNU Radio, etc.), use --stdin-raw.
                           args.iq_format)
         scan_iq_for_syncs(iq, args.sample_rate, args.center_freq,
                           tracker, channels=channels,
-                          json_output=args.json, sf=args.sf)
+                          json_output=args.json, sf=args.sf,
+                          ota_version=ota_version)
 
     elif args.sdr:
         if not HAS_NUMPY:
             log_err("NumPy required for SDR capture. Install: pip install numpy")
             sys.exit(1)
-        run_sdr_capture(tracker, args, args.json)
+        run_sdr_capture(tracker, args, args.json, ota_version=ota_version)
 
     elif args.self_test:
-        run_selftest(tracker, args.json)
+        run_selftest(tracker, args.json, ota_version=ota_version)
 
     else:
         log("No input source specified. Use --stdin-raw, --iq-file, --sdr, or --self-test.")
