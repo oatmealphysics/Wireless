@@ -1897,3 +1897,7 @@ validated long-interleaver inverse. For a cleaner USB/IQ correlation, begin
 USB logging before SDR initialization or extend it through the full receive
 window. No SPI access is authorized while the owner's no-opening direction
 stands.
+
+Handoff status: research/tool commit `ba0aa03` was pushed to `origin/main`.
+This append-only status correction is being committed and pushed separately;
+private IQ, USB logs, and UID remain ignored and unpublished.
