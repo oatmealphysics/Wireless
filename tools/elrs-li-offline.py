@@ -8,8 +8,10 @@ IQ is never modified. For the two published captures, for example::
       captures/*full-phy*.jsonl --jsonl-out decoded.jsonl
 
 The default JSONL omits raw packet bytes and UID. ``--include-bytes`` is an
-explicit opt-in; use it only when the output may be shared. A decoded frame
-is reported as verified only after the source-matched Betaflight v3 CRC check.
+explicit opt-in for private analysis; do not share that output unless its
+pairing-sensitive contents have been reviewed and deliberately approved. A
+decoded frame is reported as verified only after the source-matched Betaflight
+v3 CRC check.
 The SYNC initializer is self-derived; RC verification transfers its UID suffix
 from *different* SYNC frames. Neither proves a full six-byte UID or live
 acceptance of a crafted packet.
@@ -182,6 +184,11 @@ def analyze(rows: list[dict], uid: bytes | None = None,
                 verdict = check_frame(packet, uid=verifier_uid)
                 if verdict["crc"] != "pass":
                     continue
+                # A SYNC CRC authenticates only the UID-derived CRC suffix.
+                # When a full UID was supplied independently, require the
+                # source-defined 18-bit identity/model fragment as well.
+                if uid is not None and not verdict.get("uid_18bit_match", False):
+                    continue
                 if consensus is not None and (packet[5], packet[6]) != consensus:
                     continue
                 mode = "self_derived_sync" if uid is None else basis
@@ -217,6 +224,7 @@ def analyze(rows: list[dict], uid: bytes | None = None,
                "unresolved": counts["unresolved"],
                "types": {kind: counts[kind] for kind in ("RC", "MSP", "SYNC", "TLM")},
                "sync_suffix_consistent": len(suffixes) <= 1,
+               "provided_uid_sync_match": (uid is not None and counts["SYNC"] > 0),
                "switch_mode": active_mode,
                "crc_basis_for_non_sync": basis}
     return results, summary
@@ -231,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="needed for RC if no SYNC frame is present; wide is not supported")
     parser.add_argument("--jsonl-out", type=Path, help="new output path; never overwritten")
     parser.add_argument("--include-bytes", action="store_true",
-                        help="include raw packet bytes in output (may reveal pairing data)")
+                        help="include pairing-sensitive raw packet bytes for private analysis")
     args = parser.parse_args(argv)
     try:
         uid = read_uid(args.uid_file) if args.uid_file else None

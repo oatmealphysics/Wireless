@@ -8,6 +8,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -70,6 +71,26 @@ class LongInterleaverTests(unittest.TestCase):
             self.tool.symbol_bits([128] * 21)
         with self.assertRaisesRegex(ValueError, "need 21"):
             self.tool.symbol_bits([0] * 20)
+
+    def test_provided_uid_requires_sync_identity_fragment(self):
+        uid = bytes.fromhex("12 34 56 78 9a bc")  # synthetic fixture
+        flags = (2 << 4) | (3 << 1) | 1
+        body = bytes([41, 9, flags, uid[3], uid[4], uid[5]])
+        initial = self.tool.CHECKER["uid_crc_init"](uid)
+        crc = self.tool.CHECKER["crc14"](bytes([2]) + body, initial)
+        packet = bytes([2 | ((crc >> 8) << 2)]) + body + bytes([crc & 0xff])
+        rows = [{"source": "synthetic.jsonl", "line": 1,
+                 "preamble_start_seconds": 0.0, "bins": [0] * 21}]
+
+        with patch.object(self.tool, "decode_symbols", return_value=(packet, 0)):
+            valid, summary = self.tool.analyze(rows, uid=uid)
+            self.assertEqual(valid[0]["status"], "crc_valid")
+            self.assertTrue(summary["provided_uid_sync_match"])
+
+            wrong_uid3 = uid[:3] + bytes([uid[3] ^ 1]) + uid[4:]
+            rejected, summary = self.tool.analyze(rows, uid=wrong_uid3)
+            self.assertEqual(rejected[0]["status"], "unresolved")
+            self.assertFalse(summary["provided_uid_sync_match"])
 
 
 if __name__ == "__main__":

@@ -2036,3 +2036,41 @@ separate handoff. Next: compare held-out motion at a tighter synchronized
 clock if the owner wants exact per-frame association, and try constrained
 ranked-bin recovery for the eight unresolved frames. Neither changes the
 separate authorization gate for active RF testing.
+
+---
+
+## 36. Live passive bench review and independent-UID fix (Codex, 2026-10-16)
+
+Starting revision `2e49bf2`; `git pull --ff-only` reported current. The owner
+released COM4 to this session and permitted future SDR transmission. Work
+remained read-only/non-transmitting because the newly pulled bench plan still
+has an open multi-channel FHSS gate. No firmware was flashed or read out, no
+setting/reset/binding/motor command was issued, the TinyHawk was not opened,
+and no RF was transmitted.
+
+Windows enumerated the E8 on COM4 (`8888:2001`), TinyHawk on COM5
+(`0483:5740`), and B205mini serial `33E8308`. The known fixed E8 Read
+Configuration request returned the expected 17-byte response, confirmed the
+existing 150 Hz setting, and yielded the private UID without changing a
+setting. An eight-second B205mini RX2 capture at 2441 MHz, 4 MS/s, 2 MHz
+bandwidth, and 35 dB gain contained zero PHY candidates. This is a valid
+negative control: the E8 was in its CDC serial/update personality, where the
+normal RF application is not running. The private capture and response remain
+ignored under `work/`.
+
+Fixed `tools/elrs-li-offline.py` so a supplied full UID must pass both CRC and
+the Betaflight 4.4.2 18-bit UID/model-fragment check before a SYNC frame is
+accepted. A synthetic test flips only UID byte 3 and verifies rejection. The
+fresh private controller UID now independently validates all 16 accepted SYNC
+frames from the two published capture sets; totals remain 54/62 CRC-valid (16
+SYNC, 38 RC, eight unresolved). Across both sessions, all 14 consecutive SYNC
+transitions match the 150 Hz slot count modulo 256 against nonce progression;
+maximum nearest-slot timing residual was about 522 microseconds.
+
+Also corrected `--include-bytes` privacy wording and added unit-test discovery
+to CI. Detailed evidence and gate status are in
+`research/elrs-bench-gate-review-2026-10-16.md`. The full suite passed (100
+tests), project validation passed across 177 tracked files, and
+`git diff --check` passed. Next: boot the E8 normally and take a short
+receive-only wideband capture to close G4; only then restate a separately
+bounded RF test plan for owner approval.
