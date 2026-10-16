@@ -1901,3 +1901,43 @@ stands.
 Handoff status: research/tool commit `ba0aa03` was pushed to `origin/main`.
 This append-only status correction is being committed and pushed separately;
 private IQ, USB logs, and UID remain ignored and unpublished.
+
+---
+
+## 33. Python restored; new paired IQ scanned offline (Codex, 2026-10-16)
+
+Starting revision `8d82678`; `git pull --ff-only` reported current and the
+worktree was clean. The owner authorized Windows Python setup, pending tests,
+and analysis of the new private paired SDR recording. No device port or SDR
+was opened during this turn. The no-flash rule for both devices and the
+owner's no-opening decision for the TinyHawk remained in force.
+
+Downloaded the official Python.org 3.12.10 x64 installer under ignored
+`work/runtime-bootstrap/`. Verified SHA-256
+`67B5635E80EA51072B87941312D00EC8927C4DB9BA18938F7AD2D27B328B95FB`
+and a valid Windows Authenticode signature from the Python Software Foundation
+*before* execution. Installed a per-user interpreter under
+`C:\Users\Board\Documents\Codex\Python312` without changing system PATH,
+then created an independent ignored `work/python312-venv/`. Installed pinned
+NumPy 2.5.4, SciPy 1.18.1, and pyserial 3.5 wheels. The prior broken venv was
+not overwritten. The six previously pending synthetic USB-observer tests and
+the entire offline suite passed (**93 tests**).
+
+The read-only intake tool rechecked the private October 16 IQ hash, size,
+sample alignment, duration, and frequency coverage. The full 15-second
+source-matched channel scan found **28 PHY candidates** in seven four-packet
+visits, mean spacing 2.133147 seconds; 28/28 passed 12/12 preamble and both
+sync-chirp checks and had 21 symbol positions. Two visits fall inside the
+approximate USB/IQ overlap. These are still waveform/symbol observations:
+**no SX1280 long-interleaved packet bytes, CRCs, or packet-to-channel mapping
+were validated**. All private outputs remain under ignored `work/`.
+Detailed provenance, hashes, aggregate results, and limitations are in
+`research/tinyhawk-paired-phy-analysis-2026-10-16.md`.
+
+Changed tracked files: the new research note and this append-only log.
+Validation: Python/package versions, 93 passing tests, capture intake hash,
+PHY scan aggregates, and `git diff --check`. Commit/push status is recorded
+in the subsequent handoff line. Next step: develop or locate an independently
+validated SX1280 `0x07` inverse; use the private candidate set and held-out
+real frames only after that gate. No additional hardware, transmission,
+flashing, binding, or physical probe is authorized by this offline result.
