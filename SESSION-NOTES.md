@@ -1780,3 +1780,43 @@ This is a host-software change, not permission to flash either drone device
 or transmit RF. Independently, continue offline Betaflight 4.4.2 failsafe
 and MSP-path validation; classify source reachability separately from a
 confirmed live exploit.
+
+---
+
+## 29. Correction: UHD was installed and passive recording already existed (Codex, 2026-10-16)
+
+Starting revision: `cf668ca`; `git pull --ff-only` was current. The owner
+corrected Codex's assertion in §§27-28 that this Windows session lacked SDR
+receive software. Those sections inferred absence from commands not resolving
+on `PATH`; that inference was wrong. This entry supersedes only that UHD
+availability diagnosis, not the private capture's analysis or the no-flash
+rules.
+
+Read-only checks found `C:\Program Files\UHD\bin\uhd_find_devices.exe`,
+`C:\Program Files\UHD\bin\uhd_usrp_probe.exe`, and
+`C:\Program Files\UHD\lib\uhd\examples\rx_samples_to_file.exe`.
+`uhd_config_info.exe --version` reports **UHD 4.11.0.0-release**. Windows
+enumeration already showed the B205mini with Ettus WinUSB 4.9.0.0. The
+existing local, ignored recording
+`work/captures/e8_tinyhawk_pair_on_2026-10-15_2441MHz_4Msps_rx2_sc16.iq`
+is 320,000,000 bytes, and
+`research/e8-tinyhawk-passive-iq-2026-10-15.md` records its 20-second,
+4 MS/s, RX2, receive-only acquisition and UHD version. Its private metadata
+records that the UHD example made the capture. The source-to-capture PHY
+analysis in that research note remains qualified; packet bytes and CRC have
+not yet been decoded.
+
+Therefore no installation or driver replacement is needed for another
+Windows receive-only capture: use the existing UHD executables by absolute
+path (or arrange `PATH`). A fresh recording may improve evidence, but it is
+not blocked by missing software, and the current Gate 2 blocker remains the
+validated SX1280 long-interleaved packet-byte decoder. No new capture,
+device-port access, RF transmission, firmware operation, or private-data
+publication occurred during this correction.
+
+Changed file: this append-only log. Validation: compared installed UHD
+executables/version with the previously tracked passive-IQ provenance and
+confirmed `git diff --check`. Commit/push status: committed and pushed to
+`origin/main` at handoff. Next step: use the existing private capture for
+offline decoder work; take a new bounded receive-only capture only if it
+answers a specific unresolved measurement question.
