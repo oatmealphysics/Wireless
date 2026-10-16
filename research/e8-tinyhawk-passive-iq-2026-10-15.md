@@ -93,3 +93,49 @@ long-interleaver reference or hardware-generated known-plaintext vectors,
 then CRC validation across several captured frames. An owner-assisted pair-off
 control capture would separately strengthen RF attribution without accessing
 the E8 serial interface.
+
+## Decoder validation gate (2026-10-16)
+
+The newly merged `tools/elrs-sync-capture.py` prototype was reviewed after
+PR #28. Its IQ path packs chirp-bin bits directly and omits the SX1280 long-
+interleaving, FEC, and scrambling inverse. Its synthetic self-test begins
+with constructed packet bytes, not IQ, and its frame parser uses v4 rules
+instead of the live receiver's Betaflight 4.4.2 v3 rules. The command-line
+entry point is therefore quarantined and exits before opening a capture or
+radio; it must not be cited as a successful SYNC decode. The bounded PHY
+scanner and the separate, source-matched v3 checker remain available for
+their respective stages.
+
+A source audit of the pinned Betaflight 4.4.2 build found no stock read-only
+USB/MSP/CLI/Blackbox path to the SX1280's received eight-byte FIFO. Those
+interfaces expose decoded RC channels and link statistics, not the raw OTA
+bytes. A configured UID read is not an IQ-to-byte known-answer vector.
+Thus the present IQ captures alone cannot independently verify a long-
+interleaver implementation. A future validation fixture needs a short IQ
+window paired with the exact eight bytes independently read from a compatible
+SX1280 receiver (for example by an external passive SPI tap), with both kept
+under ignored `work/`. Compare recovered bytes exactly on multiple held-out
+frames before checking v3 CRC and FHSS; do not use CRC or rainbow lookup as
+a substitute for that byte-level oracle. No new hardware access or RF
+transmission was performed for this audit.
+
+### Passive FHSS timing cross-check
+
+`tools/elrs-v3-hop-timing-check.py` now makes a separate, byte-free comparison.
+The six-byte UID came from the earlier wired E8 configuration read and was
+used only in memory; it was not inferred from these IQ symbols. The tool fit
+the packet clock from the nine observed fixed channel-41 visits alone
+(34 PHY candidates, with two missing from one visit), yielding 150.013247 Hz.
+It then checked held-out candidate preamble times on channels 40 and 42
+against all three possible v3 sequence phases. With a 650 microsecond timing
+tolerance, the matching phase covered **40/40** channel-40 and **36/36**
+channel-42 predicted packets; the other two phases covered **0/72** each.
+As a simple negative control, 100 distinct synthetic wrong UIDs scored at
+most 28 matches and a median of zero under the same best-phase scoring.
+
+This agreement is strong independent evidence that the received chirps follow
+the source-derived hopping schedule for the wired-read UID. It is not a
+decoded SYNC packet, CRC result, proof of the exact transmitter's physical
+identity, or proof of receiver acceptance. The three private JSONL candidate
+files and raw capture remain under ignored `work/`; the tracked tool emits
+only aggregate counts and no UID or packet bytes.

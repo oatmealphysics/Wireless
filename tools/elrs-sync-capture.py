@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-"""Passive ELRS SYNC packet capture and UID extraction.
+"""ARCHIVED PROTOTYPE — unsupported; the command-line entry point fails closed.
+
+This historical implementation cannot recover packet bytes from SX1280 4/8
+long-interleaved IQ. Its raw-symbol bit packing, v4 frame assumptions, and
+synthetic byte-only self-test do not validate the live Betaflight 4.4.2 link.
+It is retained for review, not operation. Use ``elrs-sync-channel-record.py``
+for receive-only recording, ``elrs-phy-scan.py`` for offline PHY candidates,
+and ``elrs-v3-frame-check.py`` for independently pre-decoded v3 bytes.
+
+The original prototype description follows for historical context only:
+
+Passive ELRS SYNC packet capture and UID extraction.
 
 Captures ELRS SYNC packets from 2.4 GHz LoRa traffic and extracts the
 plaintext UID[4:6] bytes transmitted in every SYNC frame. Matches extracted
@@ -904,7 +915,7 @@ def run_selftest(tracker: SyncTracker, json_output: bool) -> None:
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
-def main() -> None:
+def _legacy_main() -> None:
     parser = argparse.ArgumentParser(
         description="Passive ELRS SYNC packet capture and UID extraction",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1085,6 +1096,16 @@ For pre-demodulated frames (from GNU Radio, etc.), use --stdin-raw.
         print(json.dumps(tracker.match_result, default=str), flush=True)
 
     sys.exit(0 if tracker.matched or not args.one_shot else 1)
+
+
+def main() -> None:
+    """Refuse all legacy modes until an independent LI known-answer test exists."""
+    log_err("Unsupported SYNC decoder prototype: IQ-to-bytes and v3 validation "
+            "are unverified. No capture was opened or radio accessed.")
+    log_err("Use elrs-sync-channel-record.py for passive recording, "
+            "elrs-phy-scan.py for PHY candidates, or elrs-v3-frame-check.py "
+            "for independently pre-decoded bytes.")
+    raise SystemExit(2)
 
 
 if __name__ == "__main__":
