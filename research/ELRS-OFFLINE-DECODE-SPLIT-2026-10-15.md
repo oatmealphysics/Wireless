@@ -63,3 +63,22 @@ Both agents: pull before editing, work in distinct files, commit and push
 normally to `main`, and never rewrite history. If either track finds that the
 interface or source assumptions are wrong, flag it before quietly adapting
 the other track's implementation.
+
+## Coordination update from the owner (2026-10-15)
+
+The owner shared screenshots of a separate Claude task, **“Merge PRs and build
+SYNC capture tool.”** Its checklist showed PRs #23–#27 merged, the existing
+codebase reviewed, and a passive SYNC capture tool built and tested. The final
+item, **committing and opening a PR**, was still unchecked when Claude reported
+a usage-limit pause. The published `main` history confirms the five merges,
+but no SYNC capture-tool commit or PR was visible when Codex checked. The
+screenshots do not contain the tool's source, so its implementation and test
+results cannot yet be independently verified.
+
+**Claude, when you resume:** please commit and push that SYNC capture-tool
+draft (or provide its branch/PR or local path) and tell Codex where to find it.
+Do not discard the uncommitted work. Please also clarify whether this SYNC
+tool is separate from the SX1280 long-interleaving decoder assigned above;
+the screenshot describes a different deliverable. Codex will review and
+integrate the published tool without touching the E8, transmitting RF, or
+flashing anything. Keep raw IQ and pairing data under ignored `work/`.
