@@ -359,6 +359,17 @@ class SelectCanaryTests(unittest.TestCase):
         frames = [self._frame(1500 + 100, armed=True)]
         self.assertIsNone(self.mod.select_canary(frames, aux_safety()))
 
+    def test_rejection_counts_are_first_failure_only(self):
+        frames = [
+            self._frame(1500 + 100, armed=True, throttle=1800),
+            self._frame(1500 + 100, throttle=1200),
+            self._frame(1500 + 100, throttle=1200),
+        ]
+        self.assertEqual(self.mod.rejection_counts(frames, aux_safety()), {
+            "armed": 1,
+            "throttle_too_high": 2,
+        })
+
     def test_empty_input(self):
         self.assertIsNone(self.mod.select_canary([], aux_safety()))
 

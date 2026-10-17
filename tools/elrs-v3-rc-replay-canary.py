@@ -375,6 +375,19 @@ def select_canary(frames: list[dict], aux_safety: dict,
     return safe_frames[0]
 
 
+def rejection_counts(frames: list[dict], aux_safety: dict,
+                     throttle_max: int | None = None) -> dict[str, int]:
+    """Return privacy-safe first-failure counts for rejected candidates."""
+    counts: dict[str, int] = {}
+    for frame in frames:
+        ok, reason = safety_check(frame["rc"], aux_safety, throttle_max)
+        if ok:
+            continue
+        label = reason.split(" (", 1)[0]
+        counts[label] = counts.get(label, 0) + 1
+    return dict(sorted(counts.items()))
+
+
 def verify_crc(packet: bytes, uid: bytes, switch_mode: str = "hybrid") -> bool:
     """Verify CRC14 of an 8-byte v3 RC frame using the shared implementation."""
     if len(packet) != 8 or len(uid) != 6:
@@ -721,11 +734,14 @@ def main(argv: list[str] | None = None) -> int:
 
         selected = select_canary(verified, aux_safety, throttle_max)
         if selected is None:
+            counts = rejection_counts(verified, aux_safety, throttle_max)
             print("No RC frames pass all safety checks (fail closed):\n"
                   "  - All frames are either armed, throttle too high, "
                   "pitch/yaw off center, roll outside the bounded window, "
                   "or use a configured rotating AUX channel",
                   file=sys.stderr)
+            for reason, count in counts.items():
+                print(f"  - {reason}: {count}", file=sys.stderr)
             return 1
 
         packet = bytes.fromhex(selected["packet_hex"])

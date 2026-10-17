@@ -34,7 +34,63 @@ def frames():
             for i, package in enumerate((1, 2, 0))]
 
 
+def rc_aux_safety():
+    return {
+        "schema": "betaflight-aux-safety-v1",
+        "board_identifier": "S411",
+        "craft_name": "TH III Plus",
+        "mode_ranges": [{
+            "permanent_id": 0, "aux_channel_index": 0,
+            "start_step": 32, "end_step": 48,
+            "mode_logic": 0, "linked_to": 0,
+        }],
+        "adjustment_ranges": [],
+    }
+
+
+def rc_canary():
+    rc = clock.RC_CANARY
+    packed = 612 | (512 << 10) | (512 << 20)
+    packet = bytearray(bytes((0,)) + packed.to_bytes(5, "little")
+                       + bytes((0, 0)))
+    checksum = rc["crc14"](bytes((0,)) + packet[1:7],
+                           rc["uid_crc_init"](UID))
+    packet[0] = (checksum >> 8) << 2
+    packet[7] = checksum & 0xFF
+    packet = bytes(packet)
+    frame = {
+        "line": 1,
+        "source": "synthetic",
+        "preamble_start_seconds": 0.5,
+        "packet_hex": packet.hex(),
+        "rc": rc["decode_hybrid_rc"](packet),
+    }
+    interleaver = rc["verify_interleaver_round_trip"](packet)
+    return rc["build_plan"](UID, frame, interleaver, rc_aux_safety())
+
+
 class FreshSyncClockTests(unittest.TestCase):
+    def test_rc_canary_normalizes_to_one_fresh_slot(self):
+        frames_out, metadata = clock.validate_canary_input(
+            rc_canary(), UID, rc_aux_safety())
+        self.assertEqual(len(frames_out), 1)
+        self.assertEqual(metadata["kind"], "hybrid_rc_replay")
+        anchor = record(0, 1 / 150)
+        plan = clock.build_fresh_plan(
+            UID, anchor, frames_out, cursor_seconds=1.020,
+            sample_rate_hz=4_062_500, packet_period_seconds=1 / 150,
+            lead_seconds=0.100, canary_metadata=metadata,
+        )
+        self.assertEqual(len(plan["slots"]), 1)
+        self.assertNotIn("package_index", plan["slots"][0])
+        self.assertEqual(plan["canary"]["kind"], "hybrid_rc_replay")
+        self.assertNotIn("command", plan)
+        self.assertFalse(plan["transmit_enabled"])
+
+    def test_rc_canary_requires_aux_evidence(self):
+        with self.assertRaisesRegex(ValueError, "AUX"):
+            clock.validate_canary_input(rc_canary(), UID, None)
+
     def test_receive_anchor_manifest_is_independently_validated(self):
         manifest = {
             "schema": "uhd-elrs-receive-anchor-v1",
@@ -78,6 +134,10 @@ class FreshSyncClockTests(unittest.TestCase):
         )
         self.assertFalse(plan["transmit_enabled"])
         self.assertTrue(plan["fresh_sync_validated"])
+        self.assertEqual(plan["command"], {
+            "name": "MSP_API_VERSION", "id": 1,
+            "read_only": True, "fragment_count": 3,
+        })
         self.assertEqual([row["package_index"] for row in plan["slots"]],
                          [1, 2, 0])
         self.assertTrue(all(row["capture_preamble_seconds"] >= 1.120

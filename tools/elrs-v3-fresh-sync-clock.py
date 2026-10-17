@@ -4,8 +4,8 @@
 This is the receive-clock gate between the offline canary scheduler and any
 future UHD transport.  It fits the actual packet period from CRC-valid SYNC
 transitions, rejects stale observations, reserves processing lead time, and
-maps the three read-only canary fragments to capture sample indices and,
-optionally, UHD device time.
+maps either the three read-only MSP fragments or one fail-closed RC replay
+frame to capture sample indices and, optionally, UHD device time.
 
 There is deliberately no radio or transmit backend.  Output is marked
 ``transmit_enabled: false`` and is useful only as a private timing contract for
@@ -25,6 +25,7 @@ import sys
 
 TOOLS = Path(__file__).resolve().parent
 SCHEDULER = runpy.run_path(str(TOOLS / "elrs-v3-canary-schedule.py"))
+RC_CANARY = runpy.run_path(str(TOOLS / "elrs-v3-rc-replay-canary.py"))
 NOMINAL_RATE_HZ = 150.0
 HOP_INTERVAL = SCHEDULER["HOP_INTERVAL"]
 FIRST_HZ = SCHEDULER["FIRST_HZ"]
@@ -125,16 +126,49 @@ def read_receive_anchor(path: Path) -> dict:
     }
 
 
+def validate_canary_input(plan: object, uid: bytes,
+                          aux_safety: dict | None = None) -> tuple[list[dict], dict]:
+    """Normalize one of the two reviewed, transmit-disabled canary schemas."""
+    if not isinstance(plan, dict):
+        raise ValueError("canary plan must be an object")
+    schema = plan.get("schema")
+    if schema == "elrs-v3-msp-api-version-canary-v1":
+        frames = SCHEDULER["validate_canary"](plan)
+        return frames, {
+            "kind": "msp_api_version",
+            "name": "MSP_API_VERSION",
+            "read_only": True,
+            "frame_count": 3,
+        }
+    if schema == "elrs-v3-rc-replay-canary-v1":
+        if aux_safety is None:
+            raise ValueError("RC replay canary requires AUX safety evidence")
+        frame = RC_CANARY["validate_rc_canary"](plan, uid, aux_safety)
+        return [{
+            "sequence": 0,
+            "packet_hex": frame["packet_hex"],
+            "symbols": frame["symbols"],
+        }], {
+            "kind": "hybrid_rc_replay",
+            "name": "bounded_roll_observation",
+            "read_only": False,
+            "frame_count": 1,
+            "safety_revalidated": True,
+        }
+    raise ValueError("unsupported canary schema")
+
+
 def build_fresh_plan(uid: bytes, anchor: dict, frames: list[dict], *,
                      cursor_seconds: float, sample_rate_hz: float,
                      packet_period_seconds: float, lead_seconds: float = 0.100,
                      max_age_seconds: float = 0.500,
                      max_horizon_seconds: float = 1.200,
-                     capture_start_uhd_seconds: float | None = None) -> dict:
-    """Schedule three future slots, rejecting stale or overlong plans."""
+                     capture_start_uhd_seconds: float | None = None,
+                     canary_metadata: dict | None = None) -> dict:
+    """Schedule reviewed canary frames, rejecting stale or overlong plans."""
     numeric = (cursor_seconds, sample_rate_hz, packet_period_seconds,
                lead_seconds, max_age_seconds, max_horizon_seconds)
-    if (len(uid) != 6 or len(frames) != 3
+    if (len(uid) != 6 or not 1 <= len(frames) <= 3
             or any(isinstance(value, bool) or not isinstance(value, (int, float))
                    or not math.isfinite(float(value)) for value in numeric)
             or cursor_seconds < 0 or sample_rate_hz <= 0
@@ -172,7 +206,6 @@ def build_fresh_plan(uid: bytes, anchor: dict, frames: list[dict], *,
         channel = sequence[fhss_index]
         slot = {
             "fragment_sequence": frame["sequence"],
-            "package_index": frame["package_index"],
             "delta_slots": delta,
             "capture_preamble_seconds": stamp,
             "capture_sample_index": round(stamp * sample_rate_hz),
@@ -183,10 +216,12 @@ def build_fresh_plan(uid: bytes, anchor: dict, frames: list[dict], *,
             "packet_hex": frame["packet_hex"],
             "symbols": frame["symbols"],
         }
+        if "package_index" in frame:
+            slot["package_index"] = frame["package_index"]
         if capture_start_uhd_seconds is not None:
             slot["uhd_preamble_time_seconds"] = capture_start_uhd_seconds + stamp
         slots.append(slot)
-    return {
+    plan = {
         "schema": "elrs-v3-fresh-sync-clock-v1",
         "transmit_enabled": False,
         "fresh_sync_validated": True,
@@ -207,8 +242,12 @@ def build_fresh_plan(uid: bytes, anchor: dict, frames: list[dict], *,
             "switch_mode": fields["switch_mode"],
             "new_tlm_ratio": fields["new_tlm_ratio"],
         },
-        "command": {"name": "MSP_API_VERSION", "id": 1,
-                    "read_only": True, "fragment_count": 3},
+        "canary": canary_metadata or {
+            "kind": "msp_api_version",
+            "name": "MSP_API_VERSION",
+            "read_only": True,
+            "frame_count": len(frames),
+        },
         "slots": slots,
         "transport_requirements": [
             "use a newly decoded CRC-valid SYNC from the same receive stream",
@@ -217,6 +256,16 @@ def build_fresh_plan(uid: bytes, anchor: dict, frames: list[dict], *,
             "validate the SDR RF path independently before any live-UID frame",
         ],
     }
+    # Preserve the original v1 field for existing MSP-plan consumers.  RC
+    # replay plans use the generalized ``canary`` descriptor only.
+    if plan["canary"]["kind"] == "msp_api_version":
+        plan["command"] = {
+            "name": "MSP_API_VERSION",
+            "id": 1,
+            "read_only": True,
+            "fragment_count": len(frames),
+        }
+    return plan
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -225,6 +274,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--uid-file", required=True, type=Path)
     parser.add_argument("--sync-jsonl", required=True, type=Path)
     parser.add_argument("--canary-plan", required=True, type=Path)
+    parser.add_argument("--aux-safety-json", type=Path,
+                        help="private TinyHawk AUX evidence required for RC plans")
     parser.add_argument("--private-clock-out", required=True, type=Path)
     parser.add_argument("--anchor-source")
     parser.add_argument("--cursor-seconds", type=float)
@@ -242,13 +293,24 @@ def main(argv: list[str] | None = None) -> int:
         uid_path = private(args.uid_file)
         sync_path = private(args.sync_jsonl)
         canary_path = private(args.canary_plan)
+        aux_path = (private(args.aux_safety_json)
+                    if args.aux_safety_json is not None else None)
         output_path = private(args.private_clock_out)
         uid = SCHEDULER["FHSS"]["frame_checker"].read_uid(uid_path)
         records = SCHEDULER["read_sync_records"](sync_path)
         clock = fit_packet_clock(records, args.nominal_rate_hz)
         anchor = choose_anchor(records, args.anchor_source)
         canary = json.loads(canary_path.read_text(encoding="utf-8"))
-        frames = SCHEDULER["validate_canary"](canary)
+        aux_safety = (RC_CANARY["read_aux_safety"](aux_path)
+                      if aux_path is not None else None)
+        frames, canary_metadata = validate_canary_input(
+            canary, uid, aux_safety)
+        if canary_metadata["kind"] == "hybrid_rc_replay":
+            sync_ok, sync_reason = RC_CANARY["validate_sync_for_rc_replay"](
+                anchor["fields"])
+            if not sync_ok:
+                raise ValueError(f"fresh SYNC is incompatible with RC replay: "
+                                 f"{sync_reason}")
         receive_anchor = None
         cursor_seconds = args.cursor_seconds
         sample_rate = args.sample_rate
@@ -283,6 +345,7 @@ def main(argv: list[str] | None = None) -> int:
             max_age_seconds=args.max_age_ms / 1000,
             max_horizon_seconds=args.max_horizon_ms / 1000,
             capture_start_uhd_seconds=capture_start,
+            canary_metadata=canary_metadata,
         )
         if receive_anchor is not None:
             plan["receive_anchor"] = receive_anchor
@@ -294,6 +357,7 @@ def main(argv: list[str] | None = None) -> int:
             "transmit_enabled": False,
             "fresh_sync_validated": True,
             "scheduled_fragments": len(plan["slots"]),
+            "canary_kind": canary_metadata["kind"],
             "fitted_rate_hz": round(clock["fitted_rate_hz"], 6),
             "sync_transitions_checked": clock["transitions_checked"],
             "anchor_age_ms": round(plan["clock"]["anchor_age_seconds"] * 1000, 3),

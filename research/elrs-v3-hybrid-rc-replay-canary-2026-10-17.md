@@ -2,7 +2,8 @@
 
 **Date:** 2026-10-17
 
-**Status:** Offline selector and validators complete; no RF transmission used
+**Status:** Offline selector, validators, and fresh-SYNC scheduling integration
+complete; no RF transmission used
 
 **Scope:** Betaflight 4.4.2 hybrid RC decode, fail-closed replay selection,
 live AUX-configuration evidence, CRC14, and long-interleaver verification
@@ -21,9 +22,11 @@ control values. A candidate must prove all of the following:
 - the rotating switch value is exactly represented; and
 - its destination AUX channel controls no configured mode or adjustment.
 
-The plan remains private, records `transmit_enabled: false`, and cannot be
-consumed directly by the existing three-fragment MSP scheduler. Scheduling
-integration is a separate change.
+The plan remains private and records `transmit_enabled: false`.
+`tools/elrs-v3-fresh-sync-clock.py` now validates either this one-frame RC
+schema or the existing three-fragment MSP schema and maps the accepted input
+to future capture-relative slots. It remains an offline timing contract and
+has no radio backend.
 
 ## Independent implementation reuse
 
@@ -82,17 +85,36 @@ deviation is preferred, followed by the earliest input line for deterministic
 selection. The roll signal is intended for a tightly coordinated read-only
 `MSP_RC` observer; a single 150 Hz frame may otherwise be too brief to see.
 
-## Fresh-SYNC contract
+## Fresh-SYNC scheduling integration
 
 `validate_sync_for_rc_replay()` requires:
 
 - `switch_mode == "hybrid"`; and
 - `new_tlm_ratio == 0`.
 
-The eventual scheduling layer must additionally obtain that state from a
-newly decoded SYNC accepted by `elrs-v3-fresh-sync-clock.py`. A historical
-SYNC or the capture-relative timestamp stored in the replay plan is not a
-live transmit clock.
+The scheduling layer obtains that state from the selected, CRC-valid SYNC
+accepted by `elrs-v3-fresh-sync-clock.py`. For RC plans it revalidates the
+private packet, UID-derived CRC, long-interleaver symbols, controls, and AUX
+evidence, then emits exactly one future slot. MSP plans still emit three
+fragments and retain the original v1 `command` field for compatibility. A
+historical SYNC or the capture-relative timestamp stored in either plan is
+not a live transmit clock.
+
+## Private bench result
+
+A bounded read-only MSP session on COM5 reverified Betaflight 4.4.2, board
+`S411`, and craft `TH III Plus`, then captured the mode and adjustment ranges
+needed by `betaflight-aux-safety-v1`. The snapshot remains ignored beneath
+`work/`; no setting or firmware state was changed.
+
+The two published ranked-symbol captures were then decoded again into a
+private byte-bearing JSONL. All 54 resolved frames passed CRC; 38 were RC and
+16 were SYNC. No RC frame qualified for replay: 22 had throttle 1507, and the
+remaining 16 were rejected as armed before later gates were considered.
+Betaflight 4.4.2 source confirms that these fields are the direct 10-bit OTA
+values plus 988, so this is a valid negative result rather than grounds to
+relax the gate. No private packet bytes, UID material, or AUX configuration
+were published.
 
 ## Private output schema
 

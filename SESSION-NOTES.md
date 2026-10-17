@@ -2345,3 +2345,43 @@ work are documented in
 Final combined validation: **188 tests passed**; project validation passed
 syntax, JSON, corpus hashes/provenance, rainbow data, CVE coverage, and local
 links across **189 tracked files**; `git diff --check` passed.
+
+---
+
+## 42. RC replay/fresh-SYNC integration and capture verdict (Codex, 2026-10-17)
+
+Merged PR #36 into `main` as `97d25fa`, then completed the integration left
+for this session. The fresh-SYNC clock now accepts either the original
+three-fragment read-only MSP canary or one independently revalidated hybrid-RC
+replay frame. RC input requires the private TinyHawk AUX-safety snapshot and a
+fresh SYNC proving hybrid switch mode with no telemetry. It produces exactly
+one future slot, remains capture-relative, has no radio backend, and records
+`transmit_enabled: false`. Existing MSP consumers retain the original v1
+`command` field; RC output uses the generalized `canary` descriptor.
+
+With propellers removed and exclusive COM5 access, the bounded read-only MSP
+observer reverified Betaflight 4.4.2, board `S411`, and craft `TH III Plus`,
+then captured mode and adjustment ranges beneath ignored `work/`. It made no
+setting, motor, bind, reset, bootloader, or firmware request. Both devices
+remain under the absolute no-opening/no-flashing rule.
+
+The two published ranked-symbol datasets were decoded again with private
+packet bytes enabled. The decoder resolved **54 CRC-valid frames**: **38 RC**
+and **16 SYNC**, with eight unresolved rows. The replay selector correctly
+refused all RC candidates. Its privacy-safe first-failure summary was
+**16 armed** and **22 throttle-too-high**; the latter all decoded to throttle
+1507. Betaflight 4.4.2 source independently confirms the analog unpacking rule
+(`988 + raw 10-bit value`), so the gate was not relaxed and no frame was
+invented. The selector now prints these aggregate rejection counts itself.
+UID-derived bytes, the live AUX snapshot, and regenerated private JSONL remain
+ignored under `work/`.
+
+No RF signal was transmitted and no target accepted a canary. The next safe
+bench input is a receive-only capture made while the real controller is
+visibly disarmed, throttle is low, pitch/yaw are centered, and roll is held
+50--300 microseconds off center. That capture can flow through the completed
+selector and fresh-SYNC clock without code changes.
+
+Final validation: **191 tests passed**; `tools/validate-project.py` passed
+syntax, JSON, corpus hashes/provenance, rainbow data, CVE coverage, and local
+links across **189 tracked files**; `git diff --check` passed.
