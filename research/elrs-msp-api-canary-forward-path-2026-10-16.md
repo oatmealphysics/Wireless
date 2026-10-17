@@ -149,3 +149,46 @@ not be used for this test.
    arming, motor, reset, bootloader, bind, or firmware command belongs in that
    first acceptance test. The absolute no-flashing rule for both devices
    remains unchanged.
+
+## Fresh-SYNC receive clock
+
+`tools/elrs-v3-fresh-sync-clock.py` closes the stale-capture gap in the
+capture-relative scheduler without adding a transmitter. It fits one packet
+period across independently timed captures, validates every adjacent decoded
+SYNC nonce/FHSS transition, requires an explicit anchor capture when inputs
+come from more than one file, and refuses anchors older than 500 ms by
+default. It reserves processing lead time and emits exact future capture
+sample indices, channels, and frequencies for the three already validated
+fragments. Output remains private and explicitly records
+`transmit_enabled: false`.
+
+The two existing private capture sets fit at **150.013248 packets/second**.
+All **14** available SYNC transitions passed, and a replay using a 50 ms-old
+anchor produced three future slots. This proves the clock/state arithmetic;
+it does not make that historical anchor live.
+
+`tools/uhd-elrs-sync-rx.c` is a small native receive-only helper for the
+B205mini. It contains no UHD transmit streamer or TX configuration call,
+limits captures to 0.05--5 seconds, refuses to overwrite files, aborts on an
+RX metadata error, and writes the first received sample's UHD hardware time
+to a separate manifest. The Python clock tool independently validates that
+manifest before accepting its sample rate, duration, and time origin.
+
+The helper compiled against UHD 4.11 on Windows and completed a 0.25-second
+hardware run at 4.0625 MS/s on the measured 2441.3788 MHz SYNC channel. It
+returned exactly **1,015,625** complex-float samples (8,125,000 bytes) and a
+valid first-sample timestamp. The normal PHY scanner found zero candidates in
+that bounded recording. At the time, the E8 was still believed to be in its
+USB serial/update personality, so this is a useful receive-transport and
+negative-control result, not evidence against the decoder or normal RF link.
+No serial port was opened and no RF signal was transmitted.
+
+The next live receive-clock test requires the owner to boot the E8 normally,
+then make one short timestamped receive-only recording while its ordinary RF
+application is active. A decoder attached to the same receive stream must
+surface a CRC-valid SYNC quickly enough for the 500 ms freshness gate. The
+current helper deliberately records first and decodes afterward; therefore it
+establishes the hardware timestamp contract but is not yet a real-time timed
+transmit backend. The first eventual observable acceptance test should use
+the separately safety-reviewed RC replay canary, not the unobservable
+no-telemetry MSP query.

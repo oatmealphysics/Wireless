@@ -2242,3 +2242,62 @@ links across **182 tracked files**; `git diff --check` passed.
 Handoff status: encoder/scheduler/research commit `07343ad` was pushed to
 `origin/main`. This status line is being committed and pushed separately;
 all UID-derived plans, hardware captures, and local UHD helpers remain ignored.
+
+---
+
+## 40. Stale-safe ELRS fresh-SYNC receive clock (Codex, 2026-10-16)
+
+Starting revision `2bfc7d1`; `git pull --ff-only` reported current. Continued
+the receive-clock half of the ELRS canary split while Claude handles the
+offline safety validator for an observable RC replay canary. No COM port was
+opened. Both devices remained under the absolute no-opening/no-flashing rule,
+and no RF signal was transmitted.
+
+Added `tools/elrs-v3-fresh-sync-clock.py`. It reuses the independently tested
+v3 SYNC/FHSS parser, fits one packet period while permitting each capture its
+own time origin, validates the observed nonce and hop transitions, requires
+an explicit anchor source for mixed captures, and rejects future, stale, or
+over-horizon schedules. It converts the three previously validated read-only
+canary fragments to exact future capture sample indices and optional UHD
+device times. The artifact remains private, has no radio backend, and records
+`transmit_enabled: false`.
+
+Offline replay against the two existing private decoded-capture sets checked
+all **14** SYNC transitions, fit **150.013248 packets/second**, accepted a
+50 ms-old anchor, and generated three future slots. UID-derived data and the
+result stayed under ignored `work/e8-session/` and were not printed.
+
+Added `tools/uhd-elrs-sync-rx.c`, a bounded native UHD receive helper needed
+because the installed generic capture example does not preserve first-sample
+hardware time. The helper has no transmit streamer or TX call, fixes the
+benchmark to 4.0625 MS/s and the measured 2441.3788 MHz SYNC channel, limits
+duration to 0.05--5 seconds, refuses overwrite, and aborts on RX metadata
+errors. It writes a receive-only manifest containing actual radio settings,
+sample count, and the first sample's device time. The Python clock tool now
+independently validates that manifest and can derive its sample rate, capture
+cursor, and absolute time origin from it.
+
+The helper compiled cleanly against the installed UHD 4.11 library and ran on
+the connected B205mini (`33E8308`) for 0.25 seconds. It returned exactly
+**1,015,625** complex-float samples (**8,125,000 bytes**) with a valid UHD
+first-sample timestamp. The normal receive-only PHY scanner found zero
+candidates on the measured channel. The E8 was still believed to be in its
+USB serial/update personality, so the recording is treated as a successful
+receive-transport test and negative control, not as a decoder failure. The
+capture, manifest, executable, and scan output all remain ignored under
+`work/`.
+
+Added synthetic clock/manifest tests and static safety tests that fail if the
+native helper acquires a UHD TX API or loses its duration/non-overwrite
+guards. Detailed evidence and the remaining real-time limitation are in
+`research/elrs-msp-api-canary-forward-path-2026-10-16.md`. Next, boot the E8
+normally and take a short timestamped receive-only capture; a CRC-valid SYNC
+from that same stream must pass the default 500 ms freshness gate. A live
+transport remains disallowed until the independently reviewed observable RC
+canary and a real-time decoder/clock path meet at that gate.
+
+Final validation: **123 tests passed**; `tools/validate-project.py` passed
+syntax, JSON, corpus hashes/provenance, rainbow data, CVE coverage, and local
+links across **186 tracked files**; `git diff --check` passed. Changed tracked
+files: the fresh-SYNC clock and tests, the native receive-only UHD helper and
+static safety tests, the canary research note, and this append-only log.
