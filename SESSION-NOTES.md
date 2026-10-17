@@ -2301,3 +2301,8 @@ syntax, JSON, corpus hashes/provenance, rainbow data, CVE coverage, and local
 links across **186 tracked files**; `git diff --check` passed. Changed tracked
 files: the fresh-SYNC clock and tests, the native receive-only UHD helper and
 static safety tests, the canary research note, and this append-only log.
+
+Handoff status: implementation/research commit `b2b9634` was pushed to
+`origin/main`. All captures, manifests, binaries, UID-derived plans, and scan
+outputs remain ignored under `work/`; only source, tests, and redacted notes
+were published.
