@@ -2306,3 +2306,42 @@ Handoff status: implementation/research commit `b2b9634` was pushed to
 `origin/main`. All captures, manifests, binaries, UID-derived plans, and scan
 outputs remain ignored under `work/`; only source, tests, and redacted notes
 were published.
+
+---
+
+## 41. Fail-closed hybrid-RC replay canary review (Codex, 2026-10-17)
+
+Continued PR #36 after Claude reached its usage limit. The original branch
+was based on `2bfc7d1`, so current `main` was merged into it before the final
+combined validation. No device, serial port, SDR, RF transmitter, or firmware
+was accessed during this work.
+
+The RC selector now treats every control bound as mandatory. It rejects roll
+outside a 50--300 microsecond deviation window, pitch/yaw beyond 50
+microseconds from center, throttle above 1050, and any attempt to loosen the
+throttle ceiling. There is no fallback to a more extreme frame. A saved plan
+is independently decoded and checked again: UID-derived CRC, encoded symbols,
+RC channels, PHY parameters, and every safety field must all match rather
+than trusting serialized booleans.
+
+Rotating AUX safety is now tied to live configuration evidence rather than a
+default-value assumption. The read-only TinyHawk observer can optionally
+capture `MSP_MODE_RANGES`, `MSP_MODE_RANGES_EXTRA`, and
+`MSP_ADJUSTMENT_RANGES` after its existing Betaflight 4.4.2 / `S411` /
+`TH III Plus` identity gate. The private snapshot must prove that AUX1-low is
+disarm and that the selected rotating AUX channel controls no usable mode or
+adjustment range. Wrong identity, truncated arrays, invalid ARM mappings, and
+configured rotating channels all fail closed. Snapshot and canary output are
+restricted to ignored `work/`, refuse overwrite, and remain
+`transmit_enabled: false`.
+
+The fresh-SYNC integration contract still requires hybrid switch mode, zero
+telemetry ratio, and a newly decoded SYNC. PR #36 deliberately does not add a
+transmitter or make its one-frame schema directly consumable by the existing
+three-fragment MSP scheduler. Detailed behavior and remaining integration
+work are documented in
+`research/elrs-v3-hybrid-rc-replay-canary-2026-10-17.md`.
+
+Final combined validation: **188 tests passed**; project validation passed
+syntax, JSON, corpus hashes/provenance, rainbow data, CVE coverage, and local
+links across **189 tracked files**; `git diff --check` passed.

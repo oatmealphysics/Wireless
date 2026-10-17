@@ -5,8 +5,9 @@ Default behavior prints the planned MSP queries and opens no port. Live reads
 require explicit flags, exclusive port access, removed propellers, and the
 previously observed TinyHawk identity (BTFL 4.4.2, S411, TH III Plus).
 It sends only MSP_API_VERSION, MSP_FC_VARIANT, MSP_FC_VERSION,
-MSP_BOARD_INFO, MSP_NAME, and MSP_RC queries. No CLI, setting, reset,
-bootloader, or motor command is implemented. It does not access radio FIFO.
+MSP_BOARD_INFO, MSP_NAME, MSP_RC, and optionally the read-only mode and
+adjustment-range queries. No CLI, setting, reset, bootloader, or motor
+command is implemented. It does not access radio FIFO.
 
 Example after the operator has coordinated the port and removed propellers:
   python tools/tinyhawk-msp-rc-observe.py --port COM5 --live-read \
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import struct
 import sys
 import time
@@ -29,6 +31,11 @@ import time
 
 QUERIES = ((1, "API_VERSION"), (2, "FC_VARIANT"), (3, "FC_VERSION"),
            (4, "BOARD_INFO"), (10, "NAME"), (105, "RC"))
+MSP_MODE_RANGES = 34
+MSP_ADJUSTMENT_RANGES = 52
+MSP_MODE_RANGES_EXTRA = 238
+AUX_SAFETY_SCHEMA = "betaflight-aux-safety-v1"
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def msp_query(command: int) -> bytes:
@@ -89,6 +96,81 @@ def decode_rc(payload: bytes) -> list[int]:
     return list(struct.unpack("<" + "H" * (len(payload) // 2), payload))
 
 
+def decode_mode_ranges(payload: bytes, extra: bytes) -> list[dict]:
+    """Decode aligned MSP_MODE_RANGES and MSP_MODE_RANGES_EXTRA replies."""
+    if not payload or len(payload) % 4:
+        raise ValueError("MSP_MODE_RANGES is not a complete four-byte array")
+    count = len(payload) // 4
+    if len(extra) != 1 + count * 3 or extra[0] != count:
+        raise ValueError("MSP_MODE_RANGES_EXTRA does not align with mode ranges")
+    entries = []
+    for index in range(count):
+        permanent_id, aux, start, end = payload[index * 4:index * 4 + 4]
+        extra_offset = 1 + index * 3
+        extra_id, logic, linked_to = extra[extra_offset:extra_offset + 3]
+        if extra_id != permanent_id or aux > 15 or start > 48 or end > 48 \
+                or logic > 1:
+            raise ValueError("invalid mode range reply")
+        entries.append({
+            "permanent_id": permanent_id,
+            "aux_channel_index": aux,
+            "start_step": start,
+            "end_step": end,
+            "mode_logic": logic,
+            "linked_to": linked_to,
+        })
+    return entries
+
+
+def decode_adjustment_ranges(payload: bytes) -> list[dict]:
+    """Decode the six-byte Betaflight 4.4.2 adjustment-range entries."""
+    if len(payload) % 6:
+        raise ValueError("MSP_ADJUSTMENT_RANGES is not a complete array")
+    entries = []
+    for offset in range(0, len(payload), 6):
+        _, aux, start, end, _, aux_switch = payload[offset:offset + 6]
+        if aux > 15 or aux_switch > 15 or start > 48 or end > 48:
+            raise ValueError("invalid adjustment range reply")
+        entries.append({
+            "aux_channel_index": aux,
+            "start_step": start,
+            "end_step": end,
+            "aux_switch_channel_index": aux_switch,
+        })
+    return entries
+
+
+def require_private_output(path: Path) -> Path:
+    work = (ROOT / "work").resolve()
+    target = path.resolve()
+    try:
+        target.relative_to(work)
+    except ValueError as exc:
+        raise ValueError("AUX safety output must stay under ignored work/") from exc
+    return target
+
+
+def read_aux_safety_snapshot(port) -> dict:
+    """Read only the mode metadata needed to prove a replay AUX is unused."""
+    replies = {}
+    for command in (MSP_MODE_RANGES, MSP_MODE_RANGES_EXTRA,
+                    MSP_ADJUSTMENT_RANGES):
+        port.write(msp_query(command))
+        replies[command] = read_reply(port, command, time.monotonic() + 1.5)
+    modes = decode_mode_ranges(replies[MSP_MODE_RANGES],
+                               replies[MSP_MODE_RANGES_EXTRA])
+    adjustments = decode_adjustment_ranges(replies[MSP_ADJUSTMENT_RANGES])
+    return {
+        "schema": AUX_SAFETY_SCHEMA,
+        "board_identifier": "S411",
+        "craft_name": "TH III Plus",
+        "mode_range_slot_count": len(modes),
+        "adjustment_range_slot_count": len(adjustments),
+        "mode_ranges": modes,
+        "adjustment_ranges": adjustments,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -98,9 +180,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--live-read", action="store_true", help="Open port and send read-only queries")
     parser.add_argument("--props-removed", action="store_true", help="Operator confirms props removed")
     parser.add_argument("--exclusive-port", action="store_true", help="Operator confirms no other process owns port")
+    parser.add_argument("--private-aux-safety-out", type=Path,
+                        help="new ignored JSON file for read-only mode evidence")
     args = parser.parse_args(argv)
     if not 0 < args.duration <= 30 or not 0.2 <= args.interval <= 2:
         parser.error("duration must be (0,30] seconds; interval must be [0.2,2] seconds")
+    aux_output = None
+    if args.private_aux_safety_out is not None:
+        try:
+            aux_output = require_private_output(args.private_aux_safety_out)
+        except ValueError as exc:
+            parser.error(str(exc))
+        if aux_output.exists():
+            parser.error("refusing to overwrite existing AUX safety output")
     print(f"TinyHawk read-only MSP plan: {args.port}, {args.duration}s, "
           f"{args.interval}s interval; queries: {', '.join(n for _, n in QUERIES)}",
           file=sys.stderr)
@@ -120,6 +212,13 @@ def main(argv: list[str] | None = None) -> int:
         try:
             identify(port)
             print("Betaflight 4.4.2 TinyHawk identity verified", file=sys.stderr)
+            if aux_output is not None:
+                snapshot = read_aux_safety_snapshot(port)
+                with aux_output.open("x", encoding="utf-8", newline="\n") as stream:
+                    json.dump(snapshot, stream, indent=2, sort_keys=True)
+                    stream.write("\n")
+                print(f"Private AUX safety snapshot written to {aux_output.name}",
+                      file=sys.stderr)
             end = time.monotonic() + args.duration
             while time.monotonic() < end:
                 started = time.monotonic()

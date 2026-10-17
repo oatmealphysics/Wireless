@@ -74,6 +74,43 @@ class MspObserverTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 observer.decode_rc(payload)
 
+    def test_aux_safety_snapshot_decoders(self):
+        modes_payload = bytes((0, 0, 32, 48, 1, 2, 0, 0))
+        modes_extra = bytes((2, 0, 0, 0, 1, 0, 0))
+        modes = observer.decode_mode_ranges(modes_payload, modes_extra)
+        self.assertEqual(modes[0], {
+            "permanent_id": 0,
+            "aux_channel_index": 0,
+            "start_step": 32,
+            "end_step": 48,
+            "mode_logic": 0,
+            "linked_to": 0,
+        })
+        adjustments = observer.decode_adjustment_ranges(bytes((0, 3, 8, 16, 2, 4)))
+        self.assertEqual(adjustments[0]["aux_channel_index"], 3)
+        self.assertEqual(adjustments[0]["aux_switch_channel_index"], 4)
+
+    def test_aux_safety_snapshot_reads_only_expected_commands(self):
+        mode_payload = bytes((0, 0, 32, 48))
+        mode_extra = bytes((1, 0, 0, 0))
+        responses = (reply(observer.MSP_MODE_RANGES, mode_payload)
+                     + reply(observer.MSP_MODE_RANGES_EXTRA, mode_extra)
+                     + reply(observer.MSP_ADJUSTMENT_RANGES, b""))
+        port = FakePort(responses)
+        snapshot = observer.read_aux_safety_snapshot(port)
+        self.assertEqual(snapshot["schema"], "betaflight-aux-safety-v1")
+        self.assertEqual(snapshot["board_identifier"], "S411")
+        self.assertEqual(
+            port.writes,
+            [observer.msp_query(observer.MSP_MODE_RANGES),
+             observer.msp_query(observer.MSP_MODE_RANGES_EXTRA),
+             observer.msp_query(observer.MSP_ADJUSTMENT_RANGES)],
+        )
+
+    def test_mode_range_extra_must_align(self):
+        with self.assertRaisesRegex(ValueError, "align"):
+            observer.decode_mode_ranges(bytes((0, 0, 32, 48)), bytes((0,)))
+
 
 if __name__ == "__main__":
     unittest.main()
