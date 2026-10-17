@@ -12,10 +12,10 @@ bounded roll, and an unused rotating AUX channel is rejected.  AUX evidence
 comes from a private, identity-gated Betaflight mode/adjustment snapshot.
 
 The output schema ``elrs-v3-rc-replay-canary-v1`` is a self-contained
-single-frame plan.  It is NOT directly consumable by
-``elrs-v3-canary-schedule.py``, which accepts only the three-fragment MSP
-canary schema.  A future scheduling integration must bridge the two schemas.
-Use ``validate_rc_canary()`` to validate a saved plan.
+single-frame plan.  It is not accepted by the older capture-relative
+``elrs-v3-canary-schedule.py``; ``elrs-v3-fresh-sync-clock.py`` is the reviewed
+bridge for both this schema and the three-fragment MSP schema.  Use
+``validate_rc_canary()`` to validate a saved plan.
 
 All pairing-derived inputs and output belong under the ignored ``work/``
 directory.  Default stdout contains only a privacy-safe summary.
