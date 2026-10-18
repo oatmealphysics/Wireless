@@ -2638,3 +2638,64 @@ test still requires a new bounded bench plan with props removed, a verified
 disarmed/minimum-throttle retained frame, strict packet/power/count limits,
 serial observation, stop conditions, and power-cycle recovery. Neither device
 may ever be flashed.
+
+---
+
+## 46. Wireless-path findings publication and final audit (Codex, 2026-10-18)
+
+Published the wireless-only alternative-path audit to `origin/main` in commit
+`5553146f80f8ca31a559cf7fbeb6f6dcf8676af9`. The detailed evidence remains in
+`research/elrs-v3-wireless-alternative-paths-2026-10-18.md`; this entry records
+the final reviewed conclusions and corrections.
+
+The leading candidate is a Betaflight 4.4.2 ELRS v3 rate-switch latch. After a
+legitimate connection sets `lockRFmode`, an identity-matching, CRC-valid SYNC
+that selects another supported rate causes forced loss, stops the ELRS timer,
+and retunes the active SX1280 modulation to the common initial/sync channel.
+`lostConnection()` does not clear `lockRFmode`, so the normal disconnected
+rate-cycling path remains disabled. This supports a targeted wireless denial
+hypothesis, but it remains source-derived: no crafted SDR waveform has been
+accepted by the live receiver and no live impact has been demonstrated.
+
+The final audit corrected an important state distinction. Betaflight keeps
+`receiver.rateIndex`, used as the configured/search-rate fallback, separate
+from the active `receiver.modParams->index`. A forced retune changes the active
+rate without updating `receiver.rateIndex`; consequently, a later accepted
+reserved rate code can fall back to the old search rate and retune the active
+PHY again. The offline model now represents both fields and includes a
+post-latch reserved-code regression. Its tests are an executable,
+regression-checked interpretation of the source, not independent proof of the
+firmware's behavior.
+
+Two fixed-channel continuation carriers remain source-plausible. A CRC-valid
+v3 type-3 TLM frame, or a CRC-valid SYNC rejected only by the later identity
+check, can still be reported as new generic SPI RX data without replacing the
+retained RC payload. The generic RX layer may therefore present prior control
+values as fresh. This is a possible stale-control/failsafe-suppression chain,
+not arbitrary control, and it is unsafe to test live if the retained state is
+armed or above minimum throttle.
+
+Passive bootstrap does not require a binding phrase for this model-matched-off
+target. A decoded v3 SYNC exposes UID bytes 3--5; those disclose the CRC14
+material and three of the four FHSS-seed bytes used by this Betaflight version.
+Only UID byte 2 remains as a 256-candidate private offline search. UID bytes 0
+and 1 do not participate in the reviewed air-link CRC, FHSS seed, or SYNC
+comparison. No private UID or recovered identity material was committed.
+
+Other reviewed paths remain secondary. MSP-over-ELRS reaches the ordinary MSP
+dispatcher after connection and model match, but a read-only `MSP_API_VERSION`
+request remains the only suitable first canary. Observed SYNCs advertise
+telemetry off; assuming the E8 follows upstream v3 scheduling, it opens no
+normal telemetry receive/parser window in those epochs. SX1280 same-PHY packet
+starvation and narrow BUSY/FHSS timing races remain denial leads without a
+demonstrated trigger. No credible OTA-controlled FIFO length, RF-to-SPI opcode
+path, or bounded-parser memory overwrite was found.
+
+Final validation for the published changes was 224 passing tests,
+`tools/validate-project.py` passing all checks across 196 tracked files, and a
+clean `git diff --check`. Two independent final reviews reported no remaining
+actionable issues. The entire pass was offline/read-only: no RF transmission,
+serial or configuration write,
+reset, opening, firmware readout, bootloader action, update, or flashing took
+place. The absolute no-flashing rule remains in force for both the E8 and the
+TinyHawk.
