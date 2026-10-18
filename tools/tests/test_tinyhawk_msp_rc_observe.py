@@ -101,10 +101,14 @@ class MspObserverTests(unittest.TestCase):
                      + reply(observer.MSP_MODE_RANGES_EXTRA, mode_extra)
                      + reply(observer.MSP_ADJUSTMENT_RANGES, b"")
                      + reply(observer.MSP_RX_MAP,
-                             bytes((1, 2, 3, 0, 4, 5, 6, 7))))
+                             bytes((1, 2, 3, 0, 4, 5, 6, 7)))
+                     + b"".join(reply(105, struct.pack(
+                         "<8H", 1500, 1500, 1500, 988,
+                         1000, 2000, 1000, 2000))
+                         for _ in range(observer.RC_STABILITY_SAMPLES)))
         port = FakePort(responses)
         snapshot = observer.read_aux_safety_snapshot(port)
-        self.assertEqual(snapshot["schema"], "betaflight-aux-safety-v2")
+        self.assertEqual(snapshot["schema"], "betaflight-aux-safety-v3")
         self.assertEqual(snapshot["board_identifier"], "S411")
         self.assertEqual(snapshot["rc_map"], [1, 2, 3, 0, 4, 5, 6, 7])
         self.assertEqual(
@@ -112,8 +116,10 @@ class MspObserverTests(unittest.TestCase):
             [observer.msp_query(observer.MSP_MODE_RANGES),
              observer.msp_query(observer.MSP_MODE_RANGES_EXTRA),
              observer.msp_query(observer.MSP_ADJUSTMENT_RANGES),
-             observer.msp_query(observer.MSP_RX_MAP)],
+             observer.msp_query(observer.MSP_RX_MAP),
+             *[observer.msp_query(105)] * observer.RC_STABILITY_SAMPLES],
         )
+        self.assertEqual(len(snapshot["observed_rc_samples_us"]), 3)
 
     def test_mode_range_extra_must_align(self):
         with self.assertRaisesRegex(ValueError, "align"):

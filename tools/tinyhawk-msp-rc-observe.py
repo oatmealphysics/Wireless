@@ -6,8 +6,9 @@ require explicit flags, exclusive port access, removed propellers, and the
 previously observed TinyHawk identity (BTFL 4.4.2, S411, TH III Plus).
 It sends only MSP_API_VERSION, MSP_FC_VARIANT, MSP_FC_VERSION,
 MSP_BOARD_INFO, MSP_NAME, MSP_RC, and optionally the read-only mode,
-adjustment-range, and RX-map queries. No CLI, setting, reset, bootloader, or motor
-command is implemented. It does not access radio FIFO.
+adjustment-range, RX-map, and repeated RC-state queries. No CLI, setting,
+reset, bootloader, or motor command is implemented. It does not access radio
+FIFO.
 
 Example after the operator has coordinated the port and removed propellers:
   python tools/tinyhawk-msp-rc-observe.py --port COM5 --live-read \
@@ -35,7 +36,9 @@ MSP_MODE_RANGES = 34
 MSP_ADJUSTMENT_RANGES = 52
 MSP_RX_MAP = 64
 MSP_MODE_RANGES_EXTRA = 238
-AUX_SAFETY_SCHEMA = "betaflight-aux-safety-v2"
+AUX_SAFETY_SCHEMA = "betaflight-aux-safety-v3"
+RC_STABILITY_SAMPLES = 3
+RC_STABILITY_INTERVAL_SECONDS = 0.05
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -160,7 +163,7 @@ def require_private_output(path: Path) -> Path:
 
 
 def read_aux_safety_snapshot(port) -> dict:
-    """Read only the mode metadata needed to prove a replay AUX is unused."""
+    """Read config plus repeated RC values needed for a bounded RC canary."""
     replies = {}
     for command in (MSP_MODE_RANGES, MSP_MODE_RANGES_EXTRA,
                     MSP_ADJUSTMENT_RANGES, MSP_RX_MAP):
@@ -170,6 +173,15 @@ def read_aux_safety_snapshot(port) -> dict:
                                replies[MSP_MODE_RANGES_EXTRA])
     adjustments = decode_adjustment_ranges(replies[MSP_ADJUSTMENT_RANGES])
     rc_map = decode_rx_map(replies[MSP_RX_MAP])
+    observed_rc = []
+    observed_at_ns = []
+    for index in range(RC_STABILITY_SAMPLES):
+        port.write(msp_query(105))
+        observed_rc.append(decode_rc(
+            read_reply(port, 105, time.monotonic() + 1.5)))
+        observed_at_ns.append(time.time_ns())
+        if index + 1 < RC_STABILITY_SAMPLES:
+            time.sleep(RC_STABILITY_INTERVAL_SECONDS)
     return {
         "schema": AUX_SAFETY_SCHEMA,
         "board_identifier": "S411",
@@ -179,6 +191,8 @@ def read_aux_safety_snapshot(port) -> dict:
         "rc_map": rc_map,
         "mode_ranges": modes,
         "adjustment_ranges": adjustments,
+        "observed_rc_samples_us": observed_rc,
+        "observed_wall_time_ns": observed_at_ns,
     }
 
 

@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+import time
 import unittest
 
 
@@ -35,8 +36,9 @@ def frames():
 
 
 def rc_aux_safety():
+    now_ns = time.time_ns()
     return {
-        "schema": "betaflight-aux-safety-v2",
+        "schema": "betaflight-aux-safety-v3",
         "board_identifier": "S411",
         "craft_name": "TH III Plus",
         "rc_map": [1, 2, 3, 0, 4, 5, 6, 7],
@@ -46,13 +48,22 @@ def rc_aux_safety():
             "mode_logic": 0, "linked_to": 0,
         }],
         "adjustment_ranges": [],
+        "observed_rc_samples_us": [
+            [1500, 1500, 1500, 988, 1000, 1000, 2000, 1000]
+            for _ in range(3)
+        ],
+        "observed_wall_time_ns": [
+            now_ns - 100_000_000,
+            now_ns - 50_000_000,
+            now_ns,
+        ],
     }
 
 
 def rc_canary():
     rc = clock.RC_CANARY
-    # OTA slots are [yaw, roll, pitch, throttle] for this pair.
-    packed = 512 | (612 << 10) | (512 << 20)
+    # OTA slots are [throttle, roll, pitch, yaw] for this pair.
+    packed = 0 | (612 << 10) | (512 << 20) | (512 << 30)
     packet = bytearray(bytes((0,)) + packed.to_bytes(5, "little")
                        + bytes((0, 0)))
     checksum = rc["crc14"](bytes((0,)) + packet[1:7],
@@ -72,6 +83,23 @@ def rc_canary():
 
 
 class FreshSyncClockTests(unittest.TestCase):
+    def test_bounded_injection_normalizes_to_one_fresh_slot(self):
+        evidence = rc_aux_safety()
+        candidate = clock.RC_INJECTION["build_plan"](
+            UID, evidence, "right")
+        frames_out, metadata = clock.validate_canary_input(
+            candidate, UID, evidence)
+        self.assertEqual(len(frames_out), 1)
+        self.assertEqual(metadata["kind"], "bounded_rc_injection")
+        plan = clock.build_fresh_plan(
+            UID, record(0, 1 / 150), frames_out, cursor_seconds=1.020,
+            sample_rate_hz=4_062_500, packet_period_seconds=1 / 150,
+            lead_seconds=0.100, canary_metadata=metadata,
+        )
+        self.assertEqual(len(plan["slots"]), 1)
+        self.assertEqual(plan["canary"]["kind"], "bounded_rc_injection")
+        self.assertFalse(plan["transmit_enabled"])
+
     def test_rc_canary_normalizes_to_one_fresh_slot(self):
         frames_out, metadata = clock.validate_canary_input(
             rc_canary(), UID, rc_aux_safety())
@@ -92,6 +120,25 @@ class FreshSyncClockTests(unittest.TestCase):
     def test_rc_canary_requires_aux_evidence(self):
         with self.assertRaisesRegex(ValueError, "AUX"):
             clock.validate_canary_input(rc_canary(), UID, None)
+
+    def test_rc_scheduling_rejects_stale_live_evidence(self):
+        fresh = rc_aux_safety()
+        candidate = clock.RC_INJECTION["build_plan"](
+            UID, fresh, "right")
+        stale = rc_aux_safety()
+        cutoff = (time.time_ns()
+                  - clock.RC_INJECTION["MAX_RC_EVIDENCE_AGE_NS"]
+                  - 1_000_000_000)
+        stale["observed_wall_time_ns"] = [cutoff - 2, cutoff - 1, cutoff]
+        with self.assertRaisesRegex(ValueError, "stale"):
+            clock.validate_canary_input(candidate, UID, stale)
+
+    def test_rc_scheduling_rejects_unsafe_current_controller_state(self):
+        unsafe = rc_aux_safety()
+        for sample in unsafe["observed_rc_samples_us"]:
+            sample[4] = 2000
+        with self.assertRaisesRegex(ValueError, "safely disarmed"):
+            clock.validate_canary_input(rc_canary(), UID, unsafe)
 
     def test_receive_anchor_manifest_is_independently_validated(self):
         manifest = {

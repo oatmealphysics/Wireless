@@ -62,11 +62,11 @@ decode_symbols = FORWARD["decode_symbols"]
 
 # The four analog values are unpacked in OTA slot order.  Simultaneous RF and
 # MSP_RC evidence for this E8/TinyHawk pair establishes the target's mapping
-# as OTA [1, 2, 3, 0] -> MSP [roll, pitch, throttle, yaw].
+# as OTA [1, 2, 3, 0] -> MSP [roll, pitch, yaw, throttle].
 CH_ROLL = 1
 CH_PITCH = 2
-CH_THROTTLE = 3
-CH_YAW = 0
+CH_YAW = 3
+CH_THROTTLE = 0
 CH_AUX1 = 4
 
 ANALOG_MIN = 988
@@ -84,6 +84,7 @@ ROLL_MIN_DEVIATION = 50
 ROLL_MAX_DEVIATION = 300
 
 ROLL_DISTINCTIVE_THRESHOLD = 50
+EXPECTED_RATE_INDEX = 7
 
 # Hybrid switch byte layout (byte 6 of 8-byte std packet):
 #   bits [2:0] = switch value (3-bit for index < 6, 4-bit for index >= 6)
@@ -99,6 +100,7 @@ SWITCH_SAFE_VALUES_3B = {0, 6, 7}
 SWITCH_SAFE_VALUES_4B_LOW = 0
 SWITCH_SAFE_VALUES_4B_HIGH = 15
 AUX_SAFETY_SCHEMA = "betaflight-aux-safety-v2"
+AUX_SAFETY_SCHEMA_LIVE = "betaflight-aux-safety-v3"
 EXPECTED_BOARD_IDENTIFIER = "S411"
 EXPECTED_CRAFT_NAME = "TH III Plus"
 EXPECTED_RC_MAP = (1, 2, 3, 0, 4, 5, 6, 7)
@@ -161,13 +163,38 @@ def is_pitch_yaw_centered(rc: dict,
             abs(rc["yaw"] - ANALOG_MID) <= tolerance)
 
 
-def is_switch_unambiguous(rc: dict) -> bool:
-    """Accept only exactly represented endpoints/defaults in the AUX field."""
+def _decoded_switch_pwm(rc: dict) -> int:
+    """Mirror the source-defined hybrid switch conversion exactly."""
     idx = rc["switch_index"]
     val = rc["switch_value_raw"]
     if idx >= 6:
-        return val == SWITCH_SAFE_VALUES_4B_LOW or val == SWITCH_SAFE_VALUES_4B_HIGH
-    return val in SWITCH_SAFE_VALUES_3B
+        return val * 1000 // 15 + 1000
+    return (1000, 1275, 1425, 1575, 1725, 2000, 1500, 1500)[val]
+
+
+def _switch_matches_live_observation(rc: dict, aux_safety: dict | None) -> bool:
+    """Allow a non-default switch only when it preserves repeated live MSP_RC."""
+    if (not isinstance(aux_safety, dict)
+            or aux_safety.get("schema") != AUX_SAFETY_SCHEMA_LIVE):
+        return False
+    samples = aux_safety.get("observed_rc_samples_us")
+    channel_index = rotating_aux_channel_index(rc) + 4
+    return (isinstance(samples, list) and len(samples) >= 3
+            and all(isinstance(sample, list) and channel_index < len(sample)
+                    and sample[channel_index] == _decoded_switch_pwm(rc)
+                    for sample in samples))
+
+
+def is_switch_unambiguous(rc: dict, aux_safety: dict | None = None) -> bool:
+    """Accept conservative defaults or a value proven unchanged by live reads."""
+    idx = rc["switch_index"]
+    val = rc["switch_value_raw"]
+    if idx >= 6:
+        conservative = val in {
+            SWITCH_SAFE_VALUES_4B_LOW, SWITCH_SAFE_VALUES_4B_HIGH}
+    else:
+        conservative = val in SWITCH_SAFE_VALUES_3B
+    return conservative or _switch_matches_live_observation(rc, aux_safety)
 
 
 def is_roll_in_window(rc: dict) -> bool:
@@ -187,7 +214,8 @@ def read_aux_safety(path: Path) -> dict:
     """Validate an identity-gated MSP mode/adjustment range snapshot."""
     snapshot = json.loads(path.read_text(encoding="utf-8"))
     if (not isinstance(snapshot, dict)
-            or snapshot.get("schema") != AUX_SAFETY_SCHEMA
+            or snapshot.get("schema") not in {
+                AUX_SAFETY_SCHEMA, AUX_SAFETY_SCHEMA_LIVE}
             or snapshot.get("board_identifier") != EXPECTED_BOARD_IDENTIFIER
             or snapshot.get("craft_name") != EXPECTED_CRAFT_NAME):
         raise ValueError("not a TinyHawk AUX safety snapshot")
@@ -243,13 +271,29 @@ def read_aux_safety(path: Path) -> dict:
                 "adjustment switch AUX index", 0, 15),
         })
     normalized = {
-        "schema": AUX_SAFETY_SCHEMA,
+        "schema": snapshot["schema"],
         "board_identifier": EXPECTED_BOARD_IDENTIFIER,
         "craft_name": EXPECTED_CRAFT_NAME,
         "rc_map": list(EXPECTED_RC_MAP),
         "mode_ranges": normalized_modes,
         "adjustment_ranges": normalized_adjustments,
     }
+    if snapshot["schema"] == AUX_SAFETY_SCHEMA_LIVE:
+        samples = snapshot.get("observed_rc_samples_us")
+        stamps = snapshot.get("observed_wall_time_ns")
+        if (not isinstance(samples, list) or len(samples) < 3
+                or not isinstance(stamps, list) or len(stamps) != len(samples)
+                or any(not isinstance(sample, list) or not 8 <= len(sample) <= 32
+                       or any(isinstance(value, bool) or not isinstance(value, int)
+                              or not 750 <= value <= 2250 for value in sample)
+                       for sample in samples)
+                or len({len(sample) for sample in samples}) != 1
+                or any(isinstance(stamp, bool) or not isinstance(stamp, int)
+                       or stamp <= 0 for stamp in stamps)
+                or stamps != sorted(stamps)):
+            raise ValueError("live AUX snapshot has invalid RC-state evidence")
+        normalized["observed_rc_samples_us"] = samples
+        normalized["observed_wall_time_ns"] = stamps
     validate_arm_range(normalized)
     return normalized
 
@@ -326,7 +370,7 @@ def safety_check(rc: dict, aux_safety: dict,
                        f"(pitch={rc['pitch']}, yaw={rc['yaw']})")
     if not is_roll_in_window(rc):
         return False, f"roll_outside_window ({rc['roll']})"
-    if not is_switch_unambiguous(rc):
+    if not is_switch_unambiguous(rc, aux_safety):
         return False, (f"ambiguous_switch (index={rc['switch_index']}, "
                        f"value={rc['switch_value_raw']})")
     if not rotating_aux_is_unused(rc, aux_safety):
@@ -451,6 +495,11 @@ def validate_sync_for_rc_replay(sync_fields: dict) -> tuple[bool, str]:
     if isinstance(ratio, bool) or not isinstance(ratio, int) or ratio != 0:
         return False, (f"telemetry ratio must be 0 (disabled), "
                        f"got {ratio!r}")
+    rate_index = sync_fields.get("rate_index")
+    if (isinstance(rate_index, bool) or not isinstance(rate_index, int)
+            or rate_index != EXPECTED_RATE_INDEX):
+        return False, (f"rate_index must be {EXPECTED_RATE_INDEX} "
+                       f"(LoRa 150 Hz), got {rate_index!r}")
     return True, "pass"
 
 
@@ -604,7 +653,7 @@ def build_plan(uid: bytes, frame: dict, interleaver: dict,
             "disarmed": is_disarmed(rc),
             "pitch_yaw_centered": is_pitch_yaw_centered(rc),
             "pitch_yaw_tolerance": PITCH_YAW_CENTER_TOLERANCE,
-            "switch_unambiguous": is_switch_unambiguous(rc),
+            "switch_unambiguous": is_switch_unambiguous(rc, aux_safety),
             "switch_index": rc["switch_index"],
             "switch_value_raw": rc["switch_value_raw"],
             "switch_width": rc["switch_width"],

@@ -26,6 +26,7 @@ import sys
 TOOLS = Path(__file__).resolve().parent
 SCHEDULER = runpy.run_path(str(TOOLS / "elrs-v3-canary-schedule.py"))
 RC_CANARY = runpy.run_path(str(TOOLS / "elrs-v3-rc-replay-canary.py"))
+RC_INJECTION = runpy.run_path(str(TOOLS / "elrs-v3-bounded-rc-injection.py"))
 NOMINAL_RATE_HZ = 150.0
 HOP_INTERVAL = SCHEDULER["HOP_INTERVAL"]
 FIRST_HZ = SCHEDULER["FIRST_HZ"]
@@ -143,6 +144,7 @@ def validate_canary_input(plan: object, uid: bytes,
     if schema == "elrs-v3-rc-replay-canary-v2":
         if aux_safety is None:
             raise ValueError("RC replay canary requires AUX safety evidence")
+        RC_INJECTION["validate_live_controller_state"](aux_safety)
         frame = RC_CANARY["validate_rc_canary"](plan, uid, aux_safety)
         return [{
             "sequence": 0,
@@ -154,6 +156,24 @@ def validate_canary_input(plan: object, uid: bytes,
             "read_only": False,
             "frame_count": 1,
             "safety_revalidated": True,
+        }
+    if schema == "elrs-v3-bounded-rc-injection-v1":
+        if aux_safety is None:
+            raise ValueError("bounded RC injection requires AUX safety evidence")
+        RC_INJECTION["validate_live_controller_state"](aux_safety)
+        frame = RC_INJECTION["validate_injection_canary"](
+            plan, uid, aux_safety)
+        return [{
+            "sequence": 0,
+            "packet_hex": frame["packet_hex"],
+            "symbols": frame["symbols"],
+        }], {
+            "kind": "bounded_rc_injection",
+            "name": "bounded_roll_observation",
+            "read_only": False,
+            "frame_count": 1,
+            "safety_revalidated": True,
+            "synthesized": True,
         }
     raise ValueError("unsupported canary schema")
 
@@ -305,7 +325,8 @@ def main(argv: list[str] | None = None) -> int:
                       if aux_path is not None else None)
         frames, canary_metadata = validate_canary_input(
             canary, uid, aux_safety)
-        if canary_metadata["kind"] == "hybrid_rc_replay":
+        if canary_metadata["kind"] in {
+                "hybrid_rc_replay", "bounded_rc_injection"}:
             sync_ok, sync_reason = RC_CANARY["validate_sync_for_rc_replay"](
                 anchor["fields"])
             if not sync_ok:

@@ -24,8 +24,8 @@ def build_rc_packet(roll=512, pitch=512, yaw=512, throttle=0,
 
     Analog values are 10-bit raw (PWM = 988 + value).
     """
-    # This pair's verified mapping is OTA [yaw, roll, pitch, throttle].
-    packed = yaw | (roll << 10) | (pitch << 20) | (throttle << 30)
+    # This pair's verified mapping is OTA [throttle, roll, pitch, yaw].
+    packed = throttle | (roll << 10) | (pitch << 20) | (yaw << 30)
     payload = packed.to_bytes(5, "little")
     ch4_bit = 1 if armed else 0
     switch_byte = ((ch4_bit << 7) | (switch_index << 3)
@@ -107,12 +107,12 @@ class HybridRCDecodeTests(unittest.TestCase):
 
     def test_capture_derived_channel_mapping_vector(self):
         # Public Oct 16 summary: OTA PWM [988, 1437, 1497, 1507] maps to
-        # MSP [roll, pitch, throttle, yaw] = [1437, 1497, 1507, 988].
+        # MSP [roll, pitch, yaw, throttle] = [1437, 1497, 1507, 988].
         pkt = build_rc_packet(roll=1437 - 988, pitch=1497 - 988,
-                              throttle=1507 - 988, yaw=988 - 988)
+                              yaw=1507 - 988, throttle=988 - 988)
         rc = self.mod.decode_hybrid_rc(pkt)
         self.assertEqual(
-            [rc["roll"], rc["pitch"], rc["throttle"], rc["yaw"]],
+            [rc["roll"], rc["pitch"], rc["yaw"], rc["throttle"]],
             [1437, 1497, 1507, 988],
         )
 
@@ -341,6 +341,20 @@ class AuxSafetyEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "AUX1-low"):
             self._read(snapshot)
 
+    def test_live_snapshot_samples_are_validated(self):
+        snapshot = aux_safety()
+        snapshot["schema"] = "betaflight-aux-safety-v3"
+        snapshot["observed_rc_samples_us"] = [
+            [1500, 1500, 1500, 988, 1000, 2000, 1000, 2000]
+            for _ in range(3)
+        ]
+        snapshot["observed_wall_time_ns"] = [1, 2, 3]
+        evidence = self._read(snapshot)
+        self.assertEqual(evidence["schema"], "betaflight-aux-safety-v3")
+        snapshot["observed_rc_samples_us"][0][0] = 500
+        with self.assertRaisesRegex(ValueError, "RC-state"):
+            self._read(snapshot)
+
 
 class SelectCanaryTests(unittest.TestCase):
     @classmethod
@@ -412,19 +426,22 @@ class SyncValidationTests(unittest.TestCase):
 
     def test_valid_hybrid_no_telemetry(self):
         ok, reason = self.mod.validate_sync_for_rc_replay(
-            {"switch_mode": "hybrid", "new_tlm_ratio": 0})
+            {"switch_mode": "hybrid", "new_tlm_ratio": 0,
+             "rate_index": 7})
         self.assertTrue(ok)
         self.assertEqual(reason, "pass")
 
     def test_rejects_wide_mode(self):
         ok, reason = self.mod.validate_sync_for_rc_replay(
-            {"switch_mode": "wide", "new_tlm_ratio": 0})
+            {"switch_mode": "wide", "new_tlm_ratio": 0,
+             "rate_index": 7})
         self.assertFalse(ok)
         self.assertIn("hybrid", reason)
 
     def test_rejects_telemetry_enabled(self):
         ok, reason = self.mod.validate_sync_for_rc_replay(
-            {"switch_mode": "hybrid", "new_tlm_ratio": 3})
+            {"switch_mode": "hybrid", "new_tlm_ratio": 3,
+             "rate_index": 7})
         self.assertFalse(ok)
         self.assertIn("telemetry", reason)
 
@@ -434,8 +451,18 @@ class SyncValidationTests(unittest.TestCase):
 
     def test_rejects_boolean_telemetry_ratio(self):
         ok, _ = self.mod.validate_sync_for_rc_replay(
-            {"switch_mode": "hybrid", "new_tlm_ratio": False})
+            {"switch_mode": "hybrid", "new_tlm_ratio": False,
+             "rate_index": 7})
         self.assertFalse(ok)
+
+    def test_rejects_missing_boolean_or_mismatched_rate(self):
+        for rate in (None, False, 0, 2, 15):
+            fields = {"switch_mode": "hybrid", "new_tlm_ratio": 0}
+            if rate is not None:
+                fields["rate_index"] = rate
+            ok, reason = self.mod.validate_sync_for_rc_replay(fields)
+            self.assertFalse(ok)
+            self.assertIn("rate_index", reason)
 
 
 class PlanValidationTests(unittest.TestCase):

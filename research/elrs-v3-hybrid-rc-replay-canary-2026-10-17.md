@@ -49,8 +49,10 @@ The decode follows `unpackAnalogChannelData()` and
 - Bytes 1-5 contain four little-endian 10-bit OTA analog slots. Betaflight
   adds 988, producing 988-2011. Simultaneous RF/MSP evidence for this exact
   E8/TinyHawk pair establishes OTA slots `[1,2,3,0]` as MSP
-  `[roll,pitch,throttle,yaw]`; equivalently, the wire slots are
-  `[yaw,roll,pitch,throttle]` for this target configuration.
+  `[roll,pitch,yaw,throttle]`; equivalently, the wire slots are
+  `[throttle,roll,pitch,yaw]` for this target configuration. An earlier
+  revision mislabeled MSP channels 2 and 3; Betaflight's source-defined
+  channel order and a live throttle-failsafe value on channel 3 correct it.
 - Bit 7 of byte 6 is the low-latency AUX1 value: zero maps to 1000 and one
   maps to 2000.
 - Bits 5-3 select the rotating AUX field.
@@ -58,31 +60,38 @@ The decode follows `unpackAnalogChannelData()` and
 - Selectors 6-7 update AUX index 7 with the combined 4-bit value.
 - Bit 6 is the telemetry/stubborn acknowledgement bit.
 
-For 3-bit fields, raw values 0, 6, and 7 are exact low/default encodings.
-For the 4-bit field, only endpoints 0 and 15 are admitted. This encoding
-check is not by itself a safety decision; the live configuration evidence is
-also mandatory.
+For captured replay, the conservative defaults remain 3-bit values 0, 6, and
+7 and 4-bit endpoints 0 and 15. Bounded synthesis may also use another
+source-defined 3-bit position only when repeated live `MSP_RC` samples prove
+that it preserves the channel's current value exactly. Encoding alone is not
+a safety decision; live configuration evidence is also mandatory.
 
 ## Live AUX safety evidence
 
 `tools/tinyhawk-msp-rc-observe.py --private-aux-safety-out ...` can create a
-private `betaflight-aux-safety-v2` snapshot after its existing read-only
+private `betaflight-aux-safety-v3` snapshot after its existing read-only
 identity gate confirms Betaflight 4.4.2, board `S411`, and craft
 `TH III Plus`. It adds only these read commands:
 
 - `MSP_MODE_RANGES` (34);
 - `MSP_ADJUSTMENT_RANGES` (52);
-- `MSP_RX_MAP` (64); and
-- `MSP_MODE_RANGES_EXTRA` (238).
+- `MSP_RX_MAP` (64);
+- `MSP_MODE_RANGES_EXTRA` (238); and
+- three `MSP_RC` (105) samples used only to preserve current AUX state.
 
-The snapshot contains every returned slot plus explicit slot counts and the
-eight-byte channel permutation. The canary tool requires the independently
-observed `[1,2,3,0,4,5,6,7]` map, and refuses wrong identity, a missing or
-different channel map, malformed or truncated arrays, an ARM range that does
-not prove AUX1-low disarms, and any candidate whose rotating AUX destination
-appears in a usable mode or adjustment range. This prevents a changed
-Betaflight map from silently reinterpreting yaw as throttle. The snapshot and
-resulting plan must remain beneath ignored `work/`.
+The snapshot contains every returned slot, explicit slot counts, the
+eight-byte channel permutation, and repeated current channel values. The
+bounded synthesis tool requires a stable, exactly encodable rotating AUX and
+preserves its observed value; it also refuses an armed, high-throttle,
+off-center, receiver-failsafe, stale, future-dated, non-monotonic, or overly
+long sampling window. Its newest observation must be less than five seconds
+old and the full sample window no longer than one second. The replay tool
+requires the independently observed `[1,2,3,0,4,5,6,7]` map, and refuses wrong
+identity, a missing or different channel map, malformed or truncated arrays,
+an ARM range that does not prove AUX1-low disarms, and any candidate whose
+rotating AUX destination appears in a usable mode or adjustment range. This
+prevents a changed Betaflight map from silently reinterpreting the analog
+controls. The snapshot and resulting plan must remain beneath ignored `work/`.
 
 ## Selection policy
 
@@ -96,14 +105,19 @@ selection. The roll signal is intended for a tightly coordinated read-only
 
 `validate_sync_for_rc_replay()` requires:
 
-- `switch_mode == "hybrid"`; and
-- `new_tlm_ratio == 0`.
+- `switch_mode == "hybrid"`;
+- `new_tlm_ratio == 0`; and
+- `rate_index == 7`, the target's source-defined LoRa 150 Hz mode.
 
 The scheduling layer obtains that state from the selected, CRC-valid SYNC
 accepted by `elrs-v3-fresh-sync-clock.py`. For RC plans it revalidates the
 private packet, UID-derived CRC, long-interleaver symbols, controls, and AUX
-evidence, then emits exactly one future slot. MSP plans still emit three
-fragments and retain the original v1 `command` field for compatibility. A
+evidence, including live-evidence age and the safely disarmed observed state,
+then emits exactly one future slot. The
+bounded validator reconstructs the full expected packet and rejects a changed
+telemetry acknowledgement even if its CRC and symbols are recomputed. MSP
+plans still emit three fragments and retain the original v1 `command` field
+for compatibility. A
 historical SYNC or the capture-relative timestamp stored in either plan is
 not a live transmit clock.
 
@@ -116,7 +130,7 @@ needed by `betaflight-aux-safety-v2`. The snapshot remains ignored beneath
 
 The two published ranked-symbol captures were then decoded again into a
 private byte-bearing JSONL. All 54 resolved frames passed CRC; 38 were RC and
-16 were SYNC. No RC frame qualified for replay: 22 had throttle 1507, and the
+16 were SYNC. No RC frame qualified for replay: 22 had throttle 2011, and the
 remaining 16 were rejected as armed before later gates were considered.
 Betaflight 4.4.2 source confirms that these fields are the direct 10-bit OTA
 values plus 988, so this is a valid negative result rather than grounds to
@@ -124,7 +138,7 @@ relax the gate. No private packet bytes, UID material, or AUX configuration
 were published.
 
 The channel mapping was also checked independently. The idle capture decoded
-to roll/pitch/throttle/yaw `1480/1497/1507/2011`; the roll-motion capture
+to roll/pitch/yaw/throttle `1480/1497/1507/2011`; the roll-motion capture
 decoded to `1437--1535/1497/1507/988`. Five CRC-valid RF frames overlapped a
 USB MSP_RC sample within 120 ms, with mean absolute channel error
 `[13.6,0,0,0]`; the moving roll channel accounts for the timestamp-sensitive
