@@ -140,7 +140,7 @@ def validate_canary_input(plan: object, uid: bytes,
             "read_only": True,
             "frame_count": 3,
         }
-    if schema == "elrs-v3-rc-replay-canary-v1":
+    if schema == "elrs-v3-rc-replay-canary-v2":
         if aux_safety is None:
             raise ValueError("RC replay canary requires AUX safety evidence")
         frame = RC_CANARY["validate_rc_canary"](plan, uid, aux_safety)

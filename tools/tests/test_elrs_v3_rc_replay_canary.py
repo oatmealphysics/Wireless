@@ -24,7 +24,8 @@ def build_rc_packet(roll=512, pitch=512, yaw=512, throttle=0,
 
     Analog values are 10-bit raw (PWM = 988 + value).
     """
-    packed = roll | (pitch << 10) | (yaw << 20) | (throttle << 30)
+    # This pair's verified mapping is OTA [yaw, roll, pitch, throttle].
+    packed = yaw | (roll << 10) | (pitch << 20) | (throttle << 30)
     payload = packed.to_bytes(5, "little")
     ch4_bit = 1 if armed else 0
     switch_byte = ((ch4_bit << 7) | (switch_index << 3)
@@ -71,9 +72,10 @@ def aux_safety(*, blocked_mode_aux=(), blocked_adjustment_aux=()):
         "aux_switch_channel_index": index,
     } for index in blocked_adjustment_aux]
     return {
-        "schema": "betaflight-aux-safety-v1",
+        "schema": "betaflight-aux-safety-v2",
         "board_identifier": "S411",
         "craft_name": "TH III Plus",
+        "rc_map": [1, 2, 3, 0, 4, 5, 6, 7],
         "mode_range_slot_count": len(modes),
         "adjustment_range_slot_count": len(adjustments),
         "mode_ranges": modes,
@@ -102,6 +104,17 @@ class HybridRCDecodeTests(unittest.TestCase):
         self.assertEqual(rc["pitch"], 2011)
         self.assertEqual(rc["yaw"], 988)
         self.assertEqual(rc["throttle"], 2011)
+
+    def test_capture_derived_channel_mapping_vector(self):
+        # Public Oct 16 summary: OTA PWM [988, 1437, 1497, 1507] maps to
+        # MSP [roll, pitch, throttle, yaw] = [1437, 1497, 1507, 988].
+        pkt = build_rc_packet(roll=1437 - 988, pitch=1497 - 988,
+                              throttle=1507 - 988, yaw=988 - 988)
+        rc = self.mod.decode_hybrid_rc(pkt)
+        self.assertEqual(
+            [rc["roll"], rc["pitch"], rc["throttle"], rc["yaw"]],
+            [1437, 1497, 1507, 988],
+        )
 
     def test_armed_bit(self):
         armed_pkt = build_rc_packet(armed=True)
@@ -161,6 +174,14 @@ class SafetyGateTests(unittest.TestCase):
         ok, reason = self.mod.safety_check(self._make_rc(ch4_bit=1), aux_safety())
         self.assertFalse(ok)
         self.assertIn("armed", reason)
+
+    def test_wrong_rc_map_rejected_before_channel_interpretation(self):
+        evidence = aux_safety()
+        evidence["rc_map"] = list(range(8))
+        ok, reason = self.mod.safety_check(
+            self._make_rc(ch4_bit=1, throttle=1800), evidence)
+        self.assertFalse(ok)
+        self.assertEqual(reason, "rc_map_unverified")
 
     def test_high_throttle_rejected(self):
         ok, reason = self.mod.safety_check(self._make_rc(throttle=1200), aux_safety())
@@ -297,6 +318,16 @@ class AuxSafetyEvidenceTests(unittest.TestCase):
         snapshot["craft_name"] = "other"
         with self.assertRaisesRegex(ValueError, "TinyHawk"):
             self._read(snapshot)
+
+    def test_wrong_or_missing_rc_map_rejected(self):
+        for mapping in (None, [0, 1, 2, 3, 4, 5, 6, 7]):
+            snapshot = aux_safety()
+            if mapping is None:
+                del snapshot["rc_map"]
+            else:
+                snapshot["rc_map"] = mapping
+            with self.assertRaisesRegex(ValueError, "RC map"):
+                self._read(snapshot)
 
     def test_incomplete_snapshot_rejected(self):
         snapshot = aux_safety()
@@ -592,7 +623,7 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertTrue(plan_out.exists())
             plan = json.loads(plan_out.read_text())
-            self.assertEqual(plan["schema"], "elrs-v3-rc-replay-canary-v1")
+            self.assertEqual(plan["schema"], "elrs-v3-rc-replay-canary-v2")
             self.assertFalse(plan["transmit_enabled"])
             self.assertTrue(plan["safety"]["disarmed"])
             self.assertTrue(plan["safety"]["throttle_low"])
@@ -663,7 +694,7 @@ class BuildPlanTests(unittest.TestCase):
         }
         interleaver = self.mod.verify_interleaver_round_trip(packet)
         plan = self.mod.build_plan(uid, frame, interleaver, aux_safety())
-        self.assertEqual(plan["schema"], "elrs-v3-rc-replay-canary-v1")
+        self.assertEqual(plan["schema"], "elrs-v3-rc-replay-canary-v2")
         self.assertFalse(plan["transmit_enabled"])
         self.assertTrue(plan["safety"]["disarmed"])
         self.assertTrue(plan["safety"]["pitch_yaw_centered"])

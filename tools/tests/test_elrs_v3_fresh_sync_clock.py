@@ -36,9 +36,10 @@ def frames():
 
 def rc_aux_safety():
     return {
-        "schema": "betaflight-aux-safety-v1",
+        "schema": "betaflight-aux-safety-v2",
         "board_identifier": "S411",
         "craft_name": "TH III Plus",
+        "rc_map": [1, 2, 3, 0, 4, 5, 6, 7],
         "mode_ranges": [{
             "permanent_id": 0, "aux_channel_index": 0,
             "start_step": 32, "end_step": 48,
@@ -50,7 +51,8 @@ def rc_aux_safety():
 
 def rc_canary():
     rc = clock.RC_CANARY
-    packed = 612 | (512 << 10) | (512 << 20)
+    # OTA slots are [yaw, roll, pitch, throttle] for this pair.
+    packed = 512 | (612 << 10) | (512 << 20)
     packet = bytearray(bytes((0,)) + packed.to_bytes(5, "little")
                        + bytes((0, 0)))
     checksum = rc["crc14"](bytes((0,)) + packet[1:7],

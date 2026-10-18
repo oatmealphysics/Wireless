@@ -2385,3 +2385,44 @@ selector and fresh-SYNC clock without code changes.
 Final validation: **191 tests passed**; `tools/validate-project.py` passed
 syntax, JSON, corpus hashes/provenance, rainbow data, CVE coverage, and local
 links across **189 tracked files**; `git diff --check` passed.
+
+---
+
+## 43. Capture-derived RC-map correction and fail-closed proof (Codex, 2026-10-18)
+
+Follow-up analysis of the committed Oct 15 and Oct 16 captures established
+that this E8/TinyHawk pair maps OTA analog slots `[1,2,3,0]` to MSP
+`[roll,pitch,throttle,yaw]`. The initial RC replay canary incorrectly treated
+the four OTA slots as direct roll/pitch/yaw/throttle order. That did not alter
+the prior no-replay verdict because throttle remains OTA slot 3 at 1507, but
+it did make the reported roll and yaw wrong.
+
+Corrected `decode_hybrid_rc()` to apply the verified target mapping and added
+a capture-derived regression vector. The Oct 16 public summary now decodes as
+roll 1437--1535, pitch 1497, throttle 1507, yaw 988; the Oct 15 summary decodes
+as roll 1480, pitch 1497, throttle 1507, yaw 2011. The held-out USB/RF overlap
+contains five CRC-valid matches within 120 ms and mean absolute channel error
+`[13.6,0,0,0]`, with only the rapidly moving roll channel affected by timing.
+
+Because Betaflight channel order is configurable, the canary no longer trusts
+the mapping as a code constant alone. The read-only observer now requests
+`MSP_RX_MAP` (64), validates an eight-channel permutation, and records it in
+the new private `betaflight-aux-safety-v2` schema. The selector requires the
+exact observed `[1,2,3,0,4,5,6,7]` map before it interprets throttle, yaw, or
+AUX safety. Missing, malformed, or different mappings fail closed, and the
+saved plan validator rechecks the serialized mapping evidence.
+The replay-plan schema was therefore advanced from v1 to
+`elrs-v3-rc-replay-canary-v2`; stale v1 plans are rejected instead of being
+silently reinterpreted under the corrected channel order.
+
+COM5 was opened once by the bounded read-only observer. It reverified
+Betaflight 4.4.2 / `S411` / `TH III Plus`, captured the expected map and AUX
+ranges to ignored `work/`, and made no setting, motor, bind, reset, bootloader,
+or firmware request. Re-running all 38 private RC frames with the v2 evidence
+produced the same safe rejection: **16 armed** and **22 throttle-too-high**.
+No RF signal was transmitted and no target state was changed. Both devices
+remain under the absolute no-opening/no-flashing rule.
+
+Final validation: **194 tests passed**; `tools/validate-project.py` passed
+syntax, JSON, corpus hashes/provenance, rainbow data, CVE coverage, and local
+links across **189 tracked files**; `git diff --check` passed.

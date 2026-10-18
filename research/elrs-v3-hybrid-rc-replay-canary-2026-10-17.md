@@ -46,8 +46,11 @@ and expected symbols. Serialized `safety` booleans are never trusted.
 The decode follows `unpackAnalogChannelData()` and
 `unpackChannelDataHybridSwitch8()` in the pinned Betaflight source.
 
-- Bytes 1-5 contain roll, pitch, yaw, and throttle as four little-endian
-  10-bit values. Betaflight adds 988, producing 988-2011.
+- Bytes 1-5 contain four little-endian 10-bit OTA analog slots. Betaflight
+  adds 988, producing 988-2011. Simultaneous RF/MSP evidence for this exact
+  E8/TinyHawk pair establishes OTA slots `[1,2,3,0]` as MSP
+  `[roll,pitch,throttle,yaw]`; equivalently, the wire slots are
+  `[yaw,roll,pitch,throttle]` for this target configuration.
 - Bit 7 of byte 6 is the low-latency AUX1 value: zero maps to 1000 and one
   maps to 2000.
 - Bits 5-3 select the rotating AUX field.
@@ -63,19 +66,23 @@ also mandatory.
 ## Live AUX safety evidence
 
 `tools/tinyhawk-msp-rc-observe.py --private-aux-safety-out ...` can create a
-private `betaflight-aux-safety-v1` snapshot after its existing read-only
+private `betaflight-aux-safety-v2` snapshot after its existing read-only
 identity gate confirms Betaflight 4.4.2, board `S411`, and craft
 `TH III Plus`. It adds only these read commands:
 
 - `MSP_MODE_RANGES` (34);
-- `MSP_ADJUSTMENT_RANGES` (52); and
+- `MSP_ADJUSTMENT_RANGES` (52);
+- `MSP_RX_MAP` (64); and
 - `MSP_MODE_RANGES_EXTRA` (238).
 
-The snapshot contains every returned slot plus explicit slot counts. The
-canary tool refuses wrong identity, malformed or truncated arrays, an ARM
-range that does not prove AUX1-low disarms, and any candidate whose rotating
-AUX destination appears in a usable mode or adjustment range. The snapshot
-and resulting plan must remain beneath ignored `work/`.
+The snapshot contains every returned slot plus explicit slot counts and the
+eight-byte channel permutation. The canary tool requires the independently
+observed `[1,2,3,0,4,5,6,7]` map, and refuses wrong identity, a missing or
+different channel map, malformed or truncated arrays, an ARM range that does
+not prove AUX1-low disarms, and any candidate whose rotating AUX destination
+appears in a usable mode or adjustment range. This prevents a changed
+Betaflight map from silently reinterpreting yaw as throttle. The snapshot and
+resulting plan must remain beneath ignored `work/`.
 
 ## Selection policy
 
@@ -104,7 +111,7 @@ not a live transmit clock.
 
 A bounded read-only MSP session on COM5 reverified Betaflight 4.4.2, board
 `S411`, and craft `TH III Plus`, then captured the mode and adjustment ranges
-needed by `betaflight-aux-safety-v1`. The snapshot remains ignored beneath
+needed by `betaflight-aux-safety-v2`. The snapshot remains ignored beneath
 `work/`; no setting or firmware state was changed.
 
 The two published ranked-symbol captures were then decoded again into a
@@ -116,9 +123,17 @@ values plus 988, so this is a valid negative result rather than grounds to
 relax the gate. No private packet bytes, UID material, or AUX configuration
 were published.
 
+The channel mapping was also checked independently. The idle capture decoded
+to roll/pitch/throttle/yaw `1480/1497/1507/2011`; the roll-motion capture
+decoded to `1437--1535/1497/1507/988`. Five CRC-valid RF frames overlapped a
+USB MSP_RC sample within 120 ms, with mean absolute channel error
+`[13.6,0,0,0]`; the moving roll channel accounts for the timestamp-sensitive
+first value. This held-out comparison is the basis for the mandatory RC-map
+gate and the capture-derived regression vector.
+
 ## Private output schema
 
-The `elrs-v3-rc-replay-canary-v1` document contains:
+The corrected `elrs-v3-rc-replay-canary-v2` document contains:
 
 - one entry in `frames` with packet bytes and 21 symbols;
 - recomputable RC-channel and safety values;

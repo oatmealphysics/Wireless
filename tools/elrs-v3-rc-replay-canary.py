@@ -11,7 +11,7 @@ any frame that does not prove low throttle, disarmed, centered pitch/yaw,
 bounded roll, and an unused rotating AUX channel is rejected.  AUX evidence
 comes from a private, identity-gated Betaflight mode/adjustment snapshot.
 
-The output schema ``elrs-v3-rc-replay-canary-v1`` is a self-contained
+The output schema ``elrs-v3-rc-replay-canary-v2`` is a self-contained
 single-frame plan.  It is not accepted by the older capture-relative
 ``elrs-v3-canary-schedule.py``; ``elrs-v3-fresh-sync-clock.py`` is the reviewed
 bridge for both this schema and the three-fragment MSP schema.  Use
@@ -60,10 +60,13 @@ decode_symbols = FORWARD["decode_symbols"]
 
 # --- Betaflight 4.4.2 hybrid-RC constants (source-traced) ---
 
-CH_ROLL = 0
-CH_PITCH = 1
-CH_YAW = 2
+# The four analog values are unpacked in OTA slot order.  Simultaneous RF and
+# MSP_RC evidence for this E8/TinyHawk pair establishes the target's mapping
+# as OTA [1, 2, 3, 0] -> MSP [roll, pitch, throttle, yaw].
+CH_ROLL = 1
+CH_PITCH = 2
 CH_THROTTLE = 3
+CH_YAW = 0
 CH_AUX1 = 4
 
 ANALOG_MIN = 988
@@ -95,9 +98,10 @@ SWITCH_SAFE_VALUES_3B = {0, 6, 7}
 # 4-bit switch (index >= 6): only extremes are unambiguous
 SWITCH_SAFE_VALUES_4B_LOW = 0
 SWITCH_SAFE_VALUES_4B_HIGH = 15
-AUX_SAFETY_SCHEMA = "betaflight-aux-safety-v1"
+AUX_SAFETY_SCHEMA = "betaflight-aux-safety-v2"
 EXPECTED_BOARD_IDENTIFIER = "S411"
 EXPECTED_CRAFT_NAME = "TH III Plus"
+EXPECTED_RC_MAP = (1, 2, 3, 0, 4, 5, 6, 7)
 
 
 def decode_hybrid_rc(packet: bytes) -> dict | None:
@@ -112,7 +116,8 @@ def decode_hybrid_rc(packet: bytes) -> dict | None:
         return None
 
     packed = int.from_bytes(packet[1:6], "little")
-    channels = [988 + ((packed >> (10 * ch)) & 0x3FF) for ch in range(4)]
+    ota_channels = [988 + ((packed >> (10 * ch)) & 0x3FF)
+                    for ch in range(4)]
 
     switch_byte = packet[6]
     ch4_bit = (switch_byte >> 7) & 1
@@ -128,10 +133,10 @@ def decode_hybrid_rc(packet: bytes) -> dict | None:
         switch_width = 3
 
     return {
-        "roll": channels[CH_ROLL],
-        "pitch": channels[CH_PITCH],
-        "yaw": channels[CH_YAW],
-        "throttle": channels[CH_THROTTLE],
+        "roll": ota_channels[CH_ROLL],
+        "pitch": ota_channels[CH_PITCH],
+        "yaw": ota_channels[CH_YAW],
+        "throttle": ota_channels[CH_THROTTLE],
         "aux1": aux1,
         "ch4_bit": ch4_bit,
         "switch_index": switch_index,
@@ -190,6 +195,12 @@ def read_aux_safety(path: Path) -> dict:
     adjustments = snapshot.get("adjustment_ranges")
     if not isinstance(modes, list) or not isinstance(adjustments, list):
         raise ValueError("AUX safety snapshot is missing range arrays")
+    rc_map = snapshot.get("rc_map")
+    if (not isinstance(rc_map, list) or len(rc_map) != len(EXPECTED_RC_MAP)
+            or any(isinstance(value, bool) or not isinstance(value, int)
+                   for value in rc_map)
+            or tuple(rc_map) != EXPECTED_RC_MAP):
+        raise ValueError("AUX safety snapshot does not prove the expected RC map")
     mode_count = snapshot.get("mode_range_slot_count")
     adjustment_count = snapshot.get("adjustment_range_slot_count")
     if (isinstance(mode_count, bool) or not isinstance(mode_count, int)
@@ -235,6 +246,7 @@ def read_aux_safety(path: Path) -> dict:
         "schema": AUX_SAFETY_SCHEMA,
         "board_identifier": EXPECTED_BOARD_IDENTIFIER,
         "craft_name": EXPECTED_CRAFT_NAME,
+        "rc_map": list(EXPECTED_RC_MAP),
         "mode_ranges": normalized_modes,
         "adjustment_ranges": normalized_adjustments,
     }
@@ -288,6 +300,13 @@ def roll_distinctiveness(rc: dict) -> int:
     return abs(rc["roll"] - ANALOG_MID)
 
 
+def rc_map_is_expected(aux_safety: dict) -> bool:
+    mapping = aux_safety.get("rc_map") if isinstance(aux_safety, dict) else None
+    return (isinstance(mapping, list)
+            and not any(isinstance(value, bool) for value in mapping)
+            and tuple(mapping) == EXPECTED_RC_MAP)
+
+
 def safety_check(rc: dict, aux_safety: dict,
                  throttle_max: int | None = None) -> tuple[bool, str]:
     """Fail-closed safety gate.  Returns (safe, reason)."""
@@ -296,6 +315,8 @@ def safety_check(rc: dict, aux_safety: dict,
             or not ANALOG_MIN <= threshold <= THROTTLE_LOW_MAX):
         raise ValueError(f"throttle maximum must be in "
                          f"[{ANALOG_MIN}, {THROTTLE_LOW_MAX}]")
+    if not rc_map_is_expected(aux_safety):
+        return False, "rc_map_unverified"
     if not is_disarmed(rc):
         return False, "armed"
     if not is_low_throttle(rc, threshold):
@@ -441,7 +462,7 @@ def validate_rc_canary(plan: object, uid: bytes, aux_safety: dict) -> dict:
     """
     if not isinstance(plan, dict):
         raise ValueError("canary plan must be an object")
-    if plan.get("schema") != "elrs-v3-rc-replay-canary-v1":
+    if plan.get("schema") != "elrs-v3-rc-replay-canary-v2":
         raise ValueError("not an RC replay canary plan")
     if plan.get("transmit_enabled") is not False:
         raise ValueError("plan must have transmit_enabled=false")
@@ -495,6 +516,7 @@ def validate_rc_canary(plan: object, uid: bytes, aux_safety: dict) -> dict:
         "roll_window": [ROLL_MIN_DEVIATION, ROLL_MAX_DEVIATION],
         "rotating_aux_channel_index": rotating_aux_channel_index(rc),
         "rotating_aux_unused": True,
+        "rc_map_verified": True,
     }
     if safety != expected_safety:
         raise ValueError("serialized safety evidence disagrees with the packet")
@@ -504,6 +526,7 @@ def validate_rc_canary(plan: object, uid: bytes, aux_safety: dict) -> dict:
             "board_identifier": EXPECTED_BOARD_IDENTIFIER,
             "craft_name": EXPECTED_CRAFT_NAME,
             "arm_range_proven": True,
+            "rc_map": list(EXPECTED_RC_MAP),
             "rotating_aux_channel_index": rotating_aux_channel_index(rc),
             "rotating_aux_unused": True}:
         raise ValueError("plan AUX evidence is missing or inconsistent")
@@ -572,7 +595,7 @@ def build_plan(uid: bytes, frame: dict, interleaver: dict,
             or interleaver.get("symbols") != encode_symbols(packet)):
         raise ValueError("refusing RC canary with inconsistent symbols")
     return {
-        "schema": "elrs-v3-rc-replay-canary-v1",
+        "schema": "elrs-v3-rc-replay-canary-v2",
         "transmit_enabled": False,
         "safety": {
             "throttle": rc["throttle"],
@@ -589,6 +612,7 @@ def build_plan(uid: bytes, frame: dict, interleaver: dict,
             "roll_window": [ROLL_MIN_DEVIATION, ROLL_MAX_DEVIATION],
             "rotating_aux_channel_index": rotating_aux_channel_index(rc),
             "rotating_aux_unused": rotating_aux_is_unused(rc, aux_safety),
+            "rc_map_verified": rc_map_is_expected(aux_safety),
         },
         "rc_channels": {
             "roll": rc["roll"],
@@ -621,6 +645,7 @@ def build_plan(uid: bytes, frame: dict, interleaver: dict,
             "board_identifier": EXPECTED_BOARD_IDENTIFIER,
             "craft_name": EXPECTED_CRAFT_NAME,
             "arm_range_proven": True,
+            "rc_map": list(EXPECTED_RC_MAP),
             "rotating_aux_channel_index": rotating_aux_channel_index(rc),
             "rotating_aux_unused": True,
         },
@@ -651,7 +676,7 @@ def privacy_safe_summary(frame: dict, interleaver: dict,
     """Build a summary that omits UID, packet bytes, and symbols."""
     rc = frame["rc"]
     return {
-        "schema": "elrs-v3-rc-replay-canary-v1",
+        "schema": "elrs-v3-rc-replay-canary-v2",
         "transmit_enabled": False,
         "total_rc_frames": total_rc,
         "safe_frames": safe_count,
@@ -661,6 +686,7 @@ def privacy_safe_summary(frame: dict, interleaver: dict,
         "throttle_low": True,
         "disarmed": True,
         "pitch_yaw_centered": True,
+        "rc_map_verified": True,
         "switch_unambiguous": True,
         "rotating_aux_unused": True,
         "roll": rc["roll"],

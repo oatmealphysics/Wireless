@@ -5,8 +5,8 @@ Default behavior prints the planned MSP queries and opens no port. Live reads
 require explicit flags, exclusive port access, removed propellers, and the
 previously observed TinyHawk identity (BTFL 4.4.2, S411, TH III Plus).
 It sends only MSP_API_VERSION, MSP_FC_VARIANT, MSP_FC_VERSION,
-MSP_BOARD_INFO, MSP_NAME, MSP_RC, and optionally the read-only mode and
-adjustment-range queries. No CLI, setting, reset, bootloader, or motor
+MSP_BOARD_INFO, MSP_NAME, MSP_RC, and optionally the read-only mode,
+adjustment-range, and RX-map queries. No CLI, setting, reset, bootloader, or motor
 command is implemented. It does not access radio FIFO.
 
 Example after the operator has coordinated the port and removed propellers:
@@ -33,8 +33,9 @@ QUERIES = ((1, "API_VERSION"), (2, "FC_VARIANT"), (3, "FC_VERSION"),
            (4, "BOARD_INFO"), (10, "NAME"), (105, "RC"))
 MSP_MODE_RANGES = 34
 MSP_ADJUSTMENT_RANGES = 52
+MSP_RX_MAP = 64
 MSP_MODE_RANGES_EXTRA = 238
-AUX_SAFETY_SCHEMA = "betaflight-aux-safety-v1"
+AUX_SAFETY_SCHEMA = "betaflight-aux-safety-v2"
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -140,6 +141,14 @@ def decode_adjustment_ranges(payload: bytes) -> list[dict]:
     return entries
 
 
+def decode_rx_map(payload: bytes) -> list[int]:
+    """Decode the eight-byte Betaflight MSP_RX_MAP permutation."""
+    mapping = list(payload)
+    if len(mapping) != 8 or sorted(mapping) != list(range(8)):
+        raise ValueError("MSP_RX_MAP is not an eight-channel permutation")
+    return mapping
+
+
 def require_private_output(path: Path) -> Path:
     work = (ROOT / "work").resolve()
     target = path.resolve()
@@ -154,18 +163,20 @@ def read_aux_safety_snapshot(port) -> dict:
     """Read only the mode metadata needed to prove a replay AUX is unused."""
     replies = {}
     for command in (MSP_MODE_RANGES, MSP_MODE_RANGES_EXTRA,
-                    MSP_ADJUSTMENT_RANGES):
+                    MSP_ADJUSTMENT_RANGES, MSP_RX_MAP):
         port.write(msp_query(command))
         replies[command] = read_reply(port, command, time.monotonic() + 1.5)
     modes = decode_mode_ranges(replies[MSP_MODE_RANGES],
                                replies[MSP_MODE_RANGES_EXTRA])
     adjustments = decode_adjustment_ranges(replies[MSP_ADJUSTMENT_RANGES])
+    rc_map = decode_rx_map(replies[MSP_RX_MAP])
     return {
         "schema": AUX_SAFETY_SCHEMA,
         "board_identifier": "S411",
         "craft_name": "TH III Plus",
         "mode_range_slot_count": len(modes),
         "adjustment_range_slot_count": len(adjustments),
+        "rc_map": rc_map,
         "mode_ranges": modes,
         "adjustment_ranges": adjustments,
     }
