@@ -2426,3 +2426,126 @@ remain under the absolute no-opening/no-flashing rule.
 Final validation: **194 tests passed**; `tools/validate-project.py` passed
 syntax, JSON, corpus hashes/provenance, rainbow data, CVE coverage, and local
 links across **189 tracked files**; `git diff --check` passed.
+
+---
+
+## 44. Bounded ELRS v3 injection candidate and corrected target mapping (Codex, 2026-10-18)
+
+Started from `2db437d` with local `main` and `origin/main` at parity. The goal
+was to turn the decoded E8/TinyHawk traffic and pinned Betaflight 4.4.2 source
+into the smallest defensible wireless exploit candidate, while preserving the
+absolute no-opening/no-flashing rule for both devices. No RF transmission,
+configuration write, reset, binding, bootloader action, firmware readout, or
+motor command occurred during this work.
+
+The strongest supported path is receiver-side hybrid-RC injection, not an
+SX1280 memory-corruption exploit. In Betaflight 4.4.2, a connected,
+model-matched ELRS v3 receiver accepts a standard RC packet after the static
+UID-derived CRC14 check. The hybrid-RC CRC does not incorporate the receiver
+nonce or a separate freshness value. The nonce and four-slot hop cadence
+therefore govern delivery timing, but do not authenticate a new RC value.
+The private UID already known for this owned pair supplies the CRC initializer
+and FHSS sequence, while a fresh decoded SYNC supplies the live nonce, FHSS
+index, switch mode, telemetry ratio, and air-rate code. One RC packet cannot
+establish a disconnected session, so the first proof still has to arrive in a
+valid slot while the receiver remains connected and model-matched.
+
+This analysis also corrects section 43 above without rewriting append-only
+history. Betaflight's logical `MSP_RC` order is
+`[roll,pitch,yaw,throttle]`, and the target's observed `MSP_RX_MAP` is
+`[1,2,3,0,4,5,6,7]`. The target's four raw OTA analog slots are therefore
+`[throttle,roll,pitch,yaw]`, not the order stated in section 43. The Oct 16
+roll-motion capture is raw `[988,1437--1535,1497,1507]`, which means low
+throttle, moving roll, centered pitch, and centered yaw. The Oct 15 idle
+capture is raw `[2011,1480,1497,1507]`, which means high throttle with the
+other three axes near their observed positions. Reprocessing all 38 private
+RC frames still produces a safe negative replay result: 16 fail as armed and
+22 fail as throttle-high, now for the correct channel reason.
+
+Added `tools/elrs-v3-bounded-rc-injection.py`. It creates exactly one private,
+transmit-disabled hybrid-RC candidate with raw OTA values
+`[988,1400 or 1600,1500,1500]`: minimum valid throttle, a small left or right
+roll observation, centered pitch/yaw, and AUX1 low. It selects only an unused
+three-bit rotating AUX and preserves the repeatedly observed live value
+exactly. The packet uses the private UID-derived v3 CRC14 and the maintained
+SX1280 SF7 4/8 long-interleaver implementation. The symbol round trip is a
+consistency check only; it is not claimed as independent SX1280 RF acceptance.
+Output is restricted to ignored `work/`, refuses overwrite, explicitly says
+`transmit_enabled: false`, and the tool has no serial, SDR, or radio backend.
+
+The read-only COM5 observer now records three timestamped `MSP_RC` samples in
+the private `betaflight-aux-safety-v3` schema after the existing Betaflight
+4.4.2 / `S411` / `TH III Plus` identity gate. Its live run reverified the
+identity and exact RX map, but the receiver was in failsafe and reported
+logical throttle 885, below the valid OTA minimum. The bounded builder refused
+that snapshot as intended. It made only read-only MSP requests and did not
+change device state.
+
+The complete fail-closed gate now requires all of the following:
+
+- the exact board, craft, and eight-channel RX map;
+- a live ARM range proving AUX1-low is disarmed;
+- three or more equal-width RC samples with AUX1 low, logical throttle
+  988--1050, and pitch/yaw within 50 microseconds of center;
+- strictly increasing wall-clock timestamps spanning at most one second,
+  with the newest sample less than five seconds old and not future-dated;
+- a stable, exactly encodable rotating AUX that controls no configured mode
+  or adjustment;
+- full reconstruction of all eight expected packet bytes, explicit ACK-low,
+  CRC14 recomputation, channel decode, and symbol recomputation; and
+- a fresh CRC-valid SYNC reporting hybrid mode, telemetry ratio zero, and
+  target rate index 7 (LoRa 150 Hz).
+
+`tools/elrs-v3-fresh-sync-clock.py` accepts the new one-frame schema only after
+rechecking those invariants and the current safely disarmed live state. It
+then emits exactly one future slot and remains a transmit-disabled timing
+contract. Regression tests cover stale, future, duplicate/reversed, and
+overlong evidence; unsafe current state; wrong mapping; altered construction;
+and an ACK-bit mutation with CRC and symbols recomputed. The last case is
+rejected because validation reconstructs the complete expected packet instead
+of trusting decoded channels alone.
+
+Corrected the legacy ELRS chain's preview order to place minimum throttle in
+raw OTA slot zero and added a regression test. This does not validate or
+authorize that older chain as a live transport. It only prevents future work
+from carrying the former throttle/yaw labeling error forward.
+
+Two private plans synthesized before the channel-order correction were
+deleted immediately. They were never transmitted or committed and can only be
+regenerated after a new safe live snapshot. UID material, private decoded
+packets, live AUX configuration, and generated plans remain ignored beneath
+`work/`.
+
+Parallel source review ranked the remaining paths as follows. A CRC-valid v3
+type-3 TLM frame may refresh RX activity while Betaflight reuses retained RC
+data, creating a plausible stale-control/failsafe-suppression primitive; it
+would require a sustained approximately 37.5-packet/second hopping transport
+and is riskier than one bounded frame. Replayed or forged SYNC is a plausible
+desynchronization/DoS vector, but changing switch mode can request a persistent
+configuration save and is excluded. MSP-over-ELRS reaches the ordinary MSP
+dispatcher after connection, but only the read-only `MSP_API_VERSION` canary
+is suitable as a first probe. Semtech's continuous-RX BUSY-lock erratum is a
+low-confidence practical path at this measured PHY/rate, and no credible
+RF-to-SPI injection, malformed-length memory corruption, or controller-side
+E8 parser exploit was found.
+
+The remaining blocker is RF transport validation: B205 IQ polarity, waveform
+acceptance, exact timing, retune behavior, and minimum safe gain are not yet
+independently calibrated against this SX1280 receiver. A later one-frame test
+still requires a separate sign-off naming the exact target, revision, RF
+power, count, duration, stop conditions, and recovery. Propellers must remain
+removed; COM5 must record a new normal, disarmed, low-throttle snapshot; the
+same receive stream must yield a fresh valid SYNC; and any unexpected channel,
+AUX, arm, motor, USB, timing, or calibration state must abort before transmit.
+
+Independent safety review found and closed three fail-open conditions before
+publication: stale live evidence, a CRC-correct altered ACK bit, and a SYNC
+with the wrong or missing air-rate index. The final audit reported no remaining
+actionable finding. Final validation: **211 tests passed**;
+`tools/validate-project.py` passed syntax, JSON, corpus hashes/provenance,
+rainbow data, CVE coverage, and local links across **193 tracked files**;
+`git diff --check` passed.
+
+Handoff status: implementation and research are in commit `66ff149` on
+`main`. This append-only record is the second commit prepared for the same
+`origin/main` publication. No live-UID RF frame was transmitted.
