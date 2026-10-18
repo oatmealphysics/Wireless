@@ -2549,3 +2549,92 @@ rainbow data, CVE coverage, and local links across **193 tracked files**;
 Handoff status: implementation and research are in commit `66ff149` on
 `main`. This append-only record is the second commit prepared for the same
 `origin/main` publication. No live-UID RF frame was transmitted.
+
+---
+
+## 45. Wireless-only alternative-path audit and rate-switch latch model (Codex, 2026-10-18)
+
+Started from `edca243` with local `main` and `origin/main` at parity. The owner
+requested deep research into wireless delivery paths while restating the
+absolute no-flashing rule. This pass was source/offline only: no serial port,
+SDR, RF transmission, device reset, configuration write, opening, bootloader,
+firmware readout, or flash action occurred on either the E8 or TinyHawk.
+
+The strongest new path is a Betaflight 4.4.2 **forced rate-switch latch**. A
+CRC-valid, identity-matching v3 SYNC can advertise another supported 2.4 GHz
+air rate. `handleConnectionStateUpdate()` then calls `lostConnection()`, stops
+the timer, and retunes to that rate's fixed initial/sync channel. A normal
+successful connection previously set `lockRFmode=true`; loss does not clear
+it, and rate cycling requires it to be false. The receiver can therefore stay
+disconnected on the wrong modulation and common channel until receiver
+reinitialization or a correctly modulated sustained stream re-establishes
+phase/LQ lock. Preserving the observed hybrid switch mode avoids requesting a
+configuration save, so this is a transient runtime state path rather than a
+flash/configuration write.
+
+The existing stale-RC finding compounds the latch. At the fixed channel, a
+CRC-valid v3 type-3 TLM packet is still reported as new SPI RX data without
+copying RC values. More importantly, the outer handler also reports DATA for
+a CRC-valid SYNC that fails the later UID3/UID4 comparison. Either can make the
+generic RX layer decode the retained RC payload again while ELRS itself remains
+disconnected. This supports a source-level failsafe/control-latch candidate,
+not arbitrary control, and is hazardous if the retained frame is armed or has
+nonzero throttle. It was not tested live.
+
+Added `tools/elrs-v3-rate-switch-latch-model.py`, a packet-free Python state
+model with no UID input, file write, serial, SDR, or transmit backend. It checks
+the four source rate mappings, forced disconnect and retune, persistence of
+`lockRFmode`, the no-config-write invariant when switch mode is preserved,
+CRC rejection, post-CRC identity rejection, and type-3 retained-payload reuse.
+Its output explicitly records `transmit_enabled: false` and
+`live_validated: false`. Thirteen synthetic tests pass. A compiled host C harness
+around the pinned Betaflight functions remains the stronger next proof.
+
+The passive bootstrap was tightened. In the 4.4.2 v3 format, SYNC carries UID
+bytes 3--5. With the live target's model ID 255, the model XOR is zero, so one
+decoded SYNC reveals the CRC material and three of the four FHSS-seed bytes.
+Only UID byte 2 remains as a 256-candidate offline search; UID bytes 0 and 1 do
+not participate in this implementation's air-link CRC, FHSS seed, or SYNC
+identity comparison. This corrects older project wording that described only
+two visible UID bytes. No private UID was published.
+
+Other ranked conclusions:
+
+- MSP-over-ELRS is a general Betaflight command plane once connected and
+  model-matched. The read-only `MSP_API_VERSION` canary remains the only
+  suitable first proof. Model-ID and other write commands are excluded.
+- SYNC switch-mode changes can request a persistent configuration save; bind
+  takeover and model-match rewrites are also persistent and remain excluded.
+- The E8 presently advertises telemetry off. Official v3 transmitter logic
+  opens no SX1280 telemetry receive window in that state, so there is no
+  demonstrated normal-mode wireless controller parser surface. Enabling it
+  would require a configuration write and is not part of this pass.
+- The upstream v3.6.3 zero-length CRSF parser fix is an offline E8 firmware
+  lead only; exact E8 firmware and reachability remain unknown.
+- Same-PHY fixed-length LoRa traffic can reach SX1280 RX_DONE before the
+  application CRC check and can starve slots, but this is interference/DoS,
+  not control or code execution.
+- Betaflight PR #15694's headline deferred-hop race does not apply unchanged
+  to 4.4.2. The pinned driver does have a narrower lost-hop path if BUSY stays
+  asserted until the periodic Tick observes more than one millisecond of
+  processing age, plus an unconfirmed non-atomic double-hop window. Neither
+  has a demonstrated RF trigger at the observed SF7/BW812.5 kHz mode.
+- No OTA-controlled FIFO length, RF-to-SPI opcode path, or credible memory
+  overwrite was found in the fixed eight-byte receiver or bounded MSP
+  reassembler.
+
+Detailed evidence, version limits, official-source links, and the revised
+ranking are in
+`research/elrs-v3-wireless-alternative-paths-2026-10-18.md`. Final validation:
+**224 tests passed**; `tools/validate-project.py` passed syntax, JSON, corpus
+hashes/provenance, rainbow data, CVE coverage, and local links across **196
+tracked files**; `git diff --check` passed.
+
+Changed tracked files are the alternative-path research note, the offline
+rate-switch state model, its thirteen-test suite, and this append-only log. The
+next safe steps are a C host harness for the exact forced-rate/stale-frame
+chain and a private passive UID-byte-2 candidate scorer. Any later live RF
+test still requires a new bounded bench plan with props removed, a verified
+disarmed/minimum-throttle retained frame, strict packet/power/count limits,
+serial observation, stop conditions, and power-cycle recovery. Neither device
+may ever be flashed.
