@@ -2787,3 +2787,92 @@ passed and the pre-existing, unrelated
 none of the code or test files involved differs in this documentation-only
 change. The WSL environment does not have pytest installed, so the equivalent
 unittest runner was used.
+
+---
+
+## 48. Additional aircraft, controller, telemetry, and video target sweep (Codex, 2026-10-19)
+
+Started from `5d4e36b` on `main` and pulled `origin/main` before editing; the
+branch was current. The objective was to continue beyond the TinyHawk/E8 pair
+and identify source-verifiable wireless parser or control-plane defects in
+other aircraft, controllers, telemetry radios, video links, and Remote ID
+implementations. This was an offline source/public-artifact review only. It did
+not access a device or serial port, transmit RF, join a target network, change
+configuration, reset hardware, enter a bootloader, extract live firmware, or
+flash anything. The absolute no-flashing rule for the E8 and TinyHawk remains
+in force.
+
+The review pinned and inspected ignored working copies of Crazyflie flight
+firmware (`9912584c85db92dbbba14334ffed20ebabba463e` and release source
+`54f31e243a0b28b67efef5ba20dbb6d9890a5478`), Crazyflie nRF firmware
+(`36f284538af8254bc227ea93cd7aaa71c4dfa630`, stable `2026.04` at
+`51f900b0140c20196a0ccf647b279ee342d28e15`, and `2026.08`-tagged source at
+`884071f9c87978ef75a7c7ec34d46360405662cc`), EdgeTX main/v2.12.4/v2.11.8,
+mLRS master `a61aa83f610283b3f329170060adb899eef509e3`, and ESP-Drone master
+`db0f6562e4f67cccee3acac4dff39c9aaea4e5fa`. The source trees and temporary
+fixtures remain ignored under `work/` and were not added to the repository.
+
+Five principal findings were retained with explicit limits:
+
+1. Current Crazyflie 2.x nRF51 BLE CRTPUP reassembly accepts two 20-byte GATT
+   writes whose 19-byte data portions overflow a 32-byte member buffer by six
+   bytes. An offline freestanding 32-bit layout fixture placed
+   `packet_buffer`, `packet_length`, `packet_index`, and `data_handler` at
+   offsets 31, 63, 64, and 68 in a 76-byte object. The overwrite therefore
+   reaches parser state, padding, and only the low byte of the callback on that
+   reviewed layout. The immediate callback creates a credible control-flow
+   research candidate, but no target-build crash or RCE was demonstrated.
+2. Crazyflie STM32 CRTP Memory handling passes an attacker-selected one-byte
+   read length to the always-present virtual memory tester with only 24 bytes
+   remaining in the global packet. A length of 255 writes 231 bytes beyond the
+   object with an address-derived incrementing sequence and wraps the response
+   size to 5, which passes the later size assertion. Exact overwritten globals
+   and control-flow impact require the release ELF/map; arbitrary data and RCE
+   are not claimed.
+3. Current mLRS MAVLinkX expands compressed data into 300-byte interface
+   buffers before MAVLink CRC/signature validation. Run-length and literal
+   writes lack effective production capacity checks. This is a source-derived
+   RF-fed memory-corruption path; embedded reproduction and code execution are
+   unproven.
+4. EdgeTX main, v2.12.4, and v2.11.8 retain an unchecked S.Port-to-Bluetooth
+   byte-stuffing path. A retained 17-byte record followed by a 19-byte record
+   produces a nominal index of 36 against a 33-byte array; the first out-of-
+   bounds byte aliases `bufferIndex`, after which behavior is undefined. OTA
+   reachability requires a Bluetooth-capable build, connected Bluetooth
+   Telemetry mode, and a configured RF/module path that accepts the telemetry.
+5. ESP-Drone UDP/2390 has two post-association DoS candidates: an empty
+   datagram under-reads `rx_buffer[-1]` and requests a `SIZE_MAX` checksum read,
+   while a one-byte zero-checksum datagram queues a zero-length record whose
+   downstream subtraction reaches a fatal assertion. Neither is a write
+   primitive or RCE.
+
+Additional inventory targets were documented without promotion beyond their
+evidence. The optional Crazyflie P2P DTR example can request a 255-byte copy
+into a 59-byte local object, a 196-byte destination overrun plus source
+over-read, but it is not in the stock application and only the available P2P
+prefix is RF-controlled. SJRC F11 has a published physical root command-
+injection chain after joining its open Wi-Fi network. OpenDroneID `core-c` v2.0
+retains direct-NAN and MAVLink defects fixed only on master. Holy Stone/Fullhan,
+HDZero/LIVE555, SiK remote AT, OpenHD wifibroadcast, Parrot, Tello, and toy-drone
+families were ranked for exact-version acquisition or parser fuzzing. EdgeTX
+Ghost `MENU_DESC` is a definite module-UART overwrite with an unclosed RF
+bridge; CRSF `DEVICE_INFO` is an OOB-read candidate rather than a write.
+
+An independent final review checked the overwrite arithmetic, layout claims,
+release scope, and RF preconditions. Its corrections were incorporated:
+object-relative indexing is not an arbitrary absolute write, the EdgeTX result
+becomes undefined after its adjacent index byte is overwritten, ESP-Drone's
+two paths are distinct, and no static finding is described as demonstrated
+RCE. Operational packet sequences, payload bytes, gadget addresses, and live
+RF demonstrations are intentionally omitted pending exact-build reproduction
+and maintainer coordination.
+
+The new detailed report is
+`research/additional-wireless-target-findings-2026-10-19.md`. Validation after
+review passed `tools/validate-project.py` across 198 files. Standard-library
+discovery ran 224 tests: 223 passed, and the same pre-existing unrelated
+`test_waveform_recovers_encoded_symbols` test failed because the extractor
+returned 20 of 21 synthetic symbols. No code or test file is modified by this
+documentation-only change. The remaining next steps are private exact-release
+ELF/map builds, bounded host regressions, and coordinated disclosure before any
+live reproduction.
