@@ -2699,3 +2699,91 @@ serial or configuration write,
 reset, opening, firmware readout, bootloader action, update, or flashing took
 place. The absolute no-flashing rule remains in force for both the E8 and the
 TinyHawk.
+
+---
+
+## 47. Common wireless-subsystem RF/RCE survey (Codex, 2026-10-19)
+
+Started from `6f03efc` on `main`; pulled `origin/main` immediately before the
+edit and it was current. The owner clarified that “chipset” means the complete
+wireless-interface subsystem, including proprietary radio processors such as
+DJI OcuSync P1/S1/S2, and that RF delivery is the objective rather than an
+excluded route. This pass therefore ranked only chains with a concrete
+waveform-to-parser story and treated UART-only findings as secondary unless a
+radio bridge is established.
+
+The main new finding is a memory-corruption candidate on a source-derived
+direct-RF path in current
+ExpressLRS Backpack source (release 1.5.9 at `437a4f4`; reviewed master
+`d15ed30`). The ESP-NOW callbacks in the TX and VRX applications parse received
+bytes through a stack-local MSP object. The MSPv2 parser accepts a 16-bit
+payload length and writes bytes into a 64-byte payload array without an
+oversize rejection; checksum and source-MAC validation both occur only after
+the payload writes. An ESP-NOW v1 body can carry a 241-byte MSPv2 payload,
+yielding 177 controlled writes beyond the array.
+
+An ignored, offline WSL harness compiled the unmodified parser and CRC sources
+with GCC 13.3.0 plus ASan/UBSan. It confirmed the first invalid access at
+`msp.cpp:102`, overwrite past the containing native object, continued writes
+with a bad checksum, and full parsing before rejection of a wrong source MAC.
+The host object layout is not an ESP target layout. This confirms offline
+memory corruption; ESP-NOW reachability follows from the callback source but
+has not been demonstrated OTA. It is **not RCE**: no exact ESP8266, Xtensa
+ESP32, or RISC-V ESP32-C3 target has demonstrated control-bearing stack data or
+a controlled program counter. No transmitter or ready-to-send RF frame was
+added. The main
+ExpressLRS repository already fixed the same parser class in commit `1ade76d`,
+but the bound is absent from the reviewed Backpack files.
+
+Other high-priority paths were recorded. ExpressLRS PR #3825 fixes unchecked
+CRSF parameter chunk/index accesses reachable through a valid ELRS DATA uplink
+on standalone receivers; the path plausibly supplies an out-of-bounds stack
+write/read after link access. mavlink-router issues #487/#488 document larger
+object/stack overwrites reachable when an injectable wireless MAVLink bridge
+feeds an enabled logging endpoint. PX4 CVE-2026-32743 is a MAVLink log-handler
+stack overflow reachable where MAVLink is exposed over Wi-Fi or telemetry,
+with published DoS rather than RCE impact. INAV 9.1 issue #11776 is an
+ASan-confirmed four-byte `MSP_DATAFLASH_READ` response overrun potentially
+reachable through MSP-over-CRSF. Betaflight PR #15254 fixed an ASan-confirmed
+serial-CRSF length over-read relevant to standalone UART receivers but not the
+TinyHawk's integrated SPI-ELRS path. A CYRF6936/Spektrum receive-count ordering
+concern is retained only as a hardware-model hypothesis pending FIFO behavior
+validation.
+
+The DJI review treats P1/S1/S2 as radio/baseband subsystems with their own CPU,
+RTOS/Linux environment, and host interface. The NDSS DroneID/DUML work provides
+primary evidence for S1 architecture, S1/P1 product mapping, recoverable
+artifacts in some generations, and OTA DUML reachability through a legitimate
+controlled RC, but
+public naming/mapping—especially S2—is inconsistent. No current arbitrary-
+outsider OcuSync RF memory-corruption primitive was found. The defined route is
+exact update-artifact acquisition, offline extraction, CPU/RTOS and ingress
+task mapping, parser/version diffing, and host/emulated fuzzing before solving
+the proprietary PHY/authentication delivery layer. DroneID decoding is not
+treated as proof of C2 injection.
+
+ESP-Drone/CRTP and OpenIPC/wfb-ng were ranked as open end-to-end Wi-Fi/raw-
+802.11 fuzz targets. Walksnail update images are publicly downloadable and can
+be deeply extracted, making its proprietary baseband/Linux services another
+artifact target; the common Artosyn chip mapping remains teardown evidence.
+HDZero's open 8051 VTX parser concerns remain UART-adjacent rather than direct
+RF.
+
+Detailed evidence, applicability limits, source links, ROP/JOP proof criteria,
+and the four-track work program are in
+`research/common-drone-wireless-subsystem-rce-survey-2026-10-19.md`. The
+finding does not identify the E8 firmware and does not apply automatically to
+the TinyHawk. This pass performed no RF transmission, serial/device access,
+configuration write, reset, opening, firmware extraction from a live device,
+bootloader action, or flash. The absolute no-flashing rule remains in force for
+both owned devices.
+
+Validation: `tools/validate-project.py` passed syntax, JSON, corpus hashes and
+provenance, rainbow data, CVE coverage, and local-link checks across 197 files;
+`git diff --check` passed. Standard-library discovery ran all 224 tests: 223
+passed and the pre-existing, unrelated
+`test_waveform_recovers_encoded_symbols` failed because the extractor returned
+20 of 21 synthetic symbols. The single test failed identically when rerun and
+none of the code or test files involved differs in this documentation-only
+change. The WSL environment does not have pytest installed, so the equivalent
+unittest runner was used.
