@@ -1,5 +1,13 @@
 # TBS Crossfire (CRSF) Protocol — Attack Surface Analysis
 
+> **Evidence-status notice (2026-10-20):** This is an exploratory legacy note,
+> not a validated exploit guide. Several conclusions below overstate what the
+> public evidence establishes about current encryption defaults, binding
+> authentication, replay/injection, Wi-Fi credentials, and firmware-signature
+> enforcement. Use the evidence-corrected
+> [`research/tbs-crossfire-wireless-security-audit-2026-10-20.md`](../research/tbs-crossfire-wireless-security-audit-2026-10-20.md)
+> for current claims and scope.
+>
 > **Purpose:** CTF competition reference for attacking TBS Crossfire RC links.
 > Covers serial protocol, over-the-air RF link, binding, encryption gaps, and practical attack vectors.
 > **Last updated:** 2026-10-15

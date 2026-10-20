@@ -2876,3 +2876,115 @@ returned 20 of 21 synthetic symbols. No code or test file is modified by this
 documentation-only change. The remaining next steps are private exact-release
 ELF/map builds, bounded host regressions, and coordinated disclosure before any
 live reproduction.
+
+---
+
+## 49. TBS Crossfire air-link, controller, firmware, and CRSF audit (Codex, 2026-10-20)
+
+Started from `4a25943f6380b26f7c00e5b75b2b5696f39da68d` on `main`;
+pulled `origin/main` before editing and the branch was current. This pass
+applied the same evidence-first wireless-subsystem review to TBS Crossfire:
+separate the proprietary OTA link from CRSF serial routing, inventory public
+controller/receiver/Wi-Fi artifacts, reproduce source-level memory-safety
+candidates offline, and identify the missing links in a defensible RF-delivery
+chain. It was offline and read-only with respect to hardware. No device,
+serial port, device network service, or radio was accessed; no RF was
+transmitted; no configuration, reset, bootloader action, live firmware
+extraction, or flash occurred. Downloaded firmware was not executed. The
+absolute no-flashing rule for the owned E8 and TinyHawk remains unchanged.
+
+The review pinned public source for the TBS CRSF specification
+(`4e5fe8824211165e091651403e1667e4f32af0d9`), TBS Agent Python
+(`93e352ae46ef3019673b3836b6e25a68e1dbf208`), Crossfire reverse
+engineering (`3ca28e5f4cdbd3aacf850610ffdfbf9cadcc3a0c`), and the ESP32
+receive-side sniffer (`1d9e60ce3ff5c250a766c9fa2a0dcdd920c037ac`). Ignored
+artifacts included the official catalog, SHA-256
+`FB0811D966709C78FF5D4D1B33465E737585195A34B813B471EAC72FB15CF9DE`;
+Nano RX v6.48,
+`DD7B88D8C58E19DA718E114C244F2A64CC4F82DDD33CD9E96BA56E96F2CBF750`;
+Tango II Crossfire radio v6.48,
+`E37F7A9A849A8424E9E6D8DD4992E542655621AF670B7BA62734DA5A851961B5`;
+and the TBS Wi-Fi recovery archive,
+`6BED2EB77CCFE9FEF59F1A742CD3DE36DBF387819A912DCEB35317670842394F`.
+Additional source and artifact details, plus all source trees, binaries,
+fixtures, and private coordinates, remain ignored under `work/` and were not
+committed.
+
+The strongest new result is a routed-message parser memory-corruption
+candidate in an unnamed source-available ecosystem component. A
+source-faithful GCC 13.3.0 ASan/UBSan fixture reproduced multiple independent
+out-of-bounds reads and writes. This
+establishes offline memory corruption, not a target crash, controlled program
+counter, ROP/JOP chain, or RCE. The affected component and versions, message
+class, source coordinates, boundary arithmetic, fixture modes, and sanitizer
+traces are retained only in
+`work/disclosure/tbs-crossfire-private-findings-2026-10-20.md` pending
+coordinated maintainer disclosure; they are deliberately absent from the
+public report and commit.
+
+A direct local ingress into the relevant router is source-confirmed. General
+receiver/FC telemetry over a bound Crossfire link is vendor-documented, but
+proprietary class/direction filtering into the affected parser is unknown, and
+arbitrary unbound RF injection is not established. The result is therefore a
+parser candidate with an unclosed RF bridge, not a demonstrated nearby-radio
+exploit.
+
+Public air-link evidence remains version-bound. Independent 2021 work
+passively followed hops and decoded channels/telemetry on a legacy v6.06
+150-Hz FSK link, but explicitly did not demonstrate fake-transmitter acceptance
+or takeover. TBS catalog ID `0x0624`, displayed as v6.36, has a beta entry that
+says it fixed a critical loss-of-bind defect when telemetry was flooded. That
+establishes a remotely relevant availability surface but neither the affected
+range's start, an unbound trigger, nor memory corruption. Catalog IDs encode
+the decimal minor in the low hexadecimal byte: `0x0613` is v6.19, `0x0624` is
+v6.36, and `0x0630` is v6.48. The optional encryption note belongs to v6.19,
+not v6.13.
+
+Static artifact work found a Cortex-M vector and plaintext ARM Thumb code in
+the Tango II Crossfire-radio v6.48 package, with strings for OTA, binding,
+encryption, EEPROM, and CRSF v3. The matching-version Nano RX body remained
+opaque/high-entropy; encryption, compression, and other packing were not
+distinguished. The v3.20 recovery archive contains ESP8266 WebUI, update,
+CRSF/TCP, and MAVLink surfaces, but AP/login defaults and authenticity
+enforcement were not inferred from strings alone. The catalog `signature`
+field matched package MD5 for the reviewed files; that identifies catalog
+checksum semantics only, not a bootloader signature bypass.
+
+Adjacent CRSF consumers reinforce the bridge risk without solving RF session
+admission. The public Betaflight issue #15658/PR #15657 is a build-identity-
+length-dependent stack overflow/hang on sufficiently long suffixed builds; it
+does not apply indiscriminately to every unsuffixed final version. Two further
+downstream CRSF consumers have type-specific length-validation candidates, but
+their identities, versions, build gates, message types, and trigger analysis
+remain private pending coordination; no target fault was shown.
+Public INAV issue #11776 establishes an exact four-byte
+`MSP_DATAFLASH_READ` response-buffer overwrite in 9.1.0; commit `3ab0e180`
+fixes it, and the fix is present in 10.0.0-rc1 and later. An accepted
+MSP-over-CRSF peer can reach that handler, while unbound RF and RCE remain
+unproven. PX4
+CVE-2026-32706 remains an adjacent/raw-serial corruption advisory, and no
+convincing current ArduPilot CRSF memory-corruption primitive was found.
+
+The public report is
+`research/tbs-crossfire-wireless-security-audit-2026-10-20.md`.
+`docs/crsf-protocol-analysis.md` now carries an evidence-status notice because
+the older exploratory note overstates encryption defaults, authentication,
+Wi-Fi defaults, replay, takeover practicality, and update-signature
+conclusions. Changed tracked files are those two documents and this append-only
+log; the private disclosure packet and sanitizer fixture remain ignored.
+
+Validation: `tools/validate-project.py` passed syntax, JSON, corpus
+hashes/provenance, rainbow data, CVE coverage, and local links across 199
+files. Standard-library discovery ran 224 tests: 223 passed, and the
+same pre-existing unrelated `test_waveform_recovers_encoded_symbols` test
+failed because the extractor returned 20 of 21 synthetic symbols. The offline
+sanitizer cases reproduced all documented private memory faults. The final
+whitespace check passed. Commit/push status is recorded in the final task
+handoff.
+
+The next safe work is coordinated private maintainer disclosure, offline
+mapping of CRSF class/direction filters in the plaintext Tango II radio image,
+v6.31-to-v6.36 differential analysis of the telemetry-flood fix, and
+receive-only validation of the legacy air decoder. Any crafted-input,
+bound-link, network, or RF test requires a separate owner-approved plan under
+`SECURITY.md`; nothing here authorizes flashing.
