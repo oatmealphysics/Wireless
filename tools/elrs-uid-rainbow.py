@@ -19,22 +19,27 @@ OTA_VERSION_ID depends on the firmware build:
     - ELRS 4.x / Betaflight with USE_ELRSV4: OTA_VERSION_ID = 4
     The FHSS seed and CRC init differ between versions for the same UID.
 
-SYNC packet UID exposure by version:
-    - ELRS 4.x OTA_Sync_s struct has explicit UID4, UID5 fields → 2 bytes
-      in the clear per SYNC packet (confirmed in OTA.h:29-40).
-    - Fox-IT (2022) described 3 bytes (UID[3:5]) visible in SYNC packets,
-      based on earlier ELRS versions. Some older firmware may expose 3 bytes.
-    - The --lookup flag accepts either format: 2 bytes (AA:BB) matches
-      UID[4]:UID[5]; 3 bytes (AA:BB:CC) matches UID[3]:UID[4]:UID[5].
-    - The table always stores all 3 sync bytes for maximum coverage.
+SYNC packet UID fields by version:
+    - Betaflight 4.4.2 / OTA v3 carries UID3, UID4, and UID5 fields. UID3,
+      UID4, and the upper two bits of UID5 are unmasked. Model match may XOR
+      the lower six bits of the transmitted UID5 field; with model ID 255 the
+      XOR is zero and the field equals UID[5].
+    - ELRS 4.x removes UID3 and carries UID4 and UID5. The same model-match
+      qualification applies to the lower six bits of the UID5 field.
+    - The --lookup flag accepts either an already recovered, unmasked
+      UID[4]:UID[5] suffix or UID[3]:UID[4]:UID[5]. A raw masked UID5 field
+      must be unmasked or independently resolved with sufficient CRC evidence
+      before lookup.
+    - The table stores UID[3:5] lookup material for both versions; that column
+      is not a claim that OTA v4 transmits a UID3 field.
 
 Usage:
     python3 elrs-uid-rainbow.py                       # generate table (OTA v3 default)
     python3 elrs-uid-rainbow.py --ota-version 4       # generate table for OTA v4 targets
     python3 elrs-uid-rainbow.py -w wordlist.txt       # use external wordlist
     python3 elrs-uid-rainbow.py -o table.csv          # output to CSV
-    python3 elrs-uid-rainbow.py --lookup AA:BB        # reverse lookup UID[4:5] from SYNC capture
-    python3 elrs-uid-rainbow.py --lookup AA:BB:CC     # reverse lookup UID[3:5] (legacy 3-byte)
+    python3 elrs-uid-rainbow.py --lookup AA:BB        # lookup recovered UID[4:5]
+    python3 elrs-uid-rainbow.py --lookup AA:BB:CC     # lookup recovered UID[3:5]
 """
 
 import hashlib
@@ -920,7 +925,7 @@ def lookup_sync(table: list[dict], sync_hex: str) -> list[dict]:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ELRS Binding Phrase → UID Rainbow Table Generator"
+        description="ELRS Binding Phrase to UID Rainbow Table Generator"
     )
     parser.add_argument(
         "-w", "--wordlist",
@@ -941,9 +946,9 @@ def main():
     )
     parser.add_argument(
         "--lookup",
-        help="Reverse lookup from captured SYNC packet (hex, colon-separated). "
-             "Accepts 2 bytes (UID[4]:UID[5], ELRS 4.x SYNC struct) or "
-             "3 bytes (UID[3]:UID[4]:UID[5], legacy/Fox-IT convention)",
+        help="Reverse lookup from recovered, unmasked SYNC identity bytes "
+             "(hex, colon-separated). Accepts UID[4]:UID[5] or "
+             "UID[3]:UID[4]:UID[5]; raw model-match-masked UID5 is not valid.",
     )
     parser.add_argument(
         "--phrase",
@@ -965,7 +970,7 @@ def main():
         print(f"OTA version: {ota_ver}")
         print(f"UID:         {uid_hex(uid)}")
         print(f"UID bytes:   {list(uid)}")
-        print(f"SYNC bytes:  {sync_bytes_hex(uid)}  (UID[3:5], visible in SYNC packets)")
+        print(f"SYNC bytes:  {sync_bytes_hex(uid)}  (unmasked UID[3:5] lookup value)")
         print(f"FHSS seed:   0x{uid_to_fhss_seed(uid, ota_ver):08X}")
         print(f"CRC init:    0x{uid_to_crc_init(uid, ota_ver):04X}")
         return

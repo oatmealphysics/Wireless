@@ -628,7 +628,7 @@ def forge_disarm_frame():
 | **OTA encryption** | Optional (undocumented cipher) | **None** | CRSF slightly better (if enabled) |
 | **OTA authentication** | None (CRC only) | None (CRC only) | Tie — both weak |
 | **Binding secret** | TX serial number | Binding phrase → MD5 → UID | ELRS easier to brute-force (phrase dictionary) |
-| **SYNC packet leakage** | Unknown | UID[3:5] sent in plaintext | ELRS worse (leaks UID bytes) |
+| **SYNC packet identity fields** | Unknown | OTA v3 carries UID3/UID4/UID5, but model match may XOR UID5's lower six bits; OTA v4 removes UID3 | ELRS exposes version-dependent UID material; only the model-ID-255 lab pair exposes v3 UID[3:5] directly |
 | **FHSS recovery** | Passive observation (~1s) | Compute from UID (instant if known) | ELRS worse if UID known |
 | **Hop channels** | 50 up + 50 down (868/915 MHz) | 80 channels (2.4 GHz) | Similar complexity |
 | **Failsafe time** | ~1 second | ~1 second (configurable) | Similar |

@@ -660,6 +660,13 @@ ExpressLRS is a popular open-source RC link protocol for FPV drones.
 - **Fixed:** ELRS 3.x (protocol-level redesign) — verify against official release notes
 - **CTF relevance:** If the target runs ELRS 1.x/2.x, an attacker with line-of-sight and the right transmitter hardware can fully hijack the control link
 
+The historical fix does **not** mean every v3 SYNC omits UID fields. The pinned
+Betaflight 4.4.2 OTA v3 implementation carries `UID3`, `UID4`, and `UID5`; model
+match may XOR the lower six bits of the transmitted UID5 field. The owned
+model-ID-255 pair has zero XOR. Treat that target-specific air-link recovery as
+separate from claiming that the Fox-IT 1.x/2.x phrase-recovery procedure applies
+unchanged to all v3 firmware.
+
 ### FrSky / Crossfire / Other RC Protocols
 
 - **General assessment:** No encryption, no strong authentication. "Other hobby protocols like CRSF and FrSky aren't secure either" (AnyLeaf)

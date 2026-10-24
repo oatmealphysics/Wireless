@@ -98,7 +98,7 @@ typedef struct {
             rateIndex:4;       // raw rate table index
     uint8_t UID3;              // UID[3] sent in plaintext
     uint8_t UID4;              // UID[4] sent in plaintext
-    uint8_t UID5;              // UID[5] XORed with ModelMatch
+    uint8_t UID5;              // UID[5], lower 6 bits XORed when ModelMatch is on
 } PACKED OTA_Sync_s;
 ```
 
@@ -114,7 +114,7 @@ typedef struct {
             otaProtocol:2,     // NEW: CRSF vs MAVLink
             free:1;
     uint8_t UID4;              // UID[4] still in plaintext
-    uint8_t UID5;              // UID[5] still XORed with ModelMatch
+    uint8_t UID5;              // UID[5], lower 6 bits XORed when ModelMatch is on
 } PACKED OTA_Sync_s;
 ```
 
@@ -126,18 +126,26 @@ typedef struct {
 | `rateIndex` | 4-bit raw table index | Replaced by `rfRateEnum` (full byte) | Rate matching uses enum now, not position in rate table |
 | `geminiMode` | N/A | 1 bit | New field, not security-relevant |
 | `otaProtocol` | N/A | 2 bits | Signals CRSF vs MAVLink mode |
-| `UID4`, `UID5` | Present | Present | Still leaked in plaintext (UID4) and weakly masked (UID5) |
+| `UID4`, `UID5` | Present | Present | `UID4` and the upper two bits of `UID5` are direct; the lower six `UID5` bits may carry the model-match XOR |
 
 ### UID leakage comparison
 
 | | v3 | v4 |
 |---|---|---|
 | UID bytes in SYNC | UID[3], UID[4], UID[5] | UID[4], UID[5] |
-| Plaintext UID bytes | UID[3], UID[4] (2 bytes) | UID[4] (1 byte) |
-| Known from SYNC alone | UID[3:6] (3 bytes, UID5 masked) | UID[4:6] (2 bytes, UID5 masked) |
+| Direct UID material | UID[3], UID[4], upper 2 bits of UID[5] | UID[4], upper 2 bits of UID[5] |
+| Model-match-dependent field | lower 6 bits of transmitted `UID5` | lower 6 bits of transmitted `UID5` |
 | Unknown UID bytes | UID[0:3] (3 bytes) | UID[0:4] (4 bytes) |
 
-**This slightly increases the brute-force space** for recovering the full UID from passive observation. In v3, an attacker knowing UID[3:5] could reconstruct the FHSS sequence with 2^16 guesses (UID[0:2] only affect MD5 but not FHSS). In v4, they need 2^24 guesses (UID[0:3]). However, since the FHSS seed uses UID[2:5], and UID[2] is now unknown, the actual FHSS brute-force space goes from **1 value** (v3: UID[2:5] all known or derivable) to **256 values** (v4: UID[2] unknown).
+Do not equate a transmitted `UID5` field with the full UID byte without knowing
+the model-match state. With model match disabled (`modelId == 255`), the XOR is
+zero and v3 exposes UID bytes 3--5 directly. This is the measured configuration
+of the owned E8/TinyHawk pair. For that v3 case, only UID[2] remains unknown in
+the four-byte FHSS seed, giving 256 source-derived candidates; UID[0] and
+UID[1] do not participate in this air-link seed. OTA v4 removes `UID3`, adding
+another unknown FHSS-seed byte when no other evidence supplies it. The CRC
+initializer independently depends on the full UID[4:5] suffix and can constrain
+the masked field once packet bytes have been decoded.
 
 In practice, **this doesn't matter much for CTF**: the binding phrase → MD5 → UID pipeline gives you all 6 bytes if you know the phrase, and rainbow table attacks remain fully effective.
 
@@ -229,7 +237,12 @@ if (!enumRatetoIndex(proposedRateEnum, proposedRateIdx)
     return false;
 ```
 
-**v4 validates only UID[4] and the upper 2 bits of UID[5]** on SYNC reception, vs UID[3]+UID[4] + upper 2 bits of UID[5] in v3. This is interesting: despite sending fewer UID bytes, the validation is actually **weaker** (fewer bytes checked before accepting a SYNC). However, the CRC check that runs before `ProcessRfPacket_SYNC` still provides the real anti-spoofing, and the CRC depends on the full UID through the initializer.
+**v4 compares only UID[4] and the upper 2 bits of UID[5]** in its SYNC identity
+check, versus UID[3] + UID[4] + the upper 2 bits of UID[5] in v3. In both
+versions a CRC check runs before `ProcessRfPacket_SYNC` and depends on the full
+UID[4:5] suffix. CRC is an integrity/collision check, not cryptographic
+authentication, so it should not be described as an independent identity
+proof.
 
 **v4 adds rate validation**: the RX now checks that the proposed rate is both a valid enum value AND supported by the hardware. This prevents a crafted SYNC from crashing the RX with an invalid rate index.
 
@@ -282,7 +295,9 @@ Despite the major version bump, v4 does **not** add:
 
 ## 10. Attack Script Update Checklist
 
-For tools targeting v4 ELRS (like the TinyHawk III in our lab), the following constants and computations need updating from the v3 implementations:
+For tools targeting OTA v4 ELRS (not the owned TinyHawk III, whose live
+Betaflight 4.4.2 receiver is OTA v3), the following constants and computations
+need updating from the v3 implementations:
 
 | Component | v3 Value/Behavior | v4 Value/Behavior | Script Impact |
 |---|---|---|---|
@@ -291,7 +306,7 @@ For tools targeting v4 ELRS (like the TinyHawk III in our lab), the following co
 | Per-packet CRC | Static init | `init ^ nonce` (data), `init ^ 0` (SYNC) | Must track nonce for data packet CRC |
 | SYNC channel (2.4G) | `freq_count/2 + 1` = 41 | `freq_count/2` = 40 | Listen/inject on channel 40 |
 | FHSS seed | `UID[2:5]` with `UID[5]^3` | `UID[2:5]` with `UID[5]^4` | Hop sequence changes |
-| SYNC struct | 6 bytes: fhss, nonce, mode\|rate, UID3, UID4, UID5 | 7 bytes: fhss, nonce, rfRateEnum, mode\|tlm\|gemini\|proto, UID4, UID5 | Forge/parse SYNC packets |
+| SYNC struct | 6 payload bytes: fhss, nonce, mode\|rate, UID3, UID4, UID5 | 6 payload bytes: fhss, nonce, rfRateEnum, mode\|tlm\|gemini\|proto, UID4, UID5 | Forge/parse SYNC packets |
 | SYNC UID fields | UID[3], UID[4], UID[5] | UID[4], UID[5] | UID3 no longer sniffable from SYNC |
 | Rate field | `rateIndex` (4-bit table index) | `rfRateEnum` (8-bit enum) | Rate spoofing |
 | Data packet type | `PACKET_TYPE_MSPDATA` (0b01) / `PACKET_TYPE_TLM` (0b11) | `PACKET_TYPE_DATA` (0b01) for both | Packet construction |

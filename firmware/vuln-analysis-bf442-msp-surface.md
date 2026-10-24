@@ -47,7 +47,7 @@ available over the ELRS radio link.
 |---|---|---|
 | CRC14 | `validatePacketCrcStd()` expresslrs.c:715 | Requires UID-derived `crcInitializer = (UID[4]<<8\|UID[5]) ^ 3`. Bind-mode UID `{0,1,2,3,4,5}` → init = `0x0401 ^ 3 = 0x0402`. |
 | `crcHigh` field | OTA packet header, 6 bits | For v3 non-WIDE non-RC packets: `crcHigh = 0` (expresslrs.c:715 — `ValidatePacketCrcStd` sets `OtaCrcHigh = 0` for these types). Not mixed with nonce. |
-| Connection state | `connectionState == ELRS_CONNECTED` | Achieved by sending valid SYNC packets. SYNC leaks UID[3]/[4]/[5] so an observer can reconstruct the necessary bytes. |
+| Connection state | `connectionState == ELRS_CONNECTED` | Achieved by valid, version-matched SYNC packets. v3 carries UID3/UID4/UID5 fields, but generic model match may XOR UID5's lower six bits. The model-ID-255 lab pair has zero XOR. |
 | Model match | `connectionHasModelMatch` | Default `modelId = 0xFF` → `modelXor = 0x00` after `(~modelId) & ELRS_MODELMATCH_MASK` = `0x00 & 0x3F = 0x00`. Only 6 bits validated in SYNC. |
 | MSP buffer bounds | `receiveMspData()` | Bounded by `ELRS_MSP_BUFFER_SIZE=65` and `ELRS_MSP_BYTES_PER_CALL=5`. No overflow, but no replay/sequence protection beyond `packageIndex` matching. |
 
@@ -203,14 +203,20 @@ The CRC14 with a UID-derived initializer provides integrity (bit-error detection
 weak form of access control (must know UID to generate valid CRC). It is **not**
 cryptographic authentication:
 - 14-bit CRC space = 16,384 possible values. Brute-force at radio rate is feasible.
-- The initializer depends only on UID[4] and UID[5] (16 bits), both visible in SYNC packets.
+- The initializer depends only on the actual UID[4] and UID[5] (16 bits).
+  UID4 is direct in v3 SYNC; UID5's lower six transmitted bits can be
+  model-match-masked and require known model state or CRC resolution. The
+  owned model-ID-255 pair has zero mask.
 - No HMAC, no encryption, no session keys.
 
 ### 5.3 SYNC Packet Leaks UID Bytes
 
-Every SYNC packet contains UID[3], UID[4], and UID[5] in plaintext
-(`expresslrs.c:662`). Combined with FHSS sequence observation (which reveals the
-remaining bytes via the deterministic LCG), the full UID is recoverable from passive
+Every v3 SYNC packet contains `UID3`, `UID4`, and `UID5` fields
+(`expresslrs_common.h`; processed at `expresslrs.c:662`). UID3, UID4, and the
+upper two UID5 bits are direct; model match may XOR the lower six UID5 bits.
+For this model-ID-255 pair the XOR is zero. Combined with FHSS sequence
+observation (which can resolve the remaining seed byte), the air-link UID
+material is recoverable from passive
 observation.
 
 ### 5.4 Binding Mode Uses Known UID

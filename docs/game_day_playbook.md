@@ -366,37 +366,45 @@ sudo bettercap -iface wlan0
 
 ### 4.2 ELRS Attacks
 
-#### 4.2.1 ELRS UID Capture via Rainbow Table
+#### 4.2.1 Betaflight 4.4.2 / OTA v3 SYNC identity fields
 
-**Time to attack: 30-120 seconds (capture SYNC + lookup).**
+The owned TinyHawk runs Betaflight 4.4.2 with ELRS OTA v3. Its pinned source
+and the decoded passive captures agree on the following target-specific facts:
+
+- the v3 sync/initial channel is index 41 (nominally about 2441.4 MHz), not
+  the v4 channel 40;
+- decoded eight-byte OTA frame offsets 4, 5, and 6 are `UID3`, `UID4`, and
+  `UID5` (offsets 3, 4, and 5 within the six-byte SYNC payload);
+- `UID3` and `UID4`, plus the upper two bits of `UID5`, are unmasked;
+- when model match is enabled, only the lower six bits of the transmitted
+  `UID5` field are XORed with the inverse model ID; and
+- this pair's read-only configuration reports model ID 255, so that XOR is
+  zero and the three transmitted fields equal UID bytes 3--5.
+
+Betaflight validates CRC14 before processing those identity fields. The v3
+initializer is `((UID[4] << 8) | UID[5]) ^ 3`, so a generic raw `UID5` field
+must not be called the full UID byte until model-match state or sufficient
+independent CRC evidence resolves its lower six bits. The project's passive
+result is stronger than a
+field-layout inference: 16 decoded SYNC frames agreed on the suffix, and that
+suffix independently validated 38 decoded RC frames.
+
+For a wordlist lookup, use only the recovered, unmasked bytes:
 
 ```bash
-# 1. Tune SDR to ELRS sync channel (channel 40 = ~2440 MHz)
-# Capture SYNC packets — they contain UID[4] and UID[5] in plaintext
-
-# 2. Look up captured UID bytes against rainbow table
-python3 tools/elrs-uid-rainbow.py --lookup <UID4>:<UID5>
-
-# If match found: you now have the binding phrase
-# Full UID is known → you know the FHSS sequence and CRC seed
+python3 tools/elrs-uid-rainbow.py --ota-version 3 --lookup <UID3>:<UID4>:<UID5>
 ```
 
-**If no rainbow table match:**
+OTA v4 is the format that removes `UID3` from SYNC. The earlier statement that
+v3 removed UID bytes and therefore required jamming was incorrect.
 
-```bash
-# Brute-force remaining UID bytes
-# With UID[3:5] known from SYNC, only UID[0:3] unknown
-# For ELRS v1.x/v2.x: only 128 candidates (Fox-IT, 2022)
-# For ELRS v3.x: UID[3:5] are no longer sent in SYNC — must jam instead
-```
-
-#### 4.2.2 ELRS Link Hijack (v1.x/v2.x — full UID known)
+#### 4.2.2 Version-matched ELRS link testing (full air-link UID known)
 
 Once you have the full UID:
 
 ```bash
 # 1. Compute FHSS hopping sequence from UID
-#    Sequence is deterministic: 256 entries over 80 channels (2400.4–2479.4 MHz)
+#    Betaflight 4.4.2 builds 240 entries: three 80-channel blocks
 
 # 2. Compute CRC initializer from UID
 #    CRC14 poly: 0x2E57 | CRC16 poly: 0x3D65
@@ -410,7 +418,7 @@ Once you have the full UID:
 
 > **Note:** This attack requires `elrs-analyzer.py` (not yet built) or manual GNU Radio work with the B210.
 
-#### 4.2.3 ELRS Jamming (v3.x fallback or quick DoS)
+#### 4.2.3 ELRS Jamming (availability fallback or quick DoS)
 
 **Time to attack: 5 seconds.**
 
@@ -418,7 +426,9 @@ Once you have the full UID:
 # Wideband jam on 2.4 GHz ISM
 # WARNING: Check CTF rules — RF jamming may be prohibited
 
-# Targeted: jam ELRS sync channel only (~2440 MHz, channel 40)
+# Targeted: use the version-matched sync channel
+# Betaflight 4.4.2 OTA v3: channel 41, nominally about 2441.4 MHz
+# OTA v4: channel 40
 # This disrupts the SYNC mechanism — drone enters failsafe
 
 # Using B210 with GNU Radio:
@@ -687,7 +697,7 @@ sudo aireplay-ng -0 0 -a <DRONE_BSSID> wlan1mon
 #### 4.6.3 ELRS UID Recovery → Link Hijack + GPS Spoof
 
 ```bash
-# 1. Capture SYNC packet → extract UID[4:5]
+# 1. Decode a version-matched SYNC and resolve any UID5 model-match mask
 # 2. Rainbow table lookup → get binding phrase
 # 3. Compute full FHSS sequence + CRC seed
 # 4. Inject crafted packets to override legitimate TX
@@ -771,7 +781,7 @@ MINUTE 15+:   Advanced attacks, second-pass on resistant targets
 
 | Problem | Fix |
 |---|---|
-| No SYNC packets captured | Confirm ELRS is on 2.4 GHz (not 900 MHz). Check center freq (~2440 MHz). |
+| No SYNC packets captured | Confirm the RF domain and OTA version. For this Betaflight 4.4.2 v3 pair, check channel 41 (nominally about 2441.4 MHz); v4 uses channel 40. |
 | Rainbow table no match | Binding phrase is custom / not in wordlist. Fall back to brute-force or jam. |
 | E8 serial probe no response | **Battery must be installed and power switch ON.** USB alone only charges. |
 

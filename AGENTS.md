@@ -97,8 +97,10 @@ The binding phrase derives the pairing UID; it is not encryption. For the live
 Betaflight 4.4.2 v3 receiver, the source-derived model is:
 
 1. Binding phrase → MD5 hash → first 6 bytes = UID
-2. UID[4] and UID[5] are visible in every SYNC packet; this is only 16 bits of
-   the six-byte UID, not the full pairing value
+2. Betaflight 4.4.2 OTA v3 SYNC carries `UID3`, `UID4`, and `UID5` fields.
+   `UID3`, `UID4`, and the upper two `UID5` bits are direct; model match can
+   XOR the lower six `UID5` bits. This pair's model ID 255 makes that XOR zero,
+   so its decoded SYNC fields equal UID bytes 3--5. OTA v4 removes `UID3`.
 3. UID seeds the FHSS hopping sequence (240 entries for the 80-channel 2.4 GHz domain)
 4. UID seeds the CRC initializer (CRC14 or CRC16)
 5. No encryption on any OTA packet

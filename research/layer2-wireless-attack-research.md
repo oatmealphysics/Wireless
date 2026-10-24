@@ -122,9 +122,10 @@ RF jamming (Ettus B205/B210, or just high-power 2.4 GHz noise)
 
 #### ELRS-specific attack surface
 
-- **Binding phrase recovery from RF:** SYNC packets leak UID[4] and UID[5] in
-  plaintext. Combined with a rainbow table (we have 723 phrases), partial UID
-  recovery is possible without touching the controller at all.
+- **Binding phrase/UID recovery from RF:** field layout is OTA-version-specific.
+  Betaflight 4.4.2 v3 carries UID3, UID4, and UID5, but model match may XOR the
+  lower six UID5 bits. On this model-ID-255 pair the XOR is zero; other links
+  require mask or CRC resolution before using the 723-phrase rainbow table.
 - **ELRS WiFi update page CSRF/injection:** The web server is minimal (ESPAsyncWebServer).
   No CSRF tokens, no auth. If the TX is in WiFi mode and we're on the same network,
   any HTTP request is accepted.

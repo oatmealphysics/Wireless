@@ -193,9 +193,18 @@ For SiK telemetry radios (no encryption on standard firmware):
 
 ### 3.1 ELRS Version Fingerprinting
 
-Before attacking, determine the ELRS version:
-- **1.x / 2.x:** Vulnerable to binding phrase recovery (MD5 hash, UID leak in sync packet)
-- **3.x:** Protocol redesign, binding phrase leak patched — different attack surface
+Determine the exact OTA format before interpreting a SYNC. Do not infer field
+layout from the marketing major version alone:
+
+- **1.x / 2.x:** the 2022 Fox-IT binding-phrase recovery applies to the
+  affected historical formats.
+- **Betaflight 4.4.2 / OTA v3 (the owned TinyHawk):** the six-byte SYNC payload
+  is `fhssIndex, nonce, flags, UID3, UID4, UID5`. Model match can XOR only the
+  lower six bits of the transmitted `UID5`; this pair has model ID 255, so the
+  XOR is zero. The receiver compares 18 UID bits and checks CRC14 with the full
+  `UID[4:5]`-derived initializer.
+- **OTA v4:** `UID3` is removed and replaced by the separate rate/flags layout;
+  v3 tooling must not parse it as v3.
 
 | Method | Tool | Detail |
 |---|---|---|
@@ -203,7 +212,7 @@ Before attacking, determine the ELRS version:
 | Capture sync packets OTA | B210 + GNU Radio | Analyze 2.4 GHz ISM band for ELRS FHSS pattern |
 | Identify protocol version from sync format | Custom decoder | Sync packet structure differs between 2.x and 3.x |
 
-### 3.2 ELRS 1.x/2.x Binding Phrase Recovery
+### 3.2 Historical ELRS 1.x/2.x Binding Phrase Recovery
 
 **Attack path (from our reference doc):**
 1. Capture sync packets with B210 — extract final 3 bytes of UID
@@ -212,22 +221,27 @@ Before attacking, determine the ELRS version:
 4. With recovered binding parameters, configure an attack TX to match
 5. Inject control packets — full link hijack
 
-**Lab exercise:**
-1. Set TinyHawk III to ELRS 2.x firmware (if currently on 3.x, downgrade for testing)
-2. Arm and hover (tethered/props off for safety)
-3. Capture ELRS traffic with B210
-4. Run binding phrase recovery
-5. Inject a disarm command from attack TX
-6. Re-flash to 3.x and verify the attack no longer works
+This historical exercise is not applicable to the owned TinyHawk. Its firmware
+must not be downgraded, reflashed, or otherwise changed. Validate the literature
+against archived artifacts or a separate expendable target whose owner permits
+that exact test.
 
 **Script to build:** `elrs-analyzer.py` — capture ELRS sync packets via B210, extract UID bytes, compute binding parameters.
 
 ### 3.3 ELRS 3.x Considerations
 
-If the target runs 3.x, binding phrase recovery is patched. Remaining options:
-- **Jamming:** Brute-force interference on 2.4 GHz ISM — drone enters failsafe (depends on failsafe config: land, hover, or RTH)
-- **Failsafe exploitation:** If jamming triggers RTH, combine with GPS spoofing to redirect the RTH destination
-- **Physical-layer analysis:** Research whether 3.x has any remaining sync/timing leaks (open research question)
+For the pinned Betaflight 4.4.2 implementation, it is incorrect to say that v3
+removes UID fields from SYNC. Source inspection and passive decoding established
+the v3 structure above. Sixteen decoded SYNC frames agreed on the two-byte CRC
+suffix, and that suffix independently validated 38 decoded RC frames. On this
+model-match-disabled pair, a decoded SYNC also directly provides UID bytes
+3--5; UID byte 2 is the remaining unknown FHSS-seed byte (256 candidates).
+That target-specific air-link recovery is distinct from claiming that the old
+Fox-IT phrase-recovery procedure applies unchanged to every v3 implementation.
+
+Remaining work is version-matched timing and receiver-acceptance validation.
+Jamming is an availability fallback, not a consequence of UID fields being
+absent from v3 SYNC.
 
 ### 3.4 nRF24L01 / Toy Drone Replay
 

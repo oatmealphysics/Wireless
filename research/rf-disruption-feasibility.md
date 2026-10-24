@@ -262,7 +262,8 @@ the specific channel the link is currently using, concentrating all power into
    SDRs can retune.
 
 **Partial mitigation — sync channel jamming:**
-The sync channel is always channel 40 (center of band). SYNC packets appear every
+The sync channel is version-dependent: Betaflight 4.4.2 OTA v3 uses channel 41,
+while OTA v4 uses channel 40. SYNC packets appear every
 `freq_count` hops (every 80 packets). Jamming only the sync channel:
 - Forces the RX to miss SYNC packets
 - Does NOT cause immediate disconnection — the RX uses its own timing to predict hops
@@ -401,10 +402,12 @@ for the same end goal (extract the binding phrase):
 ### 7.1 Passive SYNC Packet Capture (Current Path — §20 in SESSION-NOTES)
 
 - Capture ELRS packets passively with the SDR
-- SYNC packets expose UID[4] and UID[5] (16 bits of the 6-byte UID)
+- Betaflight 4.4.2 v3 SYNC carries UID3/UID4/UID5 fields. UID5's lower six
+  transmitted bits may be model-match-masked; this model-ID-255 pair has zero XOR
 - Cross-reference against the rainbow table (723 phrases)
 - **Advantage:** Completely passive, no jamming needed
-- **Limitation:** Only 16 bits — may not uniquely identify the phrase
+- **Limitation:** use only unmasked or CRC-resolved UID material for lookup;
+  a raw generic UID5 field is not automatically the full UID byte
 
 ### 7.2 Side-Channel UID Recovery
 
@@ -419,9 +422,8 @@ for the same end goal (extract the binding phrase):
 - 6-byte UID = 48 bits, but seeded from MD5 of the binding phrase
 - Common binding phrases are the realistic search space
 - Rainbow table already covers 723 phrases
-- With 16 bits from SYNC capture (UID[4:5]), the search space shrinks to
-  ~723 / 65536 ≈ 0.01 matches per table entry — effectively a unique match
-  if the phrase is in the table
+- On this model-ID-255 pair, recovered UID[3:5] can be compared directly with
+  the phrase table. Generic links require model-match or CRC resolution first
 
 ### 7.4 ESP32 BLE Exploitation (If E8 Has Active BT)
 

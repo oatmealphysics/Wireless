@@ -82,7 +82,11 @@ The build does **not** define `USE_ELRSV4`. This means:
 - SYNC packet validation checks `UID[3]` AND `UID[4]` (V4 drops the UID[3] check)
 - FHSS sync channel = `(freqCount / 2) + 1` = channel 41 (V4 uses channel 40)
 
-**Attack implication:** V3 leaks an additional UID byte (UID[3]) in the SYNC validation path. Combined with the UID[4] and UID[5] already sent in plaintext, **3 of 6 UID bytes are directly observable** from passive capture.
+**Air-link implication:** OTA v3 adds a `UID3` field that v4 removes. `UID3`,
+`UID4`, and the upper two bits of the transmitted `UID5` field are direct UID
+material; model match may XOR the lower six `UID5` bits. The owned pair has
+model ID 255, so its XOR is zero and its decoded SYNC exposes UID bytes 3--5
+directly. Do not generalize that last property to every v3 link.
 
 ### 4.2. Hardcoded Binding UID
 
@@ -134,7 +138,7 @@ FHSS sequence derivation (source-confirmed, `expresslrs_common.c:193–230`):
 
 ```
 Seed = (UID[2] << 24) | (UID[3] << 16) | (UID[4] << 8) | (UID[5] ^ 3)
-Sequence = 256 entries, shuffled Fisher-Yates with seed-derived PRNG
+Sequence = 240 entries for the 80-channel domain (three complete blocks), shuffled with the seed-derived PRNG
 Sync channel = channel 41 (V3) at every 80th entry
 Channel freq = freqStart + (channel * spread / scale)
 ```
@@ -324,7 +328,10 @@ The string search for crypto-related terms (`md5`, `hash`, `key`, `encrypt`, `se
 - No key derivation or key exchange in the firmware
 - The binding phrase hash (MD5) is computed at build time, not at runtime on the receiver
 
-The only "secret" is the 6-byte UID derived from the binding phrase, and 3 of those bytes (UID[3], UID[4], UID[5]) are observable from SYNC packets.
+The only shared identity material is the six-byte UID derived from the binding
+phrase. A v3 SYNC carries fields corresponding to UID[3], UID[4], and UID[5],
+with the lower six bits of the last field subject to model-match XOR. For this
+model-ID-255 pair that XOR is zero.
 
 ---
 
@@ -335,7 +342,7 @@ The only "secret" is the 6-byte UID derived from the binding phrase, and 3 of th
 | Finding | Impact | Binary Evidence |
 |---|---|---|
 | **No encryption on OTA** | All packets forgeable with known UID | No crypto strings in binary |
-| **3 of 6 UID bytes in plaintext** | SYNC leaks UID[3:5] (V3); 24 bits of 48-bit UID | SYNC struct in source, V3 build confirmed |
+| **Version-dependent UID fields in SYNC** | v3 carries UID3/UID4/UID5; UID5's lower six bits may be model-match-masked. This pair's model ID 255 makes all UID[3:5] direct | SYNC struct, v3 source, live config, and passive decode |
 | **CRC14 depends only on UID** | V3 doesn't mix nonce; static CRC init | `nonceValidator = 0` in V3 path |
 | **Hardcoded binding UID** | `{0,1,2,3,4,5}` for all binding mode | At `0x0805EF1C` |
 | **Failsafe = DROP (motors off)** | Signal loss → crash in 1.5s | Default config at `failsafe_procedure = 1` |
@@ -352,8 +359,8 @@ The only "secret" is the 6-byte UID derived from the binding phrase, and 3 of th
 
 ### Recommended Next Steps
 
-1. **Lab-verify SYNC capture** — Use SDR or SX1280 sniffer to confirm UID[3:5] are readable from a live TinyHawk III on channel 41
-2. **Build rainbow table attack tool** — Given UID[3:5], brute-force the binding phrase offline (existing `tools/elrs-uid-rainbow.py` covers this)
+1. **Completed: passively decode v3 SYNC** — 16 CRC-valid SYNC frames from the owned pair confirmed the source layout on channel 41
+2. **Use the rainbow table only with unmasked bytes** — this pair's model ID 255 makes UID[3:5] suitable; generic v3 captures require model-match or CRC resolution first
 3. **Build ELRS TX emulator** — Forge RC_DATA packets with known UID/CRC to inject stick commands
 4. **Test failsafe trigger** — Jam the legitimate TX and measure the 1.5s failsafe window
 5. **MSP injection PoC** — Send MSP_SET_MOTOR or MSP_SET_RAW_RC over forged ELRS packets

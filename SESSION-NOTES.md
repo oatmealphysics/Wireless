@@ -2988,3 +2988,47 @@ v6.31-to-v6.36 differential analysis of the telemetry-flood fix, and
 receive-only validation of the legacy air decoder. Any crafted-input,
 bound-link, network, or RF test requires a separate owner-approved plan under
 `SECURITY.md`; nothing here authorizes flashing.
+
+---
+
+## 50. Betaflight 4.4.2 OTA v3 SYNC correction and CI confirmation (Codex, 2026-10-24)
+
+Started from `ac25a73` after the repository-required fast-forward pull. The
+objective was to resolve contradictory project claims about which UID fields
+appear in SYNC and correct the operational documentation. Work after the pull
+was offline and documentation/test-only: no serial or device access, RF receive
+or transmit, configuration change, firmware operation, or physical interaction
+occurred.
+
+The pinned Betaflight 4.4.2 source archive still hashes to
+`195b0c6eb66741f6be64f30c63e6a41cc0cf2e990505508f1f7cc270de477c29`.
+Its `expresslrs_common.h` defines the six-byte v3 SYNC payload as
+`fhssIndex, nonce, flags, UID3, UID4, UID5`. In the eight-byte OTA frame these
+identity fields occupy offsets 4--6. `processRFSyncPacket()` compares all of
+UID3 and UID4 plus the upper two bits of UID5; the lower six transmitted UID5
+bits may be XORed with inverse model ID for model match. CRC14 is checked first
+with initializer `((UID[4] << 8) | UID[5]) ^ 3`, which uses the actual full
+UID suffix. The pair's existing read-only configuration reports model ID 255,
+so its model XOR is zero and its decoded fields equal UID bytes 3--5. OTA v4,
+not v3, removes UID3. The existing passive evidence remains consistent with
+that source interpretation: 16 decoded SYNC frames agreed on a suffix that
+independently validated 38 decoded RC frames. No private UID or packet bytes
+were added to tracked files.
+
+Corrected the live-target rules, game-day playbook, research plan, v3/v4
+comparison, rainbow-table help, exploit-chain comments, firmware inventory and
+analysis notes, failsafe comparison, and related research notes. The corrections
+also distinguish raw fields from unmasked UID material, fix the target's v3
+sync channel to 41, and use the 240 active entries in the 80-channel FHSS table.
+Historical Fox-IT 1.x/2.x phrase recovery is now kept separate from the exact
+Betaflight 4.4.2 v3 behavior. A display-only Unicode arrow in the rainbow
+tool's argparse title was also replaced with ASCII after `--help` exposed a
+Windows CP-1252 encoding failure.
+
+The missing CI unit-test step had already been added on `origin/main` before
+these edits; `.github/workflows/validate.yml` now runs both documented offline
+commands on Ubuntu and Windows with Python 3.10 and 3.12. Validation here passed:
+`tools/validate-project.py` checked 199 files, and standard-library discovery
+passed all **224 tests**. The contradiction sweep and path-scoped
+`git diff --check` also passed. Commit/push status is recorded in the final
+handoff.

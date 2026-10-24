@@ -276,10 +276,14 @@ for FHSS hop tracking).
 **2026.6.2 (v3):** Same check.
 **2026.6.2 (v4):** Only checks `UID4`, drops `UID3` check.
 
-**Attack impact:** None for v3. The 4.4.2 SYNC packet exposes UID[4] and UID[5]
-(the SYNC struct fields `UID4` and `UID5` in `OTA.h`), and the receiver validates
-UID[3] and UID[4] against its stored UID. A passive listener gets 16 bits (UID[4:5])
-from every SYNC packet.
+**Air-link impact:** The 4.4.2 v3 SYNC payload contains `UID3`, `UID4`, and
+`UID5`. The receiver compares UID[3], UID[4], and the upper two bits of UID[5]
+before separately determining full model match. Model match may XOR only the
+lower six bits of the transmitted UID5 field. The read-only configuration for
+this pair reports model ID 255, making that XOR zero, so this target's decoded
+SYNC fields equal UID bytes 3--5. On a generic v3 link, do not call the lower
+six transmitted UID5 bits direct UID material without resolving the mask or
+checking the full UID[4:5]-derived CRC initializer.
 
 ### 7. MSP handling differences (expresslrs.c)
 
@@ -330,7 +334,7 @@ telemetry data.
 | CRC nonce XOR | None (v3) | `validatePacketCrcStd()` — `nonceValidator = 0` |
 | FHSS seed | `(UID[2]<<24 + UID[3]<<16 + UID[4]<<8 + UID[5]) ^ 3` | `fhssGenSequence()` |
 | Sync channel | `(freqCount / 2) + 1` = channel 41 for 2.4 GHz | `fhssGenSequence()` |
-| SYNC UID leak | UID[4] and UID[5] in every SYNC packet | `OTA_Sync_s` struct |
+| SYNC UID fields | v3 carries UID3/UID4/UID5; lower six UID5 bits may be model-match-masked. This pair's model ID 255 makes UID[3:5] direct | `OTA_Sync_s`, `processRFSyncPacket()`, live config, passive decode |
 | MSP buffer | 65 bytes, 5-byte chunks | `ELRS_MSP_BUFFER_SIZE`, `processRFMspPacket()` |
 | MSP reachable | Yes, even with `feature -TELEMETRY` | See MSP reachability review above |
 | Model match | `model_id = 255` → XOR = 0x00 → always satisfied | Live CLI observation |

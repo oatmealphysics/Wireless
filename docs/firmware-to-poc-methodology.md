@@ -239,7 +239,7 @@ let the rest of the pipeline run from source.
 | # | Answer | Implication |
 |---|---|---|
 | 1 | **No.** CRC is integrity, not authentication. UID-seeded CRC is anti-collision, not anti-forgery. | Forge valid packets with a known UID |
-| 2 | **Yes.** UID[4:5] broadcast in every SYNC. UID derived from binding phrase via MD5. | Passive capture → rainbow lookup → full UID |
+| 2 | **Version-specific.** Betaflight 4.4.2 OTA v3 carries `UID3`, `UID4`, and a model-match-qualified `UID5`; OTA v4 removes `UID3`. On the model-ID-255 lab pair the XOR is zero, while a generic target requires mask/CRC resolution. | Decode with the matching layout before any wordlist lookup |
 | 3 | **Partial.** Nonce XOR'd into CRC init, but nonce is observable (in SYNC). | Reconstruct current nonce from a capture |
 | 4 | **Yes.** SYNC packet has fixed structure, known type bits, predictable UID bytes. | Easy to identify in IQ captures |
 | 5 | **No downgrade**, but `rate_index` is observable and selects PHY (LoRa vs FLRC). | Must match the target's PHY — wrong PHY = invisible signal |

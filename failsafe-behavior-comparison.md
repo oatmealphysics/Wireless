@@ -289,7 +289,11 @@ For ELRS specifically (the protocol on our lab hardware), a smooth takeover requ
 
 1. **Know the binding phrase** (or the derived UID)
    - Derived UID: `MD5("'-DMY_BINDING_PHRASE=\"" + phrase + "\"'")[0:6]`
-   - UID[3:5] are sent in plaintext in every SYNC packet (captures narrow the search)
+   - Betaflight 4.4.2 OTA v3 carries `UID3`, `UID4`, and `UID5` fields in
+     every SYNC. `UID3`, `UID4`, and the upper two bits of `UID5` are
+     unmasked; model match may XOR the lower six bits of the transmitted
+     `UID5`. On this model-ID-255 pair the XOR is zero, so decoded SYNCs expose
+     UID bytes 3--5 directly. OTA v4 removes the `UID3` field.
    - Common phrases are in our rainbow table (`tools/elrs-rainbow-table.csv`)
 
 2. **Match the FHSS sequence**

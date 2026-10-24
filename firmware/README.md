@@ -107,14 +107,16 @@ UID = hashlib.md5(('-DMY_BINDING_PHRASE="' + phrase + '"').encode()).digest()[0:
 This means:
 - The UID is just the first 6 bytes of an MD5 hash of a known-format string
 - MD5 is fast to brute-force — dictionary attacks against common binding phrases are trivial
-- If you capture a SYNC packet containing UID[4] and UID[5], you only need to match 2 bytes initially
+- A decoded SYNC constrains UID material, but the exact fields and model-match
+  mask are version-specific; see the v3/v4 notes below before doing a lookup
 - The full UID search space is 2^48 but the binding phrase space is likely much smaller
 
 ### FHSS Hopping Sequence
 
 **Location:** `src/ExpressLRS-4.1.0/src/lib/FHSS/FHSS.cpp`
 
-- FHSS sequence is 256 entries, seeded by `OtaGetUidSeed()` which uses UID[2:6]
+- FHSS storage is sized for 256 entries, but the 80-channel domain uses 240
+  active entries (three complete blocks), seeded from UID[2:6]
 - For 2.4 GHz ISM: 80 channels from 2400.4 MHz to 2479.4 MHz
 - Sync channel = `(freq_count / 2) + 1` = channel 41 for v3; `freq_count / 2` = channel 40 for v4
 - Sequence is deterministic from the seed — know the UID, know every hop
@@ -146,12 +148,16 @@ struct OTA_Sync_s {
             geminiMode:1,    // Diversity mode
             otaProtocol:2,   // OTA version
             free:1;
-    uint8_t UID4;            // UID byte 4 — SENT IN THE CLEAR
-    uint8_t UID5;            // UID byte 5 — SENT IN THE CLEAR
+    uint8_t UID4;            // UID byte 4 — direct
+    uint8_t UID5;            // UID byte 5 — lower 6 bits may carry model-match XOR
 };
 ```
 
-**UID[4] and UID[5] are transmitted in plaintext in every SYNC packet.** This leaks 16 bits of the binding phrase hash to any passive listener.
+This is the OTA v4 layout. `UID4` is direct, while model match may XOR the
+lower six bits of the transmitted `UID5`; only its upper two bits are
+unconditionally direct UID material. The owned Betaflight 4.4.2 target uses
+OTA v3 instead: its SYNC additionally carries `UID3`. On this pair model ID is
+255, making the model XOR zero, so its decoded v3 fields equal UID bytes 3--5.
 
 ### SX1280 Radio Driver
 
@@ -181,7 +187,7 @@ struct OTA_Sync_s {
 ```
 1. Passive capture on 2.4 GHz (SDR or SX1280 sniffer)
    → Identify SYNC packets on the sync channel (channel 41 of 80 for OTA v3)
-   → Extract UID[4], UID[5] from SYNC payload
+   → Decode the version-matched UID fields and account for model-match masking
 
 2. Brute-force binding phrase (offline)
    → MD5 hash of '-DMY_BINDING_PHRASE="<phrase>"'

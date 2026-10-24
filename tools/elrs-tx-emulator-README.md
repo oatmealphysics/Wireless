@@ -164,7 +164,8 @@ In takeover mode, the emulator continuously transmits SYNC and RC
 packets following the FHSS hopping sequence. The target RX will
 eventually lock onto our signal because:
 
-- We send valid SYNC packets with the correct UID[4:5] bytes
+- We send version-matched SYNC packets with the required identity fields and
+  model-match value (Betaflight 4.4.2 v3 also requires `UID3`)
 - We follow the same FHSS hopping sequence the RX expects
 - Our CRC is valid for the target's CRC initializer
 - If we transmit with higher power than the legitimate TX, the RX
@@ -219,8 +220,8 @@ using a slower rate means the RX won't see our packets on every slot.
 ## Attack Chain
 
 ```
-1. Capture SYNC packets (elrs-analyzer.py or passive SDR)
-      ↓ extract UID[3:5]
+1. Decode version-matched SYNC packets (offline passive SDR)
+      ↓ recover unmasked UID material; account for model-match on UID5
 2. Rainbow table lookup (elrs-uid-rainbow.py / elrs-rainbow-table.csv)
       ↓ recover binding phrase
 3. Derive full crypto state (this tool, "info" command)
