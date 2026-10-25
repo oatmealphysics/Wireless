@@ -21,11 +21,13 @@ sys.path.insert(0, os.path.join(TOOLS_DIR, "exploit_chains"))
 sys.path.insert(0, WEB_DIR)
 
 try:
-    import app as web_app
-    HAS_FLASK = True
+    import flask  # noqa: F401 -- availability gate for the optional web suite
 except ImportError:
     HAS_FLASK = False
     web_app = None
+else:
+    import app as web_app
+    HAS_FLASK = True
 
 needs_flask = unittest.skipUnless(HAS_FLASK, "Flask not installed")
 
@@ -251,15 +253,15 @@ class TestScannerFailureCleanup(unittest.TestCase):
         """is_scanning resets even if run_scan_simulated raises."""
         web_app.is_scanning = True
 
-        with patch.object(web_app, "SIMULATED_TARGETS", side_effect=TypeError):
-            with patch.object(web_app, "_push_event"):
-                with patch("time.sleep"):
-                    try:
-                        web_app.run_scan_simulated()
-                    except Exception:
-                        pass
+        with patch.object(web_app, "_push_event"):
+            with patch("time.sleep", side_effect=RuntimeError("test")):
+                with self.assertRaises(RuntimeError):
+                    web_app.run_scan_simulated()
 
         self.assertFalse(web_app.is_scanning)
+        self.assertEqual(web_app.scanner_status["wifi"], "error")
+        self.assertEqual(web_app.scanner_status["ble"], "error")
+        self.assertEqual(web_app.scanner_status["sdr"], "error")
 
     def test_live_scan_resets_on_exception(self):
         """is_scanning resets even if run_scan_live raises."""
@@ -267,10 +269,8 @@ class TestScannerFailureCleanup(unittest.TestCase):
 
         with patch("time.sleep"):
             with patch.object(web_app, "_push_event", side_effect=RuntimeError("test")):
-                try:
+                with self.assertRaises(RuntimeError):
                     web_app.run_scan_live(["wifi"], {"wifi_iface": "wlan0"})
-                except RuntimeError:
-                    pass
 
         self.assertFalse(web_app.is_scanning)
 
@@ -281,6 +281,91 @@ class TestScannerFailureCleanup(unittest.TestCase):
         client = web_app.app.test_client()
 
         resp = client.post("/api/scan", json={}, content_type="application/json")
+        self.assertEqual(resp.status_code, 409)
+
+    def test_worker_start_failure_releases_scan_slot(self):
+        web_app.is_scanning = False
+        web_app.app.testing = True
+        client = web_app.app.test_client()
+
+        with patch.object(web_app.threading.Thread, "start", side_effect=RuntimeError("test")):
+            resp = client.post("/api/scan", json={}, content_type="application/json")
+
+        self.assertEqual(resp.status_code, 500)
+        self.assertFalse(web_app.is_scanning)
+
+
+@needs_flask
+class TestScanRequestValidation(unittest.TestCase):
+    def setUp(self):
+        web_app.simulate_mode = True
+        web_app.dry_run_mode = True
+        web_app.is_scanning = False
+        web_app.targets = {}
+        web_app.scanner_status = {name: "idle" for name in web_app.DEFAULT_PROTOCOLS}
+        web_app.app.testing = True
+        self.client = web_app.app.test_client()
+
+    def test_rejects_non_object_json_without_reserving_slot(self):
+        resp = self.client.post("/api/scan", json=["wifi"])
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(web_app.is_scanning)
+
+    def test_rejects_malformed_json_without_reserving_slot(self):
+        resp = self.client.post(
+            "/api/scan", data="{", content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(web_app.is_scanning)
+
+    def test_rejects_unknown_protocol(self):
+        resp = self.client.post("/api/scan", json={"protocols": ["wifi", "invalid"]})
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("invalid", resp.get_json()["error"])
+
+    def test_rejects_invalid_scan_durations(self):
+        for value in (True, 0, -1, 301, "15", float("inf"), 10 ** 400):
+            with self.subTest(value=value):
+                resp = self.client.post("/api/scan", json={"scan_time": value})
+                self.assertEqual(resp.status_code, 400)
+                self.assertFalse(web_app.is_scanning)
+
+    def test_scan_admission_is_reserved_before_worker_start(self):
+        with patch.object(web_app.threading, "Thread") as thread_cls:
+            first = self.client.post("/api/scan", json={})
+            second = self.client.post("/api/scan", json={})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 409)
+        thread_cls.assert_called_once()
+        web_app.is_scanning = False
+
+    def test_live_worker_receives_requested_config(self):
+        web_app.simulate_mode = False
+        try:
+            with patch.object(web_app.threading, "Thread") as thread_cls:
+                resp = self.client.post("/api/scan", json={
+                    "protocols": ["wifi"],
+                    "wifi_iface": "test-wifi",
+                    "ble_iface": "test-ble",
+                    "sdr_args": "driver=test",
+                    "scan_time": 2,
+                })
+
+            self.assertEqual(resp.status_code, 200)
+            worker_args = thread_cls.call_args.kwargs["args"]
+            self.assertEqual(worker_args[0], ["wifi"])
+            self.assertEqual(worker_args[1]["wifi_iface"], "test-wifi")
+            self.assertEqual(worker_args[1]["ble_iface"], "test-ble")
+            self.assertEqual(worker_args[1]["sdr_args"], "driver=test")
+            self.assertEqual(worker_args[1]["scan_time"], 2.0)
+        finally:
+            web_app.is_scanning = False
+            web_app.simulate_mode = True
+
+    def test_clear_rejected_during_scan(self):
+        web_app.is_scanning = True
+        resp = self.client.post("/api/clear")
         self.assertEqual(resp.status_code, 409)
 
 
@@ -321,6 +406,18 @@ class TestScoreAndThreatLabels(unittest.TestCase):
                 f"but score={target['score']} should give {expected}",
             )
 
+    def test_simulated_scan_respects_requested_protocols(self):
+        web_app.is_scanning = True
+        web_app.targets = {}
+        with patch("time.sleep"):
+            web_app.run_scan_simulated(["wifi"])
+
+        self.assertTrue(web_app.targets)
+        self.assertEqual(
+            {target["protocol"] for target in web_app.targets.values()},
+            {"wifi"},
+        )
+
     def test_score_tello_is_high(self):
         score = web_app._score_target({"drone_type": "tello"})
         self.assertGreaterEqual(score, 80)
@@ -328,6 +425,48 @@ class TestScoreAndThreatLabels(unittest.TestCase):
     def test_score_unknown_is_low(self):
         score = web_app._score_target({"drone_type": "unknown"})
         self.assertLess(score, 40)
+
+    def test_live_target_label_is_derived_from_computed_score(self):
+        target = web_app._convert_recon_target(
+            {"protocol": "wifi", "drone_type": "tello", "is_open": True},
+            "wifi:test", time.time(),
+        )
+        self.assertEqual(target["score"], 100)
+        self.assertEqual(target["threat_level"], "CRITICAL")
+
+    def test_live_wifi_chain_matches_detected_family(self):
+        parrot = web_app._convert_recon_target(
+            {"protocol": "wifi", "drone_type": "parrot_ar"},
+            "wifi:parrot", time.time(),
+        )
+        unknown = web_app._convert_recon_target(
+            {"protocol": "wifi", "drone_type": "unknown"},
+            "wifi:unknown", time.time(),
+        )
+        self.assertEqual(parrot["chain"], "wifi_parrot")
+        self.assertIn("emergency_watchdog", parrot["available_actions"])
+        self.assertEqual(unknown["chain"], "unknown")
+        self.assertEqual(unknown["available_actions"], [])
+
+
+@needs_flask
+class TestEventRetention(unittest.TestCase):
+    def setUp(self):
+        web_app.events = []
+        web_app.next_event_id = 0
+
+    def test_event_ids_remain_monotonic_after_pruning(self):
+        for index in range(web_app.MAX_EVENTS + 3):
+            web_app._push_event("test", {"index": index})
+
+        ids = [event["id"] for event in web_app.events]
+        self.assertEqual(len(ids), web_app.MAX_EVENTS)
+        self.assertEqual(ids, sorted(set(ids)))
+        self.assertEqual(ids[-1], web_app.MAX_EVENTS + 2)
+
+        previous = ids[-1]
+        web_app._push_event("test", {"index": "next"})
+        self.assertEqual(web_app.events[-1]["id"], previous + 1)
 
 
 class TestLocalhostBinding(unittest.TestCase):
@@ -368,6 +507,57 @@ class TestDryRunDefault(unittest.TestCase):
         data = resp.get_json()
         self.assertTrue(data["dry_run"])
 
+    def test_live_actions_flag_updates_module_gate(self):
+        original_simulate = web_app.simulate_mode
+        original_dry_run = web_app.dry_run_mode
+        original_defaults = dict(web_app.scan_defaults)
+        try:
+            with patch.object(sys, "argv", [
+                    "app.py", "--simulate", "--live-actions",
+                    "--wifi-iface", "test-wifi", "--ble-iface", "test-ble",
+                    "--sdr-args", "driver=test"]):
+                with patch.object(web_app.app, "run") as run:
+                    web_app.main()
+
+            self.assertFalse(web_app.dry_run_mode)
+            self.assertEqual(web_app.scan_defaults["wifi_iface"], "test-wifi")
+            self.assertEqual(web_app.scan_defaults["ble_iface"], "test-ble")
+            self.assertEqual(web_app.scan_defaults["sdr_args"], "driver=test")
+            run.assert_called_once()
+        finally:
+            web_app.simulate_mode = original_simulate
+            web_app.dry_run_mode = original_dry_run
+            web_app.scan_defaults.clear()
+            web_app.scan_defaults.update(original_defaults)
+
+    def test_chain2_inject_respects_dry_run_mode(self):
+        original_simulate = web_app.simulate_mode
+        original_dry_run = web_app.dry_run_mode
+        original_state = dict(web_app.chain2_state)
+        original_log = list(web_app.action_log)
+        try:
+            web_app.simulate_mode = False
+            web_app.dry_run_mode = True
+            web_app.app.testing = True
+            client = web_app.app.test_client()
+
+            with patch("socket.socket") as socket_cls:
+                resp = client.post("/api/chain2/inject", json={
+                    "target_id": "test",
+                    "command": "land",
+                    "endpoint": "127.0.0.1:14550",
+                })
+
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.get_json()["status"], "dry_run")
+            socket_cls.assert_not_called()
+        finally:
+            web_app.simulate_mode = original_simulate
+            web_app.dry_run_mode = original_dry_run
+            web_app.chain2_state.clear()
+            web_app.chain2_state.update(original_state)
+            web_app.action_log = original_log
+
 
 class TestFrontendXSSMitigations(unittest.TestCase):
     """Verify the HTML template contains XSS mitigations."""
@@ -387,9 +577,10 @@ class TestFrontendXSSMitigations(unittest.TestCase):
         )
 
     def test_eschtml_escapes_single_quotes(self):
-        """escHtml function escapes single quotes."""
+        """escHtml covers both text and quoted attribute delimiters."""
         self.assertIn("&#39;", self.html)
-        self.assertIn(".replace(/'/g", self.html)
+        self.assertIn("&quot;", self.html)
+        self.assertIn("function escAttr", self.html)
 
     def test_safe_css_class_function_exists(self):
         """safeCssClass function strips non-alphanumeric chars."""
@@ -398,7 +589,7 @@ class TestFrontendXSSMitigations(unittest.TestCase):
 
     def test_threat_level_uses_safe_css(self):
         """Threat level class interpolation uses safeCssClass."""
-        self.assertIn("safeCssClass(t.threat_level)", self.html)
+        self.assertIn("safeCssClass(t.threat_level || 'LOW')", self.html)
 
     def test_action_category_badges_present(self):
         """Action cards show category badges."""
@@ -412,6 +603,27 @@ class TestFrontendXSSMitigations(unittest.TestCase):
         self.assertIn("data-target-id", self.html)
         self.assertIn("data-action-name", self.html)
         self.assertIn("data-action-target", self.html)
+
+    def test_interactive_cards_are_buttons(self):
+        self.assertIn('<button type="button" class="target-item', self.html)
+        self.assertIn('<button type="button" class="action-card', self.html)
+
+    def test_scan_requests_use_checked_json_helper(self):
+        self.assertIn("async function fetchJson", self.html)
+        self.assertIn("if (!response.ok)", self.html)
+        self.assertNotIn("setInterval(refreshStatus", self.html)
+        self.assertIn("data === null || data.scanning", self.html)
+
+    def test_dynamic_numbers_are_normalized(self):
+        self.assertIn("Number.isFinite(rawScore)", self.html)
+        self.assertIn("Number.isFinite(value)", self.html)
+        self.assertIn("dbm == null || dbm === ''", self.html)
+        self.assertIn("t.signal == null || t.signal === ''", self.html)
+
+    def test_live_regions_and_reduced_motion_present(self):
+        self.assertIn('role="log" aria-live="polite"', self.html)
+        self.assertIn('aria-busy="true"', self.html)
+        self.assertIn("prefers-reduced-motion", self.html)
 
 
 if __name__ == "__main__":

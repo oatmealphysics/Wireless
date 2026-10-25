@@ -1,0 +1,2 @@
+# Web dashboard runtime dependency used by the dedicated API test job.
+Flask==3.1.3

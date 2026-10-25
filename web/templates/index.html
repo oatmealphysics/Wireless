@@ -148,14 +148,25 @@ body {
 }
 
 .target-item {
+  display: block;
+  width: 100%;
   padding: 12px 16px;
+  border: 0;
   border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   transition: background 0.1s;
 }
 
 .target-item:hover { background: var(--bg-card-hover); }
 .target-item.selected { background: var(--accent-glow); border-left: 3px solid var(--accent); }
+.target-item:focus-visible, .action-card:focus-visible, .btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 
 .target-item-top {
   display: flex;
@@ -184,6 +195,7 @@ body {
 .proto-ble { background: rgba(59, 130, 246, 0.15); color: var(--accent); }
 
 .target-type {
+  display: block;
   font-size: 12px;
   color: var(--text-dim);
   margin-bottom: 6px;
@@ -314,9 +326,13 @@ body {
 }
 
 .action-card {
+  width: 100%;
   padding: 12px;
   border: 1px solid var(--border);
   border-radius: 6px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   transition: all 0.15s;
   background: var(--bg);
@@ -326,6 +342,8 @@ body {
   border-color: var(--accent);
   background: var(--accent-glow);
 }
+
+.action-card:disabled { opacity: 0.55; cursor: wait; }
 
 .action-card.severity-danger { border-color: rgba(239, 68, 68, 0.3); }
 .action-card.severity-danger:hover { border-color: var(--red); background: rgba(239, 68, 68, 0.05); }
@@ -355,6 +373,7 @@ body {
 .cat-active { background: rgba(239, 68, 68, 0.15); color: var(--red); }
 
 .action-desc {
+  display: block;
   font-size: 11px;
   color: var(--text-dim);
 }
@@ -439,7 +458,8 @@ body {
   border-radius: 12px;
   padding: 32px;
   text-align: center;
-  min-width: 380px;
+  width: min(380px, calc(100vw - 32px));
+  min-width: 0;
 }
 
 .scan-modal h2 { margin-bottom: 24px; font-size: 16px; }
@@ -542,6 +562,14 @@ body {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 @media (max-width: 768px) {
   .main { flex-direction: column; }
   .target-list { width: 100%; min-width: 0; max-height: 40vh; border-right: none; border-bottom: 1px solid var(--border); }
@@ -555,7 +583,7 @@ body {
 
 <div class="header">
   <h1>DRONE SCANNER</h1>
-  <div class="header-status">
+  <div class="header-status" role="status" aria-live="polite">
     <span id="scanner-wifi"><span class="status-dot idle"></span>WiFi</span>
     <span id="scanner-ble"><span class="status-dot idle"></span>BLE</span>
     <span id="scanner-sdr"><span class="status-dot idle"></span>SDR</span>
@@ -566,8 +594,8 @@ body {
 </div>
 
 <div class="toolbar">
-  <button class="btn btn-primary" id="btn-scan">Scan</button>
-  <button class="btn" id="btn-clear">Clear</button>
+  <button type="button" class="btn btn-primary" id="btn-scan">Scan</button>
+  <button type="button" class="btn" id="btn-clear">Clear</button>
   <span style="flex:1"></span>
   <span id="mode-badge" style="font-size:11px; color:var(--text-dim)"></span>
 </div>
@@ -579,7 +607,7 @@ body {
     </div>
     <div id="target-items">
       <div class="empty-state" style="padding:48px 16px">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <circle cx="12" cy="12" r="10"/>
           <path d="M12 6v6l4 2"/>
         </svg>
@@ -590,7 +618,7 @@ body {
 
   <div class="detail-panel" id="detail-panel">
     <div class="empty-state" id="detail-empty">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
         <rect x="3" y="3" width="18" height="18" rx="2"/>
         <path d="M9 9h6M9 12h6M9 15h4"/>
       </svg>
@@ -600,7 +628,7 @@ body {
   </div>
 </div>
 
-<div class="scan-overlay" id="scan-overlay" style="display:none">
+<div class="scan-overlay" id="scan-overlay" style="display:none" role="status" aria-live="polite" aria-busy="true" aria-hidden="true">
   <div class="scan-modal">
     <h2>Scanning for drones...</h2>
     <div class="scanner-list" id="scanner-list-modal">
@@ -629,60 +657,98 @@ body {
   </div>
 </div>
 
-<div class="event-feed" id="event-feed"></div>
+<div class="event-feed" id="event-feed" role="log" aria-live="polite" aria-relevant="additions"></div>
 
 <script>
 let targets = [];
 let selectedTargetId = null;
 let actionDefs = {};
-let pollInterval = null;
+let scanPollTimer = null;
 let eventSource = null;
+let statusRequestSequence = 0;
+let renderedTargetSignature = null;
+let sseDisconnected = false;
 
 async function init() {
   document.getElementById('btn-scan').addEventListener('click', startScan);
   document.getElementById('btn-clear').addEventListener('click', clearTargets);
 
-  const resp = await fetch('/api/actions');
-  actionDefs = await resp.json();
-  await refreshStatus();
   connectSSE();
+  try {
+    actionDefs = await fetchJson('/api/actions');
+  } catch (error) {
+    showToast(`Unable to load actions: ${error.message}`, 'error');
+  }
+  await refreshStatus(true);
+}
+
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, options);
+  let data = null;
+  try {
+    data = await response.json();
+  } catch (error) {
+    if (response.ok) throw new Error('Server returned an invalid response');
+  }
+  if (!response.ok) {
+    throw new Error(data?.error || `Request failed (${response.status})`);
+  }
+  return data;
+}
+
+function parseEventData(event) {
+  try {
+    return JSON.parse(event.data);
+  } catch (error) {
+    showToast('Received an invalid live update', 'error');
+    return null;
+  }
 }
 
 function connectSSE() {
   if (eventSource) eventSource.close();
   eventSource = new EventSource('/api/events');
+  eventSource.onopen = () => { sseDisconnected = false; };
 
   eventSource.addEventListener('target_found', (e) => {
-    const data = JSON.parse(e.data);
+    const data = parseEventData(e);
+    if (!data) return;
     showToast(`Target found: ${data.name} [${data.protocol}]`, 'target');
     refreshStatus();
   });
 
   eventSource.addEventListener('scanner_done', (e) => {
-    const data = JSON.parse(e.data);
+    const data = parseEventData(e);
+    if (!data) return;
     refreshStatus();
   });
 
   eventSource.addEventListener('scanner_error', (e) => {
-    const data = JSON.parse(e.data);
+    const data = parseEventData(e);
+    if (!data) return;
     showToast(`${data.scanner} scanner error: ${data.error}`, 'error');
     refreshStatus();
   });
 
   eventSource.addEventListener('scan_complete', (e) => {
-    const data = JSON.parse(e.data);
+    const data = parseEventData(e);
+    if (!data) return;
     showToast(`Scan complete: ${data.target_count} target(s)`, 'target');
     refreshStatus();
   });
 
   eventSource.addEventListener('action_executed', (e) => {
-    const data = JSON.parse(e.data);
+    const data = parseEventData(e);
+    if (!data) return;
     const cls = data.status === 'error' ? 'error' : 'action';
     showToast(`${data.label}: ${data.status}`, cls);
   });
 
   eventSource.onerror = () => {
-    setTimeout(connectSSE, 3000);
+    if (!sseDisconnected) {
+      sseDisconnected = true;
+      showToast('Live updates disconnected; reconnecting...', 'error');
+    }
   };
 }
 
@@ -697,57 +763,91 @@ function showToast(msg, cls) {
   setTimeout(() => { if (toast.parentNode) toast.remove(); }, 6000);
 }
 
-async function refreshStatus() {
+async function refreshStatus(showErrors = false) {
+  const requestSequence = ++statusRequestSequence;
   try {
-    const resp = await fetch('/api/status');
-    const data = await resp.json();
-    targets = data.targets || [];
+    const data = await fetchJson('/api/status');
+    if (requestSequence !== statusRequestSequence) return null;
+    targets = Array.isArray(data.targets)
+      ? data.targets.filter(target => target && typeof target === 'object') : [];
 
     const modeLabel = data.simulate ? 'SIMULATE MODE'
       : data.dry_run ? 'LIVE MODE (DRY-RUN)' : 'LIVE MODE';
     document.getElementById('mode-badge').textContent = modeLabel;
 
-    updateScannerStatus(data.scanner_status);
+    updateScannerStatus(data.scanner_status || {});
     document.getElementById('target-count').textContent =
       `${data.target_count} target${data.target_count !== 1 ? 's' : ''}`;
 
     renderTargetList();
 
+    const overlay = document.getElementById('scan-overlay');
+    const scanButton = document.getElementById('btn-scan');
+    const clearButton = document.getElementById('btn-clear');
     if (data.scanning) {
-      document.getElementById('scan-overlay').style.display = 'flex';
+      overlay.style.display = 'flex';
+      overlay.setAttribute('aria-hidden', 'false');
+      scanButton.disabled = true;
+      clearButton.disabled = true;
       document.getElementById('scan-found').textContent =
         `${data.target_count} target(s) found so far`;
+      scheduleScanPoll();
     } else {
-      document.getElementById('scan-overlay').style.display = 'none';
-      if (pollInterval) {
-        clearInterval(pollInterval);
-        pollInterval = null;
-      }
+      overlay.style.display = 'none';
+      overlay.setAttribute('aria-hidden', 'true');
+      scanButton.disabled = false;
+      clearButton.disabled = false;
+      stopScanPolling();
     }
 
     if (selectedTargetId) {
       const t = targets.find(t => t.id === selectedTargetId);
-      if (t) renderDetail(t);
+      if (t) {
+        renderDetail(t);
+      } else {
+        resetDetail();
+      }
     }
+    return data;
   } catch (e) {
     console.error('Status fetch failed:', e);
+    if (showErrors) showToast(`Unable to load status: ${e.message}`, 'error');
+    return null;
   }
+}
+
+function stopScanPolling() {
+  if (scanPollTimer) {
+    clearTimeout(scanPollTimer);
+    scanPollTimer = null;
+  }
+}
+
+function scheduleScanPoll() {
+  if (scanPollTimer) return;
+  scanPollTimer = setTimeout(async () => {
+    scanPollTimer = null;
+    const data = await refreshStatus();
+    if (data === null || data.scanning) scheduleScanPoll();
+  }, 1000);
 }
 
 function updateScannerStatus(status) {
   for (const [name, state] of Object.entries(status)) {
     const el = document.getElementById(`scanner-${name}`);
     if (!el) continue;
+    const safeState = ['idle', 'scanning', 'done', 'error'].includes(state) ? state : 'error';
     const dot = el.querySelector('.status-dot');
-    if (dot) dot.className = 'status-dot ' + state;
+    if (dot) dot.className = 'status-dot ' + safeState;
+    el.setAttribute('aria-label', `${name}: ${safeState}`);
 
     const modalEl = document.getElementById(`scan-${name}-status`);
     if (modalEl) {
-      if (state === 'scanning') {
+      if (safeState === 'scanning') {
         modalEl.innerHTML = '<span class="spinner"></span>';
-      } else if (state === 'done') {
+      } else if (safeState === 'done') {
         modalEl.innerHTML = '<span style="color:var(--green)">Done</span>';
-      } else if (state === 'error') {
+      } else if (safeState === 'error') {
         modalEl.innerHTML = '<span style="color:var(--red)">Error</span>';
       } else {
         modalEl.innerHTML = '<span style="color:var(--text-dim)">Idle</span>';
@@ -757,8 +857,13 @@ function updateScannerStatus(status) {
 }
 
 async function startScan() {
-  document.getElementById('scan-overlay').style.display = 'flex';
-  document.getElementById('btn-scan').disabled = true;
+  const overlay = document.getElementById('scan-overlay');
+  const scanButton = document.getElementById('btn-scan');
+  if (scanButton.disabled) return;
+  stopScanPolling();
+  overlay.style.display = 'flex';
+  overlay.setAttribute('aria-hidden', 'false');
+  scanButton.disabled = true;
   ['wifi','ble','sdr','mavlink','telemetry'].forEach(n => {
     const el = document.getElementById(`scan-${n}-status`);
     if (el) el.innerHTML = '<span class="spinner"></span>';
@@ -766,22 +871,31 @@ async function startScan() {
   document.getElementById('scan-found').textContent = '';
 
   try {
-    await fetch('/api/scan', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
-    pollInterval = setInterval(refreshStatus, 1000);
-  } catch(e) {
-    document.getElementById('scan-overlay').style.display = 'none';
+    await fetchJson('/api/scan', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: '{}',
+    });
+    const data = await refreshStatus(true);
+    if (data === null || data.scanning) scheduleScanPoll();
+  } catch (error) {
+    overlay.style.display = 'none';
+    overlay.setAttribute('aria-hidden', 'true');
+    scanButton.disabled = false;
+    showToast(`Unable to start scan: ${error.message}`, 'error');
   }
-  document.getElementById('btn-scan').disabled = false;
 }
 
 async function clearTargets() {
-  await fetch('/api/clear', { method: 'POST' });
-  targets = [];
-  selectedTargetId = null;
-  renderTargetList();
-  document.getElementById('detail-content').style.display = 'none';
-  document.getElementById('detail-empty').style.display = 'flex';
-  document.getElementById('target-count').textContent = '0 targets';
+  try {
+    await fetchJson('/api/clear', { method: 'POST' });
+    targets = [];
+    resetDetail();
+    renderTargetList();
+    document.getElementById('target-count').textContent = '0 targets';
+  } catch (error) {
+    showToast(`Unable to clear targets: ${error.message}`, 'error');
+  }
 }
 
 function renderTargetList() {
@@ -789,7 +903,7 @@ function renderTargetList() {
   if (targets.length === 0) {
     container.innerHTML = `
       <div class="empty-state" style="padding:48px 16px">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:64px;height:64px;opacity:0.3">
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:64px;height:64px;opacity:0.3">
           <circle cx="12" cy="12" r="10"/>
           <path d="M12 6v6l4 2"/>
         </svg>
@@ -799,26 +913,29 @@ function renderTargetList() {
   }
 
   container.innerHTML = targets.map(t => {
-    const protoClass = 'proto-' + safeCssClass(t.protocol.replace(/_.*/, ''));
+    const protocol = String(t?.protocol || 'unknown');
+    const targetId = String(t?.id || '');
+    const protoClass = 'proto-' + safeCssClass(protocol.replace(/_.*/, ''));
     const selected = t.id === selectedTargetId ? 'selected' : '';
     const signal = renderSignal(t.signal);
-    const threatClass = safeCssClass(t.threat_level);
-    const vulnBadges = (t.vulns || []).slice(0, 3).map(v =>
+    const threatLevel = String(t.threat_level || 'LOW');
+    const threatClass = safeCssClass(threatLevel);
+    const vulnBadges = (Array.isArray(t.vulns) ? t.vulns : []).slice(0, 3).map(v =>
       `<span class="badge badge-${threatClass}">${escHtml(v)}</span>`
     ).join('');
 
     return `
-      <div class="target-item ${selected}" data-target-id="${escHtml(t.id)}">
-        <div class="target-item-top">
-          <span class="target-name">${escHtml(t.name)}</span>
+      <button type="button" class="target-item ${selected}" data-target-id="${escAttr(targetId)}" aria-pressed="${selected ? 'true' : 'false'}">
+        <span class="target-item-top">
+          <span class="target-name">${escHtml(t.name || 'Unnamed target')}</span>
           <span>
-            <span class="target-protocol ${protoClass}">${escHtml(t.protocol)}</span>
-            <span class="threat-indicator threat-${threatClass}">${escHtml(t.threat_level)}</span>
+            <span class="target-protocol ${protoClass}">${escHtml(protocol)}</span>
+            <span class="threat-indicator threat-${threatClass}">${escHtml(threatLevel)}</span>
           </span>
-        </div>
-        <div class="target-type">${escHtml(t.type)} ${signal}</div>
-        <div class="target-badges">${vulnBadges}</div>
-      </div>`;
+        </span>
+        <span class="target-type">${escHtml(t.type || 'Unknown')} ${signal}</span>
+        <span class="target-badges">${vulnBadges}</span>
+      </button>`;
   }).join('');
 
   container.querySelectorAll('.target-item[data-target-id]').forEach(el => {
@@ -827,23 +944,22 @@ function renderTargetList() {
 }
 
 function renderSignal(dbm) {
-  if (dbm == null) return '';
-  const abs = Math.abs(dbm);
+  if (dbm == null || dbm === '') return '';
+  const value = Number(dbm);
+  if (!Number.isFinite(value)) return '';
+  const abs = Math.abs(value);
   let cls = 'strong';
   if (abs > 70) cls = 'weak';
   else if (abs > 55) cls = 'medium';
   const bars = [4, 6, 8, 10].map(h =>
     `<span style="height:${h}px"></span>`
   ).join('');
-  return `<span class="signal-bar ${cls}">${bars}</span> ${dbm} dBm`;
-}
-
-function threatToClass(level) {
-  return (level || 'low').toLowerCase();
+  return `<span class="signal-bar ${cls}" aria-hidden="true">${bars}</span> ${escHtml(value)} dBm`;
 }
 
 function selectTarget(id) {
   selectedTargetId = id;
+  renderedTargetSignature = null;
   const t = targets.find(t => t.id === id);
   if (t) {
     renderDetail(t);
@@ -851,12 +967,23 @@ function selectTarget(id) {
   }
 }
 
+function resetDetail() {
+  selectedTargetId = null;
+  renderedTargetSignature = null;
+  document.getElementById('detail-content').style.display = 'none';
+  document.getElementById('detail-empty').style.display = 'flex';
+}
+
 function renderDetail(t) {
+  const signature = JSON.stringify(t);
+  if (signature === renderedTargetSignature) return;
+  renderedTargetSignature = signature;
   document.getElementById('detail-empty').style.display = 'none';
   const el = document.getElementById('detail-content');
   el.style.display = 'block';
 
-  const details = t.details || {};
+  const details = t.details && typeof t.details === 'object' && !Array.isArray(t.details)
+    ? t.details : {};
   const detailRows = Object.entries(details).map(([k, v]) => {
     let val = v;
     if (typeof v === 'object') val = JSON.stringify(v);
@@ -864,36 +991,39 @@ function renderDetail(t) {
     return `<span class="detail-label">${escHtml(k)}</span><span class="detail-value">${escHtml(String(val))}</span>`;
   }).join('');
 
-  const vulns = (t.vulns || []).map(v =>
+  const vulns = (Array.isArray(t.vulns) ? t.vulns : []).map(v =>
     `<div class="vuln-tag">${escHtml(v)}</div>`
   ).join('');
 
   const categoryLabels = {simulated: 'Simulated', passive: 'Passive', active: 'Active'};
-  const actions = (t.available_actions || []).map(a => {
+  const actions = (Array.isArray(t.available_actions) ? t.available_actions : []).map(a => {
     const def = actionDefs[a] || {};
     const sev = safeCssClass(def.severity || 'info');
     const cat = safeCssClass(def.category || 'active');
     const catLabel = categoryLabels[def.category] || 'Active';
     return `
-      <div class="action-card severity-${sev}" data-action-target="${escHtml(t.id)}" data-action-name="${escHtml(a)}">
-        <div class="action-label">${escHtml(def.label || a)} <span class="action-category cat-${cat}">${escHtml(catLabel)}</span></div>
-        <div class="action-desc">${escHtml(def.description || '')}</div>
-      </div>`;
+      <button type="button" class="action-card severity-${sev}" data-action-target="${escAttr(t.id)}" data-action-name="${escAttr(a)}">
+        <span class="action-label">${escHtml(def.label || a)} <span class="action-category cat-${cat}">${escHtml(catLabel)}</span></span>
+        <span class="action-desc">${escHtml(def.description || '')}</span>
+      </button>`;
   }).join('');
 
-  const scoreColor = t.score >= 80 ? 'var(--red)' : t.score >= 60 ? 'var(--orange)' : t.score >= 40 ? 'var(--yellow)' : 'var(--green)';
+  const rawScore = Number(t.score);
+  const score = Number.isFinite(rawScore) ? Math.min(100, Math.max(0, rawScore)) : 0;
+  const scoreColor = score >= 80 ? 'var(--red)' : score >= 60 ? 'var(--orange)' : score >= 40 ? 'var(--yellow)' : 'var(--green)';
+  const signal = t.signal == null || t.signal === '' ? NaN : Number(t.signal);
 
   el.innerHTML = `
     <div class="detail-header">
       <div>
-        <div class="detail-title">${escHtml(t.name)}</div>
-        <div style="font-size:13px;color:var(--text-dim);margin-top:4px">${escHtml(t.type)}</div>
+        <div class="detail-title">${escHtml(t.name || 'Unnamed target')}</div>
+        <div style="font-size:13px;color:var(--text-dim);margin-top:4px">${escHtml(t.type || 'Unknown')}</div>
       </div>
       <div style="text-align:right">
-        <span class="threat-indicator threat-${safeCssClass(t.threat_level)}" style="font-size:13px;padding:4px 10px">${escHtml(t.threat_level)}</span>
+        <span class="threat-indicator threat-${safeCssClass(t.threat_level || 'LOW')}" style="font-size:13px;padding:4px 10px">${escHtml(t.threat_level || 'LOW')}</span>
         <div style="font-size:11px;color:var(--text-dim);margin-top:6px">
-          Score: ${t.score || 0}/100
-          <span class="score-bar"><span class="score-fill" style="width:${t.score||0}%;background:${scoreColor}"></span></span>
+          Score: ${score}/100
+          <span class="score-bar"><span class="score-fill" style="width:${score}%;background:${scoreColor}"></span></span>
         </div>
       </div>
     </div>
@@ -903,7 +1033,7 @@ function renderDetail(t) {
       <div class="detail-grid">
         <span class="detail-label">Protocol</span><span class="detail-value">${escHtml(t.protocol)}</span>
         <span class="detail-label">Encryption</span><span class="detail-value">${escHtml(t.encryption || 'Unknown')}</span>
-        ${t.signal != null ? `<span class="detail-label">Signal</span><span class="detail-value">${t.signal} dBm</span>` : ''}
+        ${Number.isFinite(signal) ? `<span class="detail-label">Signal</span><span class="detail-value">${escHtml(signal)} dBm</span>` : ''}
         ${detailRows}
       </div>
     </div>
@@ -927,26 +1057,26 @@ function renderDetail(t) {
 
   el.querySelectorAll('.action-card[data-action-name]').forEach(card => {
     card.addEventListener('click', () => {
-      executeAction(card.dataset.actionTarget, card.dataset.actionName);
+      executeAction(card.dataset.actionTarget, card.dataset.actionName, card);
     });
   });
 
   refreshActionLog(t.id);
 }
 
-async function executeAction(targetId, actionName) {
+async function executeAction(targetId, actionName, actionButton) {
   const resultEl = document.getElementById('action-result');
+  if (!resultEl || actionButton?.disabled) return;
+  if (actionButton) actionButton.disabled = true;
   resultEl.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:8px">Executing...</div>';
 
   try {
-    const resp = await fetch(`/api/targets/${encodeURIComponent(targetId)}/action`, {
+    const data = await fetchJson(`/api/targets/${encodeURIComponent(targetId)}/action`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ action: actionName }),
     });
-    const data = await resp.json();
-
-    if (resp.ok) {
+    if (selectedTargetId === targetId && resultEl.isConnected) {
       const dataBlock = data.data
         ? `<div class="data-block"><pre>${escHtml(JSON.stringify(data.data, null, 2))}</pre></div>`
         : '';
@@ -957,23 +1087,22 @@ async function executeAction(targetId, actionName) {
           <br>${escHtml(data.result)}
           ${dataBlock}
         </div>`;
-    } else {
-      resultEl.innerHTML = `
-        <div class="action-result error">
-          Error: ${escHtml(data.error || 'Unknown error')}
-        </div>`;
     }
-  } catch(e) {
-    resultEl.innerHTML = `<div class="action-result error">Network error: ${escHtml(e.message)}</div>`;
+  } catch(error) {
+    if (selectedTargetId === targetId && resultEl.isConnected) {
+      resultEl.innerHTML = `<div class="action-result error">Error: ${escHtml(error.message)}</div>`;
+    }
+  } finally {
+    if (actionButton?.isConnected) actionButton.disabled = false;
   }
 
-  refreshActionLog(targetId);
+  if (selectedTargetId === targetId) refreshActionLog(targetId);
 }
 
 async function refreshActionLog(targetId) {
   try {
-    const resp = await fetch('/api/log');
-    const log = await resp.json();
+    const log = await fetchJson('/api/log');
+    if (selectedTargetId !== targetId || !Array.isArray(log)) return;
     const entries = log.filter(e => e.target_id === targetId).reverse().slice(0, 10);
     const el = document.getElementById('action-log-entries');
     if (!el) return;
@@ -988,16 +1117,20 @@ async function refreshActionLog(targetId) {
         <div class="log-entry">
           <span class="log-time">${time}</span>
           <span class="log-action">${escHtml(e.label || e.action)}</span>
-          <span class="log-result ${resultCls}">[${e.status}]</span>
+          <span class="log-result ${resultCls}">[${escHtml(e.status)}]</span>
         </div>`;
     }).join('');
   } catch(e) {}
 }
 
 function escHtml(s) {
-  const div = document.createElement('div');
-  div.textContent = s;
-  return div.innerHTML.replace(/'/g, '&#39;');
+  return String(s ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[char]);
+}
+
+function escAttr(s) {
+  return escHtml(s);
 }
 
 function safeCssClass(s) {

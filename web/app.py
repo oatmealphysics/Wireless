@@ -6,6 +6,7 @@ Flask application that wraps the existing recon engine and exploit chain
 modules into a unified browser-based dashboard.
 
 Usage:
+    python3 -m pip install -r web/requirements.txt
     python3 web/app.py                        # default on port 5000
     python3 web/app.py --port 8080            # custom port
     python3 web/app.py --simulate             # demo mode, no hardware
@@ -36,7 +37,7 @@ from exploit_chains.common import ChainLogger, AbortHandler
 app = Flask(__name__)
 
 # Global state
-scan_lock = threading.Lock()
+scan_lock = threading.RLock()
 targets = {}
 action_log = []
 scanner_status = {"wifi": "idle", "ble": "idle", "sdr": "idle", "mavlink": "idle", "telemetry": "idle"}
@@ -46,21 +47,42 @@ dry_run_mode = True
 hw_status = {}
 events = []
 events_lock = threading.Lock()
+next_event_id = 0
+scan_defaults = {
+    "wifi_iface": "wlan0",
+    "ble_iface": "hci0",
+    "sdr_args": "driver=uhd",
+}
 
 MAX_EVENTS = 500
 MAX_LOG = 200
+VALID_PROTOCOLS = frozenset(scanner_status)
+DEFAULT_PROTOCOLS = tuple(scanner_status)
 
 
 def _push_event(event_type, data):
+    global next_event_id
     with events_lock:
+        event_id = next_event_id
+        next_event_id += 1
         events.append({
-            "id": len(events),
+            "id": event_id,
             "type": event_type,
             "data": data,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
         if len(events) > MAX_EVENTS:
             del events[:len(events) - MAX_EVENTS]
+
+
+def _finish_scan():
+    """Release the scan slot and resolve any stale in-progress statuses."""
+    global is_scanning
+    with scan_lock:
+        for name, state in scanner_status.items():
+            if state == "scanning":
+                scanner_status[name] = "error"
+        is_scanning = False
 
 
 # --- Hardware detection ---
@@ -391,28 +413,39 @@ ACTION_DEFS = {
 }
 
 
-def run_scan_simulated():
+def run_scan_simulated(protocols=None):
     """Run a simulated scan for demo mode."""
     global targets, is_scanning, scanner_status
     import random
 
+    requested = set(protocols or DEFAULT_PROTOCOLS)
     try:
-        scanner_status = {**scanner_status, "wifi": "scanning", "ble": "scanning", "sdr": "scanning"}
-        _push_event("scan_start", {"mode": "simulate"})
+        with scan_lock:
+            scanner_status = {
+                name: "scanning" if name in requested else "idle"
+                for name in DEFAULT_PROTOCOLS
+            }
+        _push_event("scan_start", {"mode": "simulate", "protocols": sorted(requested)})
 
-        time.sleep(1.5)
-        scanner_status["wifi"] = "done"
-        _push_event("scanner_done", {"scanner": "wifi"})
-        time.sleep(1.0)
-        scanner_status["ble"] = "done"
-        _push_event("scanner_done", {"scanner": "ble"})
-        time.sleep(1.5)
-        scanner_status["sdr"] = "done"
-        _push_event("scanner_done", {"scanner": "sdr"})
+        for scanner_name, delay in (
+                ("wifi", 1.0), ("ble", 0.6), ("sdr", 0.8),
+                ("mavlink", 0.6), ("telemetry", 0.6)):
+            if scanner_name not in requested:
+                continue
+            time.sleep(delay)
+            scanner_status[scanner_name] = "done"
+            _push_event("scanner_done", {"scanner": scanner_name})
 
         with scan_lock:
             now = time.time()
             for t in SIMULATED_TARGETS:
+                protocol = t.get("protocol")
+                if protocol == "elrs":
+                    selected = "sdr" in requested or "telemetry" in requested
+                else:
+                    selected = protocol in requested
+                if not selected:
+                    continue
                 target = dict(t)
                 target["first_seen"] = now - random.uniform(0, 10)
                 target["last_seen"] = now
@@ -424,22 +457,21 @@ def run_scan_simulated():
         scanner_status = {k: "idle" for k in scanner_status}
         _push_event("scan_complete", {"target_count": len(targets), "mode": "simulate"})
     finally:
-        is_scanning = False
+        _finish_scan()
 
 
 def run_scan_live(protocols, config):
     """Run live scanning using the real scanner backends."""
     global targets, is_scanning, scanner_status
 
-    from exploit_chains.multi_recon import scan_wifi, scan_ble, scan_sdr
-
-    logger = ChainLogger("web-scan")
-    abort = AbortHandler(logger)
-
     all_targets = []
     scan_errors = {}
 
     try:
+        from exploit_chains.multi_recon import scan_wifi, scan_ble, scan_sdr
+
+        logger = ChainLogger("web-scan")
+        abort = AbortHandler(logger)
         _push_event("scan_start", {"mode": "live", "protocols": protocols})
 
         wifi_iface = config.get("wifi_iface", "wlan0")
@@ -524,7 +556,7 @@ def run_scan_live(protocols, config):
             "errors": scan_errors if scan_errors else None,
         })
     finally:
-        is_scanning = False
+        _finish_scan()
 
 
 def _scan_mavlink_udp(timeout, logger, abort):
@@ -638,37 +670,47 @@ def _make_target_id(t):
 
 def _convert_recon_target(t, tid, now):
     proto = t.get("protocol", "unknown")
+    dtype = t.get("drone_type", "unknown")
     chain_map = {
-        "wifi": "wifi_tello",
         "ble": "dji_ble",
         "elrs": "elrs",
         "mavlink_udp": "mavlink",
         "sik_915": "mavlink",
         "sik_433": "mavlink",
     }
+    if proto == "wifi":
+        if dtype in ("parrot", "parrot_ar", "parrot_anafi"):
+            chain = "wifi_parrot"
+        elif dtype == "tello":
+            chain = "wifi_tello"
+        else:
+            chain = "unknown"
+    else:
+        chain = chain_map.get(proto, "unknown")
     action_map = {
         "wifi_tello": ["land", "emergency", "takeoff", "streamon"],
+        "wifi_parrot": ["land", "emergency_watchdog", "kill_control"],
         "mavlink": ["sniff", "disarm", "land", "rtl", "reboot", "replay"],
         "elrs": ["forge_disarm", "preview_fhss", "scan_deeper"],
         "dji_ble": ["ble_scan_services"],
     }
-    chain = chain_map.get(proto, "unknown")
+    score = _score_target(t)
     return {
         "id": tid,
         "protocol": proto,
         "name": t.get("ssid") or t.get("name") or t.get("description", "Unknown"),
         "type": t.get("description", "Unknown"),
-        "drone_type": t.get("drone_type", "unknown"),
+        "drone_type": dtype,
         "signal": None,
         "encryption": t.get("encryption", "Unknown"),
-        "threat_level": _threat_from_score(t),
+        "threat_level": _threat_from_score({"score": score}),
         "vulns": _detect_vulns(t),
         "details": t,
         "available_actions": action_map.get(chain, []),
         "chain": chain,
         "first_seen": now,
         "last_seen": now,
-        "score": _score_target(t),
+        "score": score,
     }
 
 
@@ -1081,9 +1123,11 @@ def api_status():
             key=lambda t: t.get("score", 0),
             reverse=True,
         )
+        scanning = is_scanning
+        status_snapshot = dict(scanner_status)
     return jsonify({
-        "scanning": is_scanning,
-        "scanner_status": scanner_status,
+        "scanning": scanning,
+        "scanner_status": status_snapshot,
         "target_count": len(target_list),
         "targets": target_list,
         "simulate": simulate_mode,
@@ -1095,25 +1139,50 @@ def api_status():
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
     global is_scanning
-    if is_scanning:
-        return jsonify({"error": "Scan already in progress"}), 409
+    body = request.get_json(silent=True)
+    if body is None:
+        if request.content_length:
+            return jsonify({"error": "Request body must contain valid JSON"}), 400
+        body = {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "JSON body must be an object"}), 400
 
-    is_scanning = True
+    protocols = body.get("protocols", list(DEFAULT_PROTOCOLS))
+    if (not isinstance(protocols, list) or not protocols
+            or any(not isinstance(name, str) for name in protocols)):
+        return jsonify({"error": "protocols must be a non-empty list of strings"}), 400
+    unknown_protocols = sorted(set(protocols) - VALID_PROTOCOLS)
+    if unknown_protocols:
+        return jsonify({"error": f"Unknown protocols: {', '.join(unknown_protocols)}"}), 400
+    protocols = list(dict.fromkeys(protocols))
 
-    body = request.json or {}
-    protocols = body.get("protocols", ["wifi", "ble", "sdr", "mavlink", "telemetry"])
+    scan_time = body.get("scan_time", 15.0)
+    if (isinstance(scan_time, bool) or not isinstance(scan_time, (int, float))
+            or not 0 < scan_time <= 300):
+        return jsonify({"error": "scan_time must be a finite number between 0 and 300 seconds"}), 400
+
     config = {
-        "wifi_iface": body.get("wifi_iface", "wlan0"),
-        "ble_iface": body.get("ble_iface", "hci0"),
-        "sdr_args": body.get("sdr_args", "driver=uhd"),
-        "scan_time": body.get("scan_time", 15.0),
+        "wifi_iface": body.get("wifi_iface", scan_defaults["wifi_iface"]),
+        "ble_iface": body.get("ble_iface", scan_defaults["ble_iface"]),
+        "sdr_args": body.get("sdr_args", scan_defaults["sdr_args"]),
+        "scan_time": float(scan_time),
     }
 
-    if simulate_mode:
-        t = threading.Thread(target=run_scan_simulated, daemon=True)
-    else:
-        t = threading.Thread(target=run_scan_live, args=(protocols, config), daemon=True)
-    t.start()
+    with scan_lock:
+        if is_scanning:
+            return jsonify({"error": "Scan already in progress"}), 409
+        scanner_status.update({name: "idle" for name in DEFAULT_PROTOCOLS})
+        is_scanning = True
+
+    try:
+        if simulate_mode:
+            t = threading.Thread(target=run_scan_simulated, args=(protocols,), daemon=True)
+        else:
+            t = threading.Thread(target=run_scan_live, args=(protocols, config), daemon=True)
+        t.start()
+    except Exception:
+        _finish_scan()
+        return jsonify({"error": "Unable to start scan worker"}), 500
 
     return jsonify({"status": "scanning", "protocols": protocols, "simulate": simulate_mode})
 
@@ -1134,7 +1203,8 @@ def api_target_action(target_id):
     if not target:
         return jsonify({"error": "Target not found"}), 404
 
-    action_name = request.json.get("action") if request.json else None
+    body = request.get_json(silent=True)
+    action_name = body.get("action") if isinstance(body, dict) else None
     if not action_name:
         return jsonify({"error": "No action specified"}), 400
 
@@ -1161,9 +1231,10 @@ def api_log():
 
 @app.route("/api/clear", methods=["POST"])
 def api_clear():
-    global targets
     with scan_lock:
-        targets = {}
+        if is_scanning:
+            return jsonify({"error": "Cannot clear targets while a scan is in progress"}), 409
+        targets.clear()
     _push_event("targets_cleared", {})
     return jsonify({"status": "cleared"})
 
@@ -1176,7 +1247,11 @@ def api_hardware():
 @app.route("/api/events")
 def api_events():
     """Server-Sent Events stream for real-time status updates."""
-    last_id = request.args.get("last_id", type=int, default=-1)
+    header_last_id = request.headers.get("Last-Event-ID", type=int)
+    last_id = request.args.get(
+        "last_id", type=int,
+        default=header_last_id if header_last_id is not None else -1,
+    )
 
     def generate():
         local_last = last_id
@@ -1293,12 +1368,12 @@ def api_chain2_inject():
         "command": command,
         "description": cmd["desc"],
         "severity": cmd["severity"],
-        "status": "dry_run" if simulate_mode else "pending",
+        "status": "dry_run" if simulate_mode or dry_run_mode else "pending",
         "packet_hex": pkt.hex(),
         "packet_size": len(pkt),
     }
 
-    if not simulate_mode and target_endpoint:
+    if not simulate_mode and not dry_run_mode and target_endpoint:
         import socket as _sock
         parts = target_endpoint.split(":")
         if len(parts) == 2:
@@ -1343,7 +1418,7 @@ def api_chain2_commands():
 
 
 def main():
-    global simulate_mode
+    global simulate_mode, dry_run_mode
 
     parser = argparse.ArgumentParser(description="Drone Scanner Web UI")
     parser.add_argument("--port", type=int, default=5000)
@@ -1363,6 +1438,11 @@ def main():
 
     simulate_mode = args.simulate
     dry_run_mode = not args.live_actions
+    scan_defaults.update({
+        "wifi_iface": args.wifi_iface,
+        "ble_iface": args.ble_iface,
+        "sdr_args": args.sdr_args,
+    })
 
     if not simulate_mode:
         detect_hardware()

@@ -3390,3 +3390,116 @@ activity localhost-only; no hardware, no RF, no external targets.
 - Consolidate SESSION-NOTES.md and sweep stale documentation claims.
 - Once Codex completes the ELRS/MSP/OTA corrections, integrate with the
   Chain 2 SITL tests for end-to-end validation.
+
+## 56. Web dashboard reliability, accessibility, and executable CI coverage (Codex, 2026-10-25)
+
+**Starting revision:** `3cfca9a` (`main`, synchronized with `origin/main`)
+
+**Objective:** Advance the application-engineering side of the project without
+hardware, RF, serial, or live-target interaction. Make the Flask dashboard's
+scan lifecycle, event stream, request handling, UI state, and test coverage
+deterministic enough to trust in offline development.
+
+**Actions and evidence:**
+
+1. **Made scan admission and cleanup deterministic.**
+   - Replaced the scan mutex with an `RLock` and made the check/set transition
+     atomic, so concurrent requests cannot both reserve the scan worker.
+   - Added request-shape, protocol, and duration validation, including malformed
+     JSON, non-object bodies, non-finite/oversized values, and unknown protocols.
+   - Worker-start and backend-import failures now release the scan slot; active
+     scanner states become terminal errors instead of remaining stuck.
+   - Clear requests are rejected while a scan is active.
+
+2. **Corrected dashboard/tool integration.**
+   - CLI defaults for WiFi, BLE, and SDR interfaces now flow into API-launched
+     workers instead of being parsed and discarded.
+   - Simulated scans honor the requested protocol subset and report all five
+     scanner stages consistently.
+   - Live target severity is derived from the computed score, and WiFi targets
+     are routed to Tello, Parrot, or unknown action families by detected type.
+   - The `--live-actions` flag now updates module state correctly. Both action
+     route families use the same dry-run gate.
+
+3. **Fixed long-running event delivery.**
+   - SSE event IDs now come from a monotonic counter independent of the bounded
+     retention list. IDs no longer repeat once `MAX_EVENTS` is reached.
+   - Reconnects honor the standard `Last-Event-ID` header as well as the legacy
+     query parameter.
+
+4. **Hardened normal frontend behavior.**
+   - Added one checked JSON request helper, stable scan polling with transient
+     failure recovery, native EventSource reconnect behavior, and stale-response
+     suppression.
+   - Scan and clear buttons now track backend state rather than re-enabling
+     immediately; selected targets disappearing from results clear the detail
+     panel; in-flight action/log responses cannot update a different target.
+   - Dynamic scores/signals are finite and bounded before rendering. Missing
+     signal values remain unknown rather than being coerced to `0 dBm`.
+   - Converted target/action cards to keyboard-focusable buttons, added live
+     regions, focus styles, reduced-motion support, responsive modal sizing,
+     and valid button content.
+   - Attribute values now use quote-safe encoding in addition to existing text
+     and CSS-class normalization.
+
+5. **Made the web test suite actually execute in CI.**
+   - Added pinned `Flask==3.1.3` runtime requirements (official PyPI release,
+     Python 3.9+) and a dedicated Ubuntu/Python 3.12 dashboard test job.
+   - Narrowed the optional import gate so only a genuinely absent Flask package
+     skips local backend tests; unrelated import regressions now fail.
+   - Expanded dashboard coverage from 28 to 46 tests for event rollover, scan
+     lifecycle, API validation, CLI/default propagation, protocol filtering,
+     target conversion, dry-run consistency, async UI recovery, numeric
+     normalization, and accessibility structure.
+
+**What failed or needed correction:**
+
+- The minimal local WSL Python had no Flask or pip, confirming that the previous
+  general offline job skipped most web tests. A checksum-verified official pip
+  wheel and Flask dependencies were placed only under ignored
+  `work/web-test-runtime/` for local execution; no system Python was modified.
+- The first cleanup fixture raised after scanner stages had already completed;
+  it was corrected to fail during active scanning.
+- Independent review caught null-to-zero signal coercion, polling stopping after
+  a transient status failure, and an oversized-integer `scan_time` 500 path.
+  Each was fixed and covered before the final run.
+
+**Safety boundaries:**
+
+- No E8/TinyHawk access, serial access, firmware changes, RF transmission,
+  hardware probing, or external target interaction.
+- No live action was executed. Validation used Flask's in-process test client,
+  static frontend assertions, and existing offline tests only.
+- The only external downloads were official Python packaging artifacts used in
+  an ignored local test directory; they are not committed.
+
+**Changed files:**
+
+- `.github/workflows/validate.yml`
+- `web/requirements.txt`
+- `web/app.py`
+- `web/templates/index.html`
+- `tools/tests/test_web_dashboard.py`
+- `SESSION-NOTES.md`
+
+**Validation:**
+
+- `python -B tools/validate-project.py` — PASS (216 files)
+- Flask-enabled dashboard suite — 46/46 PASS
+- Flask-enabled full discovery — 318 tests PASS, 23 optional SITL tests skipped
+- `git diff --check` — clean
+- Independent post-change review — no remaining blockers
+
+**Commit/push status:** Included in the main commit containing this section and
+pushed to `origin/main`; no force push or history rewrite.
+
+**Next application-engineering steps:**
+
+- Add a small browser-level test for keyboard selection, scan retry, and stale
+  response behavior.
+- Move mutable dashboard globals behind an app/state factory for isolated tests
+  and cleaner multi-client behavior.
+- Bound and lock every action-history path consistently, including auxiliary
+  integration histories.
+- Extract inline CSS/JavaScript into versioned static assets once the UI grows
+  beyond the current single-page prototype.
