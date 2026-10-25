@@ -298,7 +298,7 @@ For ELRS specifically (the protocol on our lab hardware), a smooth takeover requ
 
 2. **Match the FHSS sequence**
    - Deterministic from UID — if you know the UID, you know every hop
-   - 256-entry sequence, 80 channels for 2.4 GHz
+   - 240-entry sequence (FHSS_SEQUENCE_LEN=256, trimmed to 3×80=240), 80 channels for 2.4 GHz
 
 3. **Transmit with stronger signal than the legitimate TX**
    - ELRS uses a "strongest signal wins" model at the SX1280 level

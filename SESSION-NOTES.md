@@ -3086,3 +3086,135 @@ tests under Python 3.12.3 with the optional scientific dependencies present.
 Changed tracked files are `tools/tests/test_elrs_phy_scan.py` and this
 append-only log. Commit and push were pending when this entry was written; the
 final handoff records their result.
+
+## 53. Documentation correction sweep and October 25 status incorporation (Claude, 2026-10-25)
+
+**Starting revision:** `c18125d` (Fix LoRa waveform alignment test)
+
+**Objective:** Correct stale technical claims across project documentation,
+incorporate the standalone `session-notes-2026-10-25.md` status into this
+canonical log, and enforce the four-level evidence framework established
+in prior sections.
+
+**Safety boundaries:** No hardware access, no serial ports, no RF transmission,
+no firmware modifications. The absolute no-flashing constraint for the E8 and
+TinyHawk remains in force. Files owned by the concurrent Codex session (ELRS
+capture validator, MSP-over-ELRS simulator, OTA-v3 transmitter/packet-forger,
+protocol CI) were not touched.
+
+### Stale-claim corrections applied
+
+1. **FHSS sequence length: 256 → 240.** The raw `FHSS_SEQUENCE_LEN` constant
+   is 256, but the live sequence is trimmed to `3×NR_FHSS_ENTRIES` = 3×80 = 240
+   active entries for the 80-channel 2.4 GHz domain. Corrected in:
+   - `E8-SERIAL-CHARACTERIZATION.md` (line ~360)
+   - `failsafe-behavior-comparison.md` (line ~301)
+   - `tools/elrs-tx-emulator-README.md` (line ~17)
+
+2. **Sync channel: channel 40 → version-qualified.** OTA v3 (Betaflight 4.4.2,
+   live target) uses sync channel 41; OTA v4 uses channel 40. The table in
+   `research/rf-disruption-feasibility.md` §3.1 previously said "Channel 40"
+   without version qualification. The §3.5 narrative already had the correct
+   v3/v4 distinction. Corrected the table to reference both versions.
+
+3. **Nonce XOR in CRC init: generic → version-qualified.** The
+   `docs/firmware-to-poc-methodology.md` table row 3 previously said "Nonce
+   XOR'd into CRC init" as a blanket statement. This is v4-only behavior;
+   OTA v3 uses `((UID[4]<<8)|UID[5]) ^ OTA_VERSION_ID` with no nonce XOR
+   (see §19 and §34 for the source-derived and capture-validated evidence).
+   Corrected to distinguish v3 and v4.
+
+4. **FLRC references for live target.** The 4.4.2 target is LoRa-only
+   (confirmed in §15 source analysis). FLRC modes exist only in newer ELRS
+   firmware. Added qualification notes in:
+   - `research/rf-disruption-feasibility.md` §3.2 modulation table
+   - `docs/firmware-to-poc-methodology.md` table row 5
+
+5. **CRC14 table size (no change needed).** `research/betaflight-442-elrs-analysis.md`
+   line 143 says "256 entries, precomputed at init" — this refers to the CRC14
+   lookup table, not the FHSS sequence. 256 is correct for the table. No edit made.
+
+### October 25 project status (incorporating session-notes-2026-10-25.md)
+
+The standalone file `session-notes-2026-10-25.md` was created as a status
+snapshot. Its content is incorporated here with corrections; the standalone
+file remains in the repo as a historical artifact.
+
+**PRs #40–#42 are merged** (not "open" as the standalone file stated):
+- PR #40 — SX1280 TX hardware guide (commit `f2d9579`)
+- PR #41 — Wire real scanners into web UI (commit `ed2d30e`)
+- PR #42 — Chain 2 WiFi → MAVLink injection tools (commit `20b2196`)
+
+**Merged PR summary (20+ PRs to main):**
+
+| Category | PRs | Tools / Docs |
+|---|---|---|
+| ELRS TX emulator | #18 | `elrs-tx-emulator.py` — live TX via SPI to SX1280 |
+| MAVLink signing bypass | #19 | `mavlink-signing-bypass.py` — v2 signing weakness PoC |
+| CRSF analysis | #20 | `crsf-tool.py` — Crossfire packet parsing and crafting |
+| Exploit chains | #21 | End-to-end automated attack sequences |
+| WiFi tools | #12 | WiFi drone attack surface reference |
+| Betaflight analysis | #34 | MSP-over-ELRS attack surface mapping |
+| Replay canary | #36 | Fail-closed ELRS v3 hybrid-RC replay canary |
+| Web UI | #38 | Web-based drone scanner dashboard |
+| Capture validation | #39 | Chain 1 PHY frame validation against real captures |
+| Rainbow tables | #5 | 723 binding phrases, v3/v4 OTA support |
+| Recon tools | #9, #13, #16 | BLE scanner, curses dashboard, passive telemetry |
+| Protocol research | #6, #7, #8 | Failsafe mapping, GPS spoofing, ELRS v3/v4 diff |
+| Testing | #10, #37 | 90+ integration tests, MSP injection simulator |
+| SDR compatibility | #14 | SoapySDR abstraction layer for all RF tools |
+| SX1280 hardware guide | #40 | Dev board sourcing for Chain 1 live RF ($23–$69) |
+| Web UI scanners | #41 | Flask dashboard with real scanner/exploit SSE |
+| Chain 2 WiFi tools | #42 | Evil twin AP, MitM proxy, MAVLink injection |
+
+**Evidence levels — what is proven and what is not:**
+
+| Level | Status | Evidence |
+|---|---|---|
+| Source-derived | ✅ Complete for 4.4.2 v3 | FHSS, CRC14, SYNC layout, nonce behavior all matched to Betaflight 4.4.2 source |
+| Synthetic-test validated | ✅ 249 unit tests pass | Round-trip forge→CRC→verify in test harness |
+| Passive-capture validated | ✅ 54 PHY frames (16 SYNC, 38 RC) | Real E8→TinyHawk captures decoded with correct CRC and FHSS sequence |
+| Receiver-acceptance validated | ❌ Not yet attempted | Requires live RF TX via SX1280 hardware; this is the critical-path blocker |
+
+**Correction:** The standalone file stated "Chain 1 validated." This is an
+overclaim. CRC agreement on passive captures proves the source-derived model
+matches the over-the-air encoding. It does NOT prove the receiver will accept
+forged packets from an independent transmitter. Receiver acceptance is a
+separate evidence level that requires live RF testing with SX1280 hardware.
+
+**Forward plan (prioritized):**
+
+*No hardware required:*
+1. Chain 2 SITL end-to-end test — evil twin → MitM → MAVLink injection against ArduPilot SITL
+2. Web UI integration testing — Flask dashboard with real tool backends
+3. Cross-chain orchestrator — unified launcher for Chain 1 + Chain 2
+4. MSP-over-ELRS exploitation PoCs (attack surface mapped in PR #34)
+
+*Hardware-dependent (SX1280 dev board, $23–$69, guide in PR #40):*
+5. Chain 1 live injection test — packet forge → SPI TX → RF → receiver acceptance
+6. Replay canary validation against live RF
+
+**Key risk:** SX1280 hardware is the critical-path blocker for advancing
+from passive-capture validation to receiver-acceptance validation.
+
+### Changed files
+
+- `research/rf-disruption-feasibility.md` — sync channel version-qualified; FLRC note added
+- `E8-SERIAL-CHARACTERIZATION.md` — FHSS 256→240 correction
+- `failsafe-behavior-comparison.md` — FHSS 256→240 correction
+- `tools/elrs-tx-emulator-README.md` — FHSS 256→240 correction
+- `docs/firmware-to-poc-methodology.md` — nonce XOR version-qualified; FLRC/LoRa note
+- `SESSION-NOTES.md` — this entry
+
+### Validation
+
+- `python -B tools/validate-project.py` — PASS (212 files: syntax, JSON, corpus hashes, provenance, rainbow data, CVE coverage, local links)
+- `python -B -m unittest discover -s tools/tests -p "test_*.py"` — 241 tests passed, 3 skipped, 0 failures
+- `git diff --check` — no whitespace errors
+
+### Next steps
+
+- Codex: continue OTA-v3 transmitter/packet-forger corrections and protocol CI
+- Acquire SX1280 dev board for Chain 1 live RF testing
+- Run Chain 2 SITL end-to-end test when ArduPilot SITL is available
+- Address remaining open questions (CTF target platform, RF rules, scoring model)

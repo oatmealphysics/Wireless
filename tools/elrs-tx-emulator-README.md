@@ -14,7 +14,7 @@ The phrase seeds the FHSS hopping sequence, CRC initializer, and sync
 identifier. There is no encryption. Knowing the phrase means:
 
 1. Binding phrase → MD5 → UID (first 6 bytes)
-2. UID → FHSS seed → deterministic 256-entry hopping sequence (80 channels)
+2. UID → FHSS seed → deterministic 240-entry hopping sequence (80 channels, trimmed from 256)
 3. UID → CRC initializer for CRC14/CRC16 validation
 4. Transmit valid packets on the right frequency at the right time
 
