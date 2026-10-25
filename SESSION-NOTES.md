@@ -3060,3 +3060,29 @@ tests. The formerly failing test also passed in isolation, and
 `git diff --check` passed. Changed tracked files are
 `tools/elrs-iq-symbols.py` and this append-only log. Commit and push were
 pending when this entry was written; the final handoff records their result.
+
+---
+
+## 52. Fresh-checkout PHY scan test fix (Codex, 2026-10-25)
+
+Started from `c18125d` after the repository-required pull confirmed local
+`main` matched `origin/main`. The objective was to reproduce and repair the
+second four-job GitHub Actions failure. This was an offline code/test task
+only: no hardware, serial port, radio, network target, configuration, firmware,
+bootloader, or flashing action was used.
+
+A clean clone reproduced the failure that the established working checkout
+masked. The ignored `work/` directory does not exist after checkout, but
+`test_elrs_phy_scan.py` attempted to create a temporary directory inside it
+when NumPy and SciPy were available. The neighboring sync-channel test already
+created its tool's private work root during class setup. The PHY scan test now
+does the same before exercising private-output validation.
+
+Validation was repeated in a fresh Git checkout with Git LFS files left as
+checkout pointers and no pre-existing `work/` directory. The exact workflow
+commands passed: `python -B tools/validate-project.py` checked 212 files, and
+`python -B -m unittest discover -s tools/tests -p "test_*.py"` passed all 249
+tests under Python 3.12.3 with the optional scientific dependencies present.
+Changed tracked files are `tools/tests/test_elrs_phy_scan.py` and this
+append-only log. Commit and push were pending when this entry was written; the
+final handoff records their result.

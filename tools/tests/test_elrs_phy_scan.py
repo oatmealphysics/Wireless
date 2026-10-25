@@ -26,6 +26,7 @@ class PhyScanTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("elrs_phy_scan", TOOL)
         cls.scan = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.scan)
+        cls.scan.WORK_ROOT.mkdir(parents=True, exist_ok=True)
         cls.symbols = cls.scan.load_symbols()
 
     def make_frame(self):
