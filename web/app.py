@@ -42,6 +42,7 @@ action_log = []
 scanner_status = {"wifi": "idle", "ble": "idle", "sdr": "idle", "mavlink": "idle", "telemetry": "idle"}
 is_scanning = False
 simulate_mode = False
+dry_run_mode = True
 hw_status = {}
 events = []
 events_lock = threading.Lock()
@@ -279,96 +280,112 @@ ACTION_DEFS = {
         "label": "Force Land",
         "description": "Send immediate landing command",
         "severity": "warning",
+        "category": "active",
         "icon": "arrow-down",
     },
     "emergency": {
         "label": "Emergency Stop",
         "description": "Kill all motors immediately (drone falls)",
         "severity": "danger",
+        "category": "active",
         "icon": "x-octagon",
     },
     "takeoff": {
         "label": "Takeoff",
         "description": "Command drone to take off",
         "severity": "warning",
+        "category": "active",
         "icon": "arrow-up",
     },
     "streamon": {
         "label": "Capture Video",
         "description": "Enable video stream from drone camera",
         "severity": "info",
+        "category": "passive",
         "icon": "video",
     },
     "rc_zero": {
         "label": "Zero RC",
         "description": "Set all RC inputs to zero (hover/stop)",
         "severity": "warning",
+        "category": "active",
         "icon": "pause",
     },
     "disarm": {
         "label": "Disarm Motors",
         "description": "Disarm the flight controller motors",
         "severity": "danger",
+        "category": "active",
         "icon": "shield-off",
     },
     "rtl": {
         "label": "Return to Launch",
         "description": "Command drone to return to its launch position",
         "severity": "warning",
+        "category": "active",
         "icon": "home",
     },
     "reboot": {
         "label": "Reboot FC",
         "description": "Reboot the flight controller",
         "severity": "danger",
+        "category": "active",
         "icon": "refresh-cw",
     },
     "emergency_watchdog": {
         "label": "Watchdog Reset",
         "description": "Send AT*COMWDG watchdog reset (Parrot)",
         "severity": "danger",
+        "category": "active",
         "icon": "alert-triangle",
     },
     "kill_control": {
         "label": "Kill Control Process",
         "description": "Kill the drone's main control process via Telnet",
         "severity": "danger",
+        "category": "active",
         "icon": "x-circle",
     },
     "forge_disarm": {
         "label": "Forge Disarm Packet",
         "description": "Build forged RC disarm packet using recovered binding params",
         "severity": "danger",
+        "category": "simulated",
         "icon": "zap",
     },
     "preview_fhss": {
         "label": "Preview FHSS Sequence",
         "description": "Show the computed FHSS hop sequence",
         "severity": "info",
+        "category": "simulated",
         "icon": "radio",
     },
     "scan_deeper": {
         "label": "Deep ELRS Scan",
         "description": "Extended scan for SYNC packet capture",
         "severity": "info",
+        "category": "passive",
         "icon": "search",
     },
     "ble_scan_services": {
         "label": "Scan BLE Services",
         "description": "Enumerate BLE GATT services and characteristics",
         "severity": "info",
+        "category": "passive",
         "icon": "bluetooth",
     },
     "replay": {
         "label": "Replay Packets",
         "description": "Replay captured MAVLink packets (works against weak signing)",
         "severity": "danger",
+        "category": "active",
         "icon": "repeat",
     },
     "sniff": {
         "label": "Sniff Traffic",
         "description": "Capture and analyze MAVLink traffic",
         "severity": "info",
+        "category": "passive",
         "icon": "activity",
     },
 }
@@ -379,32 +396,35 @@ def run_scan_simulated():
     global targets, is_scanning, scanner_status
     import random
 
-    scanner_status = {**scanner_status, "wifi": "scanning", "ble": "scanning", "sdr": "scanning"}
-    _push_event("scan_start", {"mode": "simulate"})
+    try:
+        scanner_status = {**scanner_status, "wifi": "scanning", "ble": "scanning", "sdr": "scanning"}
+        _push_event("scan_start", {"mode": "simulate"})
 
-    time.sleep(1.5)
-    scanner_status["wifi"] = "done"
-    _push_event("scanner_done", {"scanner": "wifi"})
-    time.sleep(1.0)
-    scanner_status["ble"] = "done"
-    _push_event("scanner_done", {"scanner": "ble"})
-    time.sleep(1.5)
-    scanner_status["sdr"] = "done"
-    _push_event("scanner_done", {"scanner": "sdr"})
+        time.sleep(1.5)
+        scanner_status["wifi"] = "done"
+        _push_event("scanner_done", {"scanner": "wifi"})
+        time.sleep(1.0)
+        scanner_status["ble"] = "done"
+        _push_event("scanner_done", {"scanner": "ble"})
+        time.sleep(1.5)
+        scanner_status["sdr"] = "done"
+        _push_event("scanner_done", {"scanner": "sdr"})
 
-    with scan_lock:
-        now = time.time()
-        for t in SIMULATED_TARGETS:
-            target = dict(t)
-            target["first_seen"] = now - random.uniform(0, 10)
-            target["last_seen"] = now
-            target["score"] = _score_target(target)
-            targets[target["id"]] = target
-            _push_event("target_found", {"id": target["id"], "name": target["name"], "protocol": target["protocol"]})
+        with scan_lock:
+            now = time.time()
+            for t in SIMULATED_TARGETS:
+                target = dict(t)
+                target["first_seen"] = now - random.uniform(0, 10)
+                target["last_seen"] = now
+                target["score"] = _score_target(target)
+                target["threat_level"] = _threat_from_score(target)
+                targets[target["id"]] = target
+                _push_event("target_found", {"id": target["id"], "name": target["name"], "protocol": target["protocol"]})
 
-    is_scanning = False
-    scanner_status = {k: "idle" for k in scanner_status}
-    _push_event("scan_complete", {"target_count": len(targets), "mode": "simulate"})
+        scanner_status = {k: "idle" for k in scanner_status}
+        _push_event("scan_complete", {"target_count": len(targets), "mode": "simulate"})
+    finally:
+        is_scanning = False
 
 
 def run_scan_live(protocols, config):
@@ -419,91 +439,92 @@ def run_scan_live(protocols, config):
     all_targets = []
     scan_errors = {}
 
-    _push_event("scan_start", {"mode": "live", "protocols": protocols})
+    try:
+        _push_event("scan_start", {"mode": "live", "protocols": protocols})
 
-    wifi_iface = config.get("wifi_iface", "wlan0")
-    ble_iface = config.get("ble_iface", "hci0")
-    sdr_args = config.get("sdr_args", "driver=uhd")
-    scan_time = config.get("scan_time", 15.0)
+        wifi_iface = config.get("wifi_iface", "wlan0")
+        ble_iface = config.get("ble_iface", "hci0")
+        sdr_args = config.get("sdr_args", "driver=uhd")
+        scan_time = config.get("scan_time", 15.0)
 
-    if "wifi" in protocols:
-        scanner_status["wifi"] = "scanning"
-        _push_event("scanner_start", {"scanner": "wifi", "interface": wifi_iface})
-        try:
-            wifi_results = scan_wifi(wifi_iface, scan_time, logger, abort)
-            all_targets.extend(wifi_results)
-            _push_event("scanner_done", {"scanner": "wifi", "count": len(wifi_results)})
-        except Exception as e:
-            scan_errors["wifi"] = str(e)
-            _push_event("scanner_error", {"scanner": "wifi", "error": str(e)})
-        scanner_status["wifi"] = "done" if "wifi" not in scan_errors else "error"
+        if "wifi" in protocols:
+            scanner_status["wifi"] = "scanning"
+            _push_event("scanner_start", {"scanner": "wifi", "interface": wifi_iface})
+            try:
+                wifi_results = scan_wifi(wifi_iface, scan_time, logger, abort)
+                all_targets.extend(wifi_results)
+                _push_event("scanner_done", {"scanner": "wifi", "count": len(wifi_results)})
+            except Exception as e:
+                scan_errors["wifi"] = str(e)
+                _push_event("scanner_error", {"scanner": "wifi", "error": str(e)})
+            scanner_status["wifi"] = "done" if "wifi" not in scan_errors else "error"
 
-    if "ble" in protocols:
-        scanner_status["ble"] = "scanning"
-        _push_event("scanner_start", {"scanner": "ble", "interface": ble_iface})
-        try:
-            ble_results = scan_ble(ble_iface, scan_time, logger, abort)
-            all_targets.extend(ble_results)
-            _push_event("scanner_done", {"scanner": "ble", "count": len(ble_results)})
-        except Exception as e:
-            scan_errors["ble"] = str(e)
-            _push_event("scanner_error", {"scanner": "ble", "error": str(e)})
-        scanner_status["ble"] = "done" if "ble" not in scan_errors else "error"
+        if "ble" in protocols:
+            scanner_status["ble"] = "scanning"
+            _push_event("scanner_start", {"scanner": "ble", "interface": ble_iface})
+            try:
+                ble_results = scan_ble(ble_iface, scan_time, logger, abort)
+                all_targets.extend(ble_results)
+                _push_event("scanner_done", {"scanner": "ble", "count": len(ble_results)})
+            except Exception as e:
+                scan_errors["ble"] = str(e)
+                _push_event("scanner_error", {"scanner": "ble", "error": str(e)})
+            scanner_status["ble"] = "done" if "ble" not in scan_errors else "error"
 
-    if "sdr" in protocols:
-        scanner_status["sdr"] = "scanning"
-        _push_event("scanner_start", {"scanner": "sdr", "args": sdr_args})
-        try:
-            sdr_results = scan_sdr(sdr_args, scan_time, logger, abort)
-            all_targets.extend(sdr_results)
-            _push_event("scanner_done", {"scanner": "sdr", "count": len(sdr_results)})
-        except Exception as e:
-            scan_errors["sdr"] = str(e)
-            _push_event("scanner_error", {"scanner": "sdr", "error": str(e)})
-        scanner_status["sdr"] = "done" if "sdr" not in scan_errors else "error"
+        if "sdr" in protocols:
+            scanner_status["sdr"] = "scanning"
+            _push_event("scanner_start", {"scanner": "sdr", "args": sdr_args})
+            try:
+                sdr_results = scan_sdr(sdr_args, scan_time, logger, abort)
+                all_targets.extend(sdr_results)
+                _push_event("scanner_done", {"scanner": "sdr", "count": len(sdr_results)})
+            except Exception as e:
+                scan_errors["sdr"] = str(e)
+                _push_event("scanner_error", {"scanner": "sdr", "error": str(e)})
+            scanner_status["sdr"] = "done" if "sdr" not in scan_errors else "error"
 
-    if "mavlink" in protocols:
-        scanner_status["mavlink"] = "scanning"
-        _push_event("scanner_start", {"scanner": "mavlink"})
-        try:
-            mav_results = _scan_mavlink_udp(scan_time, logger, abort)
-            all_targets.extend(mav_results)
-            _push_event("scanner_done", {"scanner": "mavlink", "count": len(mav_results)})
-        except Exception as e:
-            scan_errors["mavlink"] = str(e)
-            _push_event("scanner_error", {"scanner": "mavlink", "error": str(e)})
-        scanner_status["mavlink"] = "done" if "mavlink" not in scan_errors else "error"
+        if "mavlink" in protocols:
+            scanner_status["mavlink"] = "scanning"
+            _push_event("scanner_start", {"scanner": "mavlink"})
+            try:
+                mav_results = _scan_mavlink_udp(scan_time, logger, abort)
+                all_targets.extend(mav_results)
+                _push_event("scanner_done", {"scanner": "mavlink", "count": len(mav_results)})
+            except Exception as e:
+                scan_errors["mavlink"] = str(e)
+                _push_event("scanner_error", {"scanner": "mavlink", "error": str(e)})
+            scanner_status["mavlink"] = "done" if "mavlink" not in scan_errors else "error"
 
-    if "telemetry" in protocols:
-        scanner_status["telemetry"] = "scanning"
-        _push_event("scanner_start", {"scanner": "telemetry"})
-        try:
-            telem_results = _scan_passive_telemetry(sdr_args, scan_time, logger, abort)
-            all_targets.extend(telem_results)
-            _push_event("scanner_done", {"scanner": "telemetry", "count": len(telem_results)})
-        except Exception as e:
-            scan_errors["telemetry"] = str(e)
-            _push_event("scanner_error", {"scanner": "telemetry", "error": str(e)})
-        scanner_status["telemetry"] = "done" if "telemetry" not in scan_errors else "error"
+        if "telemetry" in protocols:
+            scanner_status["telemetry"] = "scanning"
+            _push_event("scanner_start", {"scanner": "telemetry"})
+            try:
+                telem_results = _scan_passive_telemetry(sdr_args, scan_time, logger, abort)
+                all_targets.extend(telem_results)
+                _push_event("scanner_done", {"scanner": "telemetry", "count": len(telem_results)})
+            except Exception as e:
+                scan_errors["telemetry"] = str(e)
+                _push_event("scanner_error", {"scanner": "telemetry", "error": str(e)})
+            scanner_status["telemetry"] = "done" if "telemetry" not in scan_errors else "error"
 
-    with scan_lock:
-        now = time.time()
-        for t in all_targets:
-            tid = _make_target_id(t)
-            target = _convert_recon_target(t, tid, now)
-            targets[tid] = target
-            _push_event("target_found", {"id": tid, "name": target["name"], "protocol": target["protocol"]})
+        with scan_lock:
+            now = time.time()
+            for t in all_targets:
+                tid = _make_target_id(t)
+                target = _convert_recon_target(t, tid, now)
+                targets[tid] = target
+                _push_event("target_found", {"id": tid, "name": target["name"], "protocol": target["protocol"]})
 
-    is_scanning = False
-    # Reset scanner statuses after a short delay so the UI can show 'done'
-    time.sleep(1)
-    scanner_status.update({k: "idle" for k in scanner_status})
+        time.sleep(1)
+        scanner_status.update({k: "idle" for k in scanner_status})
 
-    _push_event("scan_complete", {
-        "target_count": len(targets),
-        "mode": "live",
-        "errors": scan_errors if scan_errors else None,
-    })
+        _push_event("scan_complete", {
+            "target_count": len(targets),
+            "mode": "live",
+            "errors": scan_errors if scan_errors else None,
+        })
+    finally:
+        is_scanning = False
 
 
 def _scan_mavlink_udp(timeout, logger, abort):
@@ -1066,6 +1087,7 @@ def api_status():
         "target_count": len(target_list),
         "targets": target_list,
         "simulate": simulate_mode,
+        "dry_run": dry_run_mode,
         "hardware": hw_status,
     })
 
@@ -1119,7 +1141,7 @@ def api_target_action(target_id):
     if action_name not in target.get("available_actions", []):
         return jsonify({"error": f"Action '{action_name}' not available for this target"}), 400
 
-    if simulate_mode:
+    if simulate_mode or dry_run_mode:
         result = execute_action_simulated(target, action_name)
     else:
         result = execute_action_live(target, action_name)
@@ -1325,10 +1347,12 @@ def main():
 
     parser = argparse.ArgumentParser(description="Drone Scanner Web UI")
     parser.add_argument("--port", type=int, default=5000)
-    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--simulate", action="store_true",
                         help="Demo mode with simulated targets")
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--live-actions", action="store_true",
+                        help="Enable live action execution (default: dry-run only)")
     parser.add_argument("--wifi-iface", default="wlan0",
                         help="Default WiFi interface (default: wlan0)")
     parser.add_argument("--ble-iface", default="hci0",
@@ -1338,6 +1362,7 @@ def main():
     args = parser.parse_args()
 
     simulate_mode = args.simulate
+    dry_run_mode = not args.live_actions
 
     if not simulate_mode:
         detect_hardware()

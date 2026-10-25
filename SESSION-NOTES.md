@@ -3060,3 +3060,93 @@ tests. The formerly failing test also passed in isolation, and
 `git diff --check` passed. Changed tracked files are
 `tools/elrs-iq-symbols.py` and this append-only log. Commit and push were
 pending when this entry was written; the final handoff records their result.
+
+---
+
+## §52 — Claude Code, 2026-10-25: Web dashboard security hardening
+
+**Starting revision:** c18125d (main, "Fix LoRa waveform alignment test")
+
+**Objective:** Harden the web dashboard (`web/app.py` and
+`web/templates/index.html`) against stored-DOM-XSS, insecure defaults,
+and UI correctness issues. Scoped by operator to six categories plus
+focused tests.
+
+**Actions and evidence:**
+
+1. **Stored-DOM-XSS fix.** The `escHtml()` JS function used
+   `textContent`/`innerHTML` which escapes `<>&"` but not single quotes.
+   Inline `onclick` handlers used single-quoted attribute strings, so a
+   target ID containing `'` could break out of the handler context.
+   - Fixed `escHtml()` to also replace `'` with `&#39;`.
+   - Removed all inline `onclick=` handlers from the HTML template.
+   - Replaced with `data-*` attributes and `addEventListener` event
+     delegation attached after DOM insertion.
+   - Added `safeCssClass()` to sanitize threat-level values before
+     interpolation into CSS class names (strips non-alphanumeric chars).
+
+2. **Bind to localhost by default.** Changed `--host` argparse default
+   from `0.0.0.0` to `127.0.0.1`. Operators who need network access can
+   pass `--host 0.0.0.0` explicitly.
+
+3. **Dry-run as default.** Added module-level `dry_run_mode = True` and
+   `--live-actions` CLI flag. The action execution route now uses
+   `execute_action_simulated` (dry-run) whenever `simulate_mode` or
+   `dry_run_mode` is true. The `/api/status` endpoint reports `dry_run`
+   state. The frontend shows "LIVE MODE (DRY-RUN)" when applicable.
+
+4. **Action categories.** Added `"category"` field to every entry in
+   `ACTION_DEFS`: `"simulated"` (computation only, e.g. forge_disarm,
+   preview_fhss), `"passive"` (read-only recon, e.g. sniff, streamon,
+   ble_scan_services, scan_deeper), or `"active"` (state-changing
+   commands). The frontend renders category badges on action cards with
+   distinct colors.
+
+5. **Threat labels from score.** `run_scan_simulated()` previously
+   copied hardcoded `threat_level` values from `SIMULATED_TARGETS`.
+   Now it recalculates `target["threat_level"] = _threat_from_score(target)`
+   after computing the score, so labels always derive from the score.
+
+6. **Scanner exception cleanup.** Both `run_scan_simulated()` and
+   `run_scan_live()` now wrap their bodies in `try/finally` blocks that
+   reset `is_scanning = False` in the `finally` clause, preventing the
+   UI from getting stuck in "scanning" state on exceptions.
+
+**Safety boundaries:**
+- Did not access hardware, serial ports, RF transmitters, or live networks.
+- Did not modify ELRS chain, MSP, OTA, or protocol CI files (Codex scope).
+- No live destructive actions added or enabled.
+- Preserved the absolute no-flashing rule for E8 and TinyHawk.
+
+**Changed files:**
+- `web/app.py` — localhost binding, dry-run default, action categories,
+  scanner try/finally, threat label derivation, status API dry_run field.
+- `web/templates/index.html` — XSS fixes (escHtml, event delegation,
+  safeCssClass), action category badges, dry-run mode display.
+- `tools/tests/test_web_dashboard.py` — 28 new focused tests covering
+  hostile SSIDs, action validation, scanner failure cleanup, score labels,
+  dry-run gating, localhost binding, frontend XSS mitigations, and
+  action categories.
+
+**Validation:**
+- `python -B tools/validate-project.py`: PASS (213 files)
+- `python -B -m unittest discover -s tools/tests -p 'test_*.py'`: 269 tests OK (3 skipped)
+- `python -B -m unittest tools/tests/test_web_dashboard.py`: 28/28 OK
+- `git diff --check`: clean
+
+**Limitations:**
+- Frontend XSS mitigations are structural (event delegation, escaping)
+  but do not add Content-Security-Policy headers. CSP would be a
+  separate follow-up.
+- The `innerHTML` assignments in `updateScannerStatus()`, `renderTargetList()`,
+  and `renderDetail()` still use template strings, but all interpolated
+  values now pass through `escHtml()` or `safeCssClass()`.
+- No end-to-end browser test for XSS payloads; coverage is via
+  static analysis of the template and unit tests of the Python layer.
+
+**Next steps:**
+- Add CSP headers (`Content-Security-Policy: default-src 'self'`) as a
+  defense-in-depth layer.
+- Consider migrating innerHTML rendering to DOM API for further XSS
+  hardness if the dashboard grows.
+- Continue ELRS pair benchmark (Codex scope, §50–§51).
