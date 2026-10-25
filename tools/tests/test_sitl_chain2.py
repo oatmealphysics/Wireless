@@ -26,18 +26,29 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pymavlink import mavutil
+try:
+    from pymavlink import mavutil
+    _HAS_PYMAVLINK = True
+except ImportError:
+    _HAS_PYMAVLINK = False
+    mavutil = None
 
-from sitl_harness import (
-    SITLHarness, SITL_BINARY,
-    wait_for_mode, wait_armed, get_vehicle_state,
-)
+try:
+    from sitl_harness import (
+        SITLHarness, SITL_BINARY,
+        wait_for_mode, wait_armed, get_vehicle_state,
+    )
+except ImportError:
+    SITLHarness = None
+    SITL_BINARY = Path("/nonexistent")
+    wait_for_mode = wait_armed = get_vehicle_state = None
 
 SKIP_REASON = "SITL binary not found — install to firmware/ardupilot/"
+SKIP_PYMAVLINK = "pymavlink not installed"
 
 
 def sitl_available() -> bool:
-    return SITL_BINARY.exists()
+    return _HAS_PYMAVLINK and SITL_BINARY.exists()
 
 
 @unittest.skipUnless(sitl_available(), SKIP_REASON)
