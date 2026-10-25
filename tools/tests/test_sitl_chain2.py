@@ -38,7 +38,7 @@ try:
         SITLHarness, SITL_BINARY,
         wait_for_mode, wait_armed, get_vehicle_state,
     )
-except ImportError:
+except (ImportError, SystemExit):
     SITLHarness = None
     SITL_BINARY = Path("/nonexistent")
     wait_for_mode = wait_armed = get_vehicle_state = None

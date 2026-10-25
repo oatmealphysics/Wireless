@@ -34,9 +34,7 @@ from pathlib import Path
 try:
     from pymavlink import mavutil
 except ImportError:
-    print("[!] pymavlink not installed. Run: pip install pymavlink",
-          file=sys.stderr)
-    sys.exit(1)
+    mavutil = None
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SITL_BINARY = REPO_ROOT / "firmware" / "ardupilot" / "arducopter_SITL_x86_64_4.7.2"
