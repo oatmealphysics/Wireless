@@ -65,6 +65,7 @@ body {
 .status-dot.idle { background: var(--text-dim); }
 .status-dot.scanning { background: var(--yellow); animation: pulse 1s infinite; }
 .status-dot.done { background: var(--green); }
+.status-dot.error { background: var(--red); }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
@@ -350,12 +351,25 @@ body {
   background: rgba(34, 197, 94, 0.1);
   border: 1px solid rgba(34, 197, 94, 0.2);
   color: var(--green);
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .action-result.error {
   background: rgba(239, 68, 68, 0.1);
   border-color: rgba(239, 68, 68, 0.2);
   color: var(--red);
+}
+
+.action-result .data-block {
+  margin-top: 8px;
+  padding: 8px;
+  background: rgba(0,0,0,0.2);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .log-panel {
@@ -374,6 +388,7 @@ body {
 .log-target { color: var(--cyan); }
 .log-action { color: var(--yellow); }
 .log-result { color: var(--green); }
+.log-result.error { color: var(--red); }
 
 .signal-bar {
   display: inline-flex;
@@ -408,7 +423,7 @@ body {
   border-radius: 12px;
   padding: 32px;
   text-align: center;
-  min-width: 320px;
+  min-width: 380px;
 }
 
 .scan-modal h2 { margin-bottom: 24px; font-size: 16px; }
@@ -416,7 +431,7 @@ body {
 .scanner-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   margin-bottom: 24px;
 }
 
@@ -428,6 +443,25 @@ body {
   border-radius: 6px;
   background: var(--bg);
   font-size: 13px;
+}
+
+.scanner-item .scanner-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scanner-item .hw-badge {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 2px;
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--green);
+}
+
+.scanner-item .hw-badge.unavailable {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--red);
 }
 
 .spinner {
@@ -458,11 +492,46 @@ body {
   transition: width 0.3s;
 }
 
+.event-feed {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  width: 320px;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 50;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.event-toast {
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+  animation: fadeIn 0.3s ease-out;
+  pointer-events: auto;
+}
+
+.event-toast.target { border-color: var(--green); color: var(--green); }
+.event-toast.error { border-color: var(--red); color: var(--red); }
+.event-toast.action { border-color: var(--yellow); color: var(--yellow); }
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 @media (max-width: 768px) {
   .main { flex-direction: column; }
   .target-list { width: 100%; min-width: 0; max-height: 40vh; border-right: none; border-bottom: 1px solid var(--border); }
   .detail-panel { padding: 16px; }
   .actions-grid { grid-template-columns: 1fr; }
+  .event-feed { width: 220px; }
 }
 </style>
 </head>
@@ -474,6 +543,8 @@ body {
     <span id="scanner-wifi"><span class="status-dot idle"></span>WiFi</span>
     <span id="scanner-ble"><span class="status-dot idle"></span>BLE</span>
     <span id="scanner-sdr"><span class="status-dot idle"></span>SDR</span>
+    <span id="scanner-mavlink"><span class="status-dot idle"></span>MAVLink</span>
+    <span id="scanner-telemetry"><span class="status-dot idle"></span>Telemetry</span>
     <span id="target-count" style="margin-left:8px; color:var(--accent)">0 targets</span>
   </div>
 </div>
@@ -516,34 +587,95 @@ body {
 <div class="scan-overlay" id="scan-overlay" style="display:none">
   <div class="scan-modal">
     <h2>Scanning for drones...</h2>
-    <div class="scanner-list">
+    <div class="scanner-list" id="scanner-list-modal">
       <div class="scanner-item">
-        <span>WiFi Scanner</span>
+        <span class="scanner-label">WiFi Scanner</span>
         <span id="scan-wifi-status"><span class="spinner"></span></span>
       </div>
       <div class="scanner-item">
-        <span>BLE Scanner</span>
+        <span class="scanner-label">BLE Scanner</span>
         <span id="scan-ble-status"><span class="spinner"></span></span>
       </div>
       <div class="scanner-item">
-        <span>SDR / RF Scanner</span>
+        <span class="scanner-label">SDR / RF Scanner</span>
         <span id="scan-sdr-status"><span class="spinner"></span></span>
+      </div>
+      <div class="scanner-item">
+        <span class="scanner-label">MAVLink Sniffer</span>
+        <span id="scan-mavlink-status"><span class="spinner"></span></span>
+      </div>
+      <div class="scanner-item">
+        <span class="scanner-label">Passive Telemetry</span>
+        <span id="scan-telemetry-status"><span class="spinner"></span></span>
       </div>
     </div>
     <div id="scan-found" style="font-size:13px;color:var(--text-dim)"></div>
   </div>
 </div>
 
+<div class="event-feed" id="event-feed"></div>
+
 <script>
 let targets = [];
 let selectedTargetId = null;
 let actionDefs = {};
 let pollInterval = null;
+let eventSource = null;
 
 async function init() {
   const resp = await fetch('/api/actions');
   actionDefs = await resp.json();
   await refreshStatus();
+  connectSSE();
+}
+
+function connectSSE() {
+  if (eventSource) eventSource.close();
+  eventSource = new EventSource('/api/events');
+
+  eventSource.addEventListener('target_found', (e) => {
+    const data = JSON.parse(e.data);
+    showToast(`Target found: ${data.name} [${data.protocol}]`, 'target');
+    refreshStatus();
+  });
+
+  eventSource.addEventListener('scanner_done', (e) => {
+    const data = JSON.parse(e.data);
+    refreshStatus();
+  });
+
+  eventSource.addEventListener('scanner_error', (e) => {
+    const data = JSON.parse(e.data);
+    showToast(`${data.scanner} scanner error: ${data.error}`, 'error');
+    refreshStatus();
+  });
+
+  eventSource.addEventListener('scan_complete', (e) => {
+    const data = JSON.parse(e.data);
+    showToast(`Scan complete: ${data.target_count} target(s)`, 'target');
+    refreshStatus();
+  });
+
+  eventSource.addEventListener('action_executed', (e) => {
+    const data = JSON.parse(e.data);
+    const cls = data.status === 'error' ? 'error' : 'action';
+    showToast(`${data.label}: ${data.status}`, cls);
+  });
+
+  eventSource.onerror = () => {
+    setTimeout(connectSSE, 3000);
+  };
+}
+
+function showToast(msg, cls) {
+  const feed = document.getElementById('event-feed');
+  const toast = document.createElement('div');
+  toast.className = `event-toast ${cls || ''}`;
+  toast.textContent = msg;
+  feed.prepend(toast);
+  // Keep only last 5 toasts
+  while (feed.children.length > 5) feed.removeChild(feed.lastChild);
+  setTimeout(() => { if (toast.parentNode) toast.remove(); }, 6000);
 }
 
 async function refreshStatus() {
@@ -587,7 +719,7 @@ function updateScannerStatus(status) {
     const el = document.getElementById(`scanner-${name}`);
     if (!el) continue;
     const dot = el.querySelector('.status-dot');
-    dot.className = 'status-dot ' + state;
+    if (dot) dot.className = 'status-dot ' + state;
 
     const modalEl = document.getElementById(`scan-${name}-status`);
     if (modalEl) {
@@ -595,6 +727,8 @@ function updateScannerStatus(status) {
         modalEl.innerHTML = '<span class="spinner"></span>';
       } else if (state === 'done') {
         modalEl.innerHTML = '<span style="color:var(--green)">Done</span>';
+      } else if (state === 'error') {
+        modalEl.innerHTML = '<span style="color:var(--red)">Error</span>';
       } else {
         modalEl.innerHTML = '<span style="color:var(--text-dim)">Idle</span>';
       }
@@ -605,7 +739,7 @@ function updateScannerStatus(status) {
 async function startScan() {
   document.getElementById('scan-overlay').style.display = 'flex';
   document.getElementById('btn-scan').disabled = true;
-  ['wifi','ble','sdr'].forEach(n => {
+  ['wifi','ble','sdr','mavlink','telemetry'].forEach(n => {
     const el = document.getElementById(`scan-${n}-status`);
     if (el) el.innerHTML = '<span class="spinner"></span>';
   });
@@ -779,9 +913,15 @@ async function executeAction(targetId, actionName) {
     const data = await resp.json();
 
     if (resp.ok) {
+      const dataBlock = data.data
+        ? `<div class="data-block"><pre>${escHtml(JSON.stringify(data.data, null, 2))}</pre></div>`
+        : '';
+      const cls = data.status === 'error' ? 'error' : '';
       resultEl.innerHTML = `
-        <div class="action-result">
-          <strong>${escHtml(data.label || actionName)}</strong>: ${escHtml(data.result)}
+        <div class="action-result ${cls}">
+          <strong>${escHtml(data.label || actionName)}</strong> [${escHtml(data.status)}]
+          <br>${escHtml(data.result)}
+          ${dataBlock}
         </div>`;
     } else {
       resultEl.innerHTML = `
@@ -809,11 +949,12 @@ async function refreshActionLog(targetId) {
     }
     el.innerHTML = entries.map(e => {
       const time = new Date(e.timestamp).toLocaleTimeString();
+      const resultCls = e.status === 'error' ? 'error' : '';
       return `
         <div class="log-entry">
           <span class="log-time">${time}</span>
           <span class="log-action">${escHtml(e.label || e.action)}</span>
-          <span class="log-result">[${e.status}]</span>
+          <span class="log-result ${resultCls}">[${e.status}]</span>
         </div>`;
     }).join('');
   } catch(e) {}
