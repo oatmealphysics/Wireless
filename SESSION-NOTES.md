@@ -3032,3 +3032,31 @@ commands on Ubuntu and Windows with Python 3.10 and 3.12. Validation here passed
 passed all **224 tests**. The contradiction sweep and path-scoped
 `git diff --check` also passed. Commit/push status is recorded in the final
 handoff.
+
+---
+
+## 51. GitHub Actions long-interleaver waveform fix (Codex, 2026-10-25)
+
+Started from rebased local revision `1bfad55` on top of `origin/main` at
+`f2d9579`. The objective was to reproduce and repair the four failing Offline
+project validation matrix jobs reported for Python 3.10/3.12 on Ubuntu and
+Windows. This was an offline code/test task only: no hardware, serial port,
+radio, network target, configuration, firmware, bootloader, or flashing action
+was used.
+
+The full test suite reproduced one deterministic failure in
+`test_waveform_recovers_encoded_symbols`. An ideal cyclic LoRa fixture gave
+sample offsets 0 and 1 mathematically equivalent preamble scores, but FFT
+rounding made the later offset larger by about `9e-16`. Selecting that later
+alignment left the final payload symbol one sample short at the fixture edge,
+so only 20 of 21 symbols were returned. `find_preamble()` now retains the
+earliest candidate when scores differ by no more than `1e-12`; materially
+better candidates still replace it.
+
+Validation after the change passed the exact CI commands under Python 3.12.3:
+`python -B tools/validate-project.py` checked 212 files, and
+`python -B -m unittest discover -s tools/tests -p "test_*.py"` passed all 249
+tests. The formerly failing test also passed in isolation, and
+`git diff --check` passed. Changed tracked files are
+`tools/elrs-iq-symbols.py` and this append-only log. Commit and push were
+pending when this entry was written; the final handoff records their result.

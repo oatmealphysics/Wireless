@@ -159,7 +159,12 @@ def find_preamble(iq: np.ndarray, first: int, last: int) -> dict:
             scores = 0.4 * preamble + 0.6 * np.minimum(sync_first, sync_second)
             baseline_bin = int(np.argmax(scores))
             score = float(scores[baseline_bin])
-            if best is None or score > best["score"]:
+            # A perfect LoRa chirp is cyclic: shifting an ideal fixture by one
+            # sample shifts every detected bin while producing the same score.
+            # Tiny FFT rounding differences must not make a later alignment
+            # replace the earliest equivalent one, because doing so can leave
+            # the final payload symbol one sample short at the capture edge.
+            if best is None or score > best["score"] + 1e-12:
                 peaks = np.argmax(power, axis=1).astype(int)
                 best = {"start_sample": start, "score": score,
                         "baseline_bin": baseline_bin, "sync_direction": direction,
