@@ -3306,3 +3306,87 @@ focused tests.
 - Consider migrating innerHTML rendering to DOM API for further XSS
   hardness if the dashboard grows.
 - Continue ELRS pair benchmark (Codex scope, §50–§51).
+
+## 55. Chain 2 SITL integration harness and tests (Claude, 2026-10-25)
+
+**Starting revision:** `c18125d` (HEAD of main)
+
+**Objective:** Build an offline Chain 2 MAVLink integration test suite against
+ArduPilot SITL. Exercise discovery, interception, MAVLink parsing, signing
+policy, command injection, and audit logging end to end. Verify success through
+observed SITL state and telemetry, not merely packet transmission. All network
+activity localhost-only; no hardware, no RF, no external targets.
+
+**Actions:**
+
+1. Created `tools/sitl_harness.py` — SITL process lifecycle manager.
+   - Context-manager (`with SITLHarness() as sitl`) for deterministic setup/teardown.
+   - Starts SITL with `--wipe --synthetic-clock` for reproducible EEPROM state.
+   - Instance-based port numbering (5760+10*N) avoids collisions when running
+     multiple SITL instances in parallel.
+   - Work directory `/tmp/sitl_test_{instance}_{pid}`, cleaned on teardown.
+   - Helper functions: `wait_for_mode()`, `wait_armed()`, `get_vehicle_state()`.
+   - Standalone smoke test (`python3 tools/sitl_harness.py`).
+
+2. Created `tools/tests/test_sitl_chain2.py` — 23 integration tests in 6
+   classes, each using a distinct SITL instance:
+   - `TestSITLDiscovery` (inst 10): heartbeat, vehicle type, autopilot ID,
+     initial mode (STABILIZE), disarmed state, SYS_STATUS presence.
+   - `TestSITLSigningPolicy` (inst 11): signing disabled by default, MAVLink v2
+     capability confirmed.
+   - `TestSITLCommandInjection` (inst 12): mode changes (GUIDED, RTL, LAND)
+     verified through telemetry state, COMMAND_LONG ACK, reboot ACK.
+   - `TestSITLMavlinkParsing` (inst 13): heartbeat field correctness, ATTITUDE
+     stream, GPS position (with init-time retry), raw buffer format, CRC
+     validation via pymavlink round-trip.
+   - `TestSITLWireOrderP1_3` (inst 14): correct vs wrong COMMAND_LONG wire
+     order comparison against pymavlink reference; SITL acceptance of correctly
+     ordered payload.
+   - `TestSITLAuditLogging` (inst 15): message-type inventory (≥5 types),
+     COMMAND_ACK audit trail.
+   - All tests skip gracefully when the SITL binary is absent.
+
+**Evidence (SYNTHETIC-TEST only — no live RF or hardware):**
+
+- `python -B tools/validate-project.py` — PASS, 214 files checked.
+- `python -B -m unittest discover -s tools/tests -p "test_*.py"` — 264 tests
+  passed (3 skipped), including all 23 new SITL tests.
+- `git diff --check` — clean.
+- pymavlink 2.4.50 installed; ArduCopter SITL 4.7.2 binary used from
+  `firmware/ardupilot/arducopter_SITL_x86_64_4.7.2`.
+
+**Key fixes during development:**
+
+- SITL does not stream SYS_STATUS/ATTITUDE/GPS by default; added explicit
+  `request_data_stream_send()` calls before waiting for telemetry.
+- pymavlink `msg.pack()` defaults to MAVLink v1 (6-byte header, magic 0xFE),
+  not v2; detection by magic byte fixes header-length assumptions.
+- pymavlink v1 truncates trailing zero bytes from payload; using non-zero field
+  values and a zero-padding fallback ensures length comparisons work.
+- GPS coordinates require SITL warm-up time; retry loop up to 20 s before
+  asserting approximate position match.
+
+**Safety boundaries:**
+
+- All tests run against localhost SITL only. No hardware, serial, RF, or
+  external network access.
+- No firmware flashing or modification (absolute no-flash constraint preserved).
+- No live destructive actions; command injection targets the simulator only.
+- Codex-owned files (ELRS capture validator, MSP simulator, OTA-v3 tools,
+  protocol CI) were not modified.
+
+**Changed files:**
+
+- `tools/sitl_harness.py` (new)
+- `tools/tests/test_sitl_chain2.py` (new)
+- `SESSION-NOTES.md` (this entry)
+
+**Dependencies:** `pymavlink>=2.4.50`, ArduPilot SITL binary at
+`firmware/ardupilot/arducopter_SITL_x86_64_4.7.2`.
+
+**Next steps:**
+
+- Harden the web dashboard (XSS, localhost binding, dry-run default).
+- Consolidate SESSION-NOTES.md and sweep stale documentation claims.
+- Once Codex completes the ELRS/MSP/OTA corrections, integrate with the
+  Chain 2 SITL tests for end-to-end validation.
