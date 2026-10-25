@@ -157,14 +157,14 @@ Source: `FHSS.cpp`, ISM2G4 domain.
 | Channel count | 80 |
 | Channel spacing | ~988 kHz (79 MHz / 79 intervals) |
 | Sequence length | 240 entries (FHSS_SEQUENCE_LEN=256, trimmed to 240 = 3×80) |
-| Sync channel | Channel 40 (middle of band) |
+| Sync channel | Channel 41 (v3, live 4.4.2 target) / channel 40 (v4) — see §3.5 |
 | Hopping pattern | Pseudo-random, seeded by UID |
 
 ### 3.2 Modulation Bandwidth
 
 | Mode | Occupied Bandwidth | Notes |
 |---|---|---|
-| FLRC (1000/500 Hz) | ~600 kHz | BR 650 kbps, BW 0.6 MHz, CR 1/2 |
+| FLRC (1000/500 Hz) | ~600 kHz | BR 650 kbps, BW 0.6 MHz, CR 1/2 — **not used by Betaflight 4.4.2 target (LoRa only)** |
 | LoRa SF5/BW800 | ~812.5 kHz | 500/333 Hz rates |
 | LoRa SF6/BW800 | ~812.5 kHz | 250 Hz rate |
 | LoRa SF7/BW800 | ~812.5 kHz | 150/100 Hz rates |

@@ -357,8 +357,8 @@ Once configuration is extracted:
 
 1. **Binding phrase brute-force** — use `tools/elrs-uid-rainbow.py` to
    check if the UID matches a known binding phrase
-2. **FHSS sequence calculator** — given the UID, compute the full 256-entry
-   hopping sequence for packet injection
+2. **FHSS sequence calculator** — given the UID, compute the full 240-entry
+   hopping sequence (3×80 channels for 2.4 GHz) for packet injection
 3. **OTA packet forger** — craft valid ELRS packets to override the
    legitimate TX and commandeer the drone
 

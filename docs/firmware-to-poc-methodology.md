@@ -240,9 +240,9 @@ let the rest of the pipeline run from source.
 |---|---|---|
 | 1 | **No.** CRC is integrity, not authentication. UID-seeded CRC is anti-collision, not anti-forgery. | Forge valid packets with a known UID |
 | 2 | **Version-specific.** Betaflight 4.4.2 OTA v3 carries `UID3`, `UID4`, and a model-match-qualified `UID5`; OTA v4 removes `UID3`. On the model-ID-255 lab pair the XOR is zero, while a generic target requires mask/CRC resolution. | Decode with the matching layout before any wordlist lookup |
-| 3 | **Partial.** Nonce XOR'd into CRC init, but nonce is observable (in SYNC). | Reconstruct current nonce from a capture |
+| 3 | **Version-specific.** OTA v4 XORs nonce into CRC init (nonce observable in SYNC). OTA v3 (Betaflight 4.4.2 target) does NOT XOR nonce into CRC init — uses `((UID[4]<<8)|UID[5])^OTA_VERSION_ID` only. | v4: reconstruct nonce from capture. v3: CRC init is static once UID is known |
 | 4 | **Yes.** SYNC packet has fixed structure, known type bits, predictable UID bytes. | Easy to identify in IQ captures |
-| 5 | **No downgrade**, but `rate_index` is observable and selects PHY (LoRa vs FLRC). | Must match the target's PHY — wrong PHY = invisible signal |
+| 5 | **No downgrade**, but `rate_index` is observable and selects PHY. Betaflight 4.4.2 (live target) is LoRa only; FLRC applies to newer firmware only. | Must match the target's PHY — wrong PHY = invisible signal |
 | 6 | **Yes.** RCDATA directly controls throttle/yaw/pitch/roll; arm is a channel value. | Forge RCDATA (e.g. throttle=0 → motors off) |
 | 7 | **Yes.** FHSS seed derived from UID; sequence is a deterministic LCG permutation. | Full hop sequence from the UID alone |
 | 8 | **Yes.** SX1280 locks to the strongest signal on a frequency. | Overpower the legitimate TX to capture the RX |
