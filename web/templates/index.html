@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Drone Scanner</title>
+<style>
+:root {
+  --bg: #0a0e17;
+  --bg-card: #111827;
+  --bg-card-hover: #1a2332;
+  --border: #1e293b;
+  --text: #e2e8f0;
+  --text-dim: #94a3b8;
+  --accent: #3b82f6;
+  --accent-glow: rgba(59, 130, 246, 0.15);
+  --green: #22c55e;
+  --yellow: #eab308;
+  --orange: #f97316;
+  --red: #ef4444;
+  --purple: #a855f7;
+  --cyan: #06b6d4;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.header-status {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  margin-right: 4px;
+}
+
+.status-dot.idle { background: var(--text-dim); }
+.status-dot.scanning { background: var(--yellow); animation: pulse 1s infinite; }
+.status-dot.done { background: var(--green); }
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.btn {
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn:hover { background: var(--bg-card-hover); border-color: var(--accent); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.btn-primary:hover { background: #2563eb; }
+
+.btn-danger {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.btn-danger:hover { background: rgba(239, 68, 68, 0.1); }
+
+.btn-warning {
+  border-color: var(--yellow);
+  color: var(--yellow);
+}
+
+.btn-warning:hover { background: rgba(234, 179, 8, 0.1); }
+
+.btn-sm {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.main {
+  display: flex;
+  height: calc(100vh - 105px);
+}
+
+.target-list {
+  width: 420px;
+  min-width: 320px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.target-list-header {
+  padding: 12px 16px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  z-index: 1;
+}
+
+.target-item {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.target-item:hover { background: var(--bg-card-hover); }
+.target-item.selected { background: var(--accent-glow); border-left: 3px solid var(--accent); }
+
+.target-item-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.target-name {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.target-protocol {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.proto-wifi { background: rgba(6, 182, 212, 0.15); color: var(--cyan); }
+.proto-mavlink { background: rgba(168, 85, 247, 0.15); color: var(--purple); }
+.proto-elrs { background: rgba(34, 197, 94, 0.15); color: var(--green); }
+.proto-ble { background: rgba(59, 130, 246, 0.15); color: var(--accent); }
+
+.target-type {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.target-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+
+.badge-critical { background: rgba(239, 68, 68, 0.2); color: var(--red); }
+.badge-high { background: rgba(249, 115, 22, 0.2); color: var(--orange); }
+.badge-medium { background: rgba(234, 179, 8, 0.2); color: var(--yellow); }
+.badge-low { background: rgba(34, 197, 94, 0.2); color: var(--green); }
+
+.threat-indicator {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.threat-CRITICAL { background: var(--red); color: white; }
+.threat-HIGH { background: var(--orange); color: white; }
+.threat-MEDIUM { background: var(--yellow); color: #000; }
+.threat-LOW { background: var(--green); color: white; }
+
+.detail-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-dim);
+  gap: 16px;
+}
+
+.empty-state svg {
+  width: 64px;
+  height: 64px;
+  opacity: 0.3;
+}
+
+.empty-state p {
+  font-size: 14px;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.detail-title {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.detail-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.detail-section h3 {
+  font-size: 12px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 12px;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 6px 12px;
+  font-size: 13px;
+}
+
+.detail-label {
+  color: var(--text-dim);
+}
+
+.detail-value {
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.vuln-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vuln-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: var(--red);
+}
+
+.actions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.action-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: var(--bg);
+}
+
+.action-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+}
+
+.action-card.severity-danger { border-color: rgba(239, 68, 68, 0.3); }
+.action-card.severity-danger:hover { border-color: var(--red); background: rgba(239, 68, 68, 0.05); }
+.action-card.severity-warning { border-color: rgba(234, 179, 8, 0.3); }
+.action-card.severity-warning:hover { border-color: var(--yellow); background: rgba(234, 179, 8, 0.05); }
+
+.action-label {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.action-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.action-result {
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+  color: var(--green);
+}
+
+.action-result.error {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.2);
+  color: var(--red);
+}
+
+.log-panel {
+  margin-top: 16px;
+}
+
+.log-entry {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+
+.log-time { color: var(--text-dim); white-space: nowrap; }
+.log-target { color: var(--cyan); }
+.log-action { color: var(--yellow); }
+.log-result { color: var(--green); }
+
+.signal-bar {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 12px;
+}
+
+.signal-bar span {
+  width: 3px;
+  background: var(--text-dim);
+  border-radius: 1px;
+}
+
+.signal-bar.strong span { background: var(--green); }
+.signal-bar.medium span:nth-child(-n+3) { background: var(--yellow); }
+.signal-bar.weak span:nth-child(-n+2) { background: var(--red); }
+
+.scan-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.scan-modal {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px;
+  text-align: center;
+  min-width: 320px;
+}
+
+.scan-modal h2 { margin-bottom: 24px; font-size: 16px; }
+
+.scanner-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.scanner-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 13px;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.score-bar {
+  width: 50px;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 6px;
+}
+
+.score-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+@media (max-width: 768px) {
+  .main { flex-direction: column; }
+  .target-list { width: 100%; min-width: 0; max-height: 40vh; border-right: none; border-bottom: 1px solid var(--border); }
+  .detail-panel { padding: 16px; }
+  .actions-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>DRONE SCANNER</h1>
+  <div class="header-status">
+    <span id="scanner-wifi"><span class="status-dot idle"></span>WiFi</span>
+    <span id="scanner-ble"><span class="status-dot idle"></span>BLE</span>
+    <span id="scanner-sdr"><span class="status-dot idle"></span>SDR</span>
+    <span id="target-count" style="margin-left:8px; color:var(--accent)">0 targets</span>
+  </div>
+</div>
+
+<div class="toolbar">
+  <button class="btn btn-primary" id="btn-scan" onclick="startScan()">Scan</button>
+  <button class="btn" id="btn-clear" onclick="clearTargets()">Clear</button>
+  <span style="flex:1"></span>
+  <span id="mode-badge" style="font-size:11px; color:var(--text-dim)"></span>
+</div>
+
+<div class="main">
+  <div class="target-list" id="target-list">
+    <div class="target-list-header">
+      <span id="target-list-title">Discovered Targets</span>
+    </div>
+    <div id="target-items">
+      <div class="empty-state" style="padding:48px 16px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 6v6l4 2"/>
+        </svg>
+        <p>No targets found. Click Scan to begin.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="detail-panel" id="detail-panel">
+    <div class="empty-state" id="detail-empty">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <path d="M9 9h6M9 12h6M9 15h4"/>
+      </svg>
+      <p>Select a target to view details and actions</p>
+    </div>
+    <div id="detail-content" style="display:none"></div>
+  </div>
+</div>
+
+<div class="scan-overlay" id="scan-overlay" style="display:none">
+  <div class="scan-modal">
+    <h2>Scanning for drones...</h2>
+    <div class="scanner-list">
+      <div class="scanner-item">
+        <span>WiFi Scanner</span>
+        <span id="scan-wifi-status"><span class="spinner"></span></span>
+      </div>
+      <div class="scanner-item">
+        <span>BLE Scanner</span>
+        <span id="scan-ble-status"><span class="spinner"></span></span>
+      </div>
+      <div class="scanner-item">
+        <span>SDR / RF Scanner</span>
+        <span id="scan-sdr-status"><span class="spinner"></span></span>
+      </div>
+    </div>
+    <div id="scan-found" style="font-size:13px;color:var(--text-dim)"></div>
+  </div>
+</div>
+
+<script>
+let targets = [];
+let selectedTargetId = null;
+let actionDefs = {};
+let pollInterval = null;
+
+async function init() {
+  const resp = await fetch('/api/actions');
+  actionDefs = await resp.json();
+  await refreshStatus();
+}
+
+async function refreshStatus() {
+  try {
+    const resp = await fetch('/api/status');
+    const data = await resp.json();
+    targets = data.targets || [];
+
+    document.getElementById('mode-badge').textContent =
+      data.simulate ? 'SIMULATE MODE' : 'LIVE MODE';
+
+    updateScannerStatus(data.scanner_status);
+    document.getElementById('target-count').textContent =
+      `${data.target_count} target${data.target_count !== 1 ? 's' : ''}`;
+
+    renderTargetList();
+
+    if (data.scanning) {
+      document.getElementById('scan-overlay').style.display = 'flex';
+      document.getElementById('scan-found').textContent =
+        `${data.target_count} target(s) found so far`;
+    } else {
+      document.getElementById('scan-overlay').style.display = 'none';
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+    }
+
+    if (selectedTargetId) {
+      const t = targets.find(t => t.id === selectedTargetId);
+      if (t) renderDetail(t);
+    }
+  } catch (e) {
+    console.error('Status fetch failed:', e);
+  }
+}
+
+function updateScannerStatus(status) {
+  for (const [name, state] of Object.entries(status)) {
+    const el = document.getElementById(`scanner-${name}`);
+    if (!el) continue;
+    const dot = el.querySelector('.status-dot');
+    dot.className = 'status-dot ' + state;
+
+    const modalEl = document.getElementById(`scan-${name}-status`);
+    if (modalEl) {
+      if (state === 'scanning') {
+        modalEl.innerHTML = '<span class="spinner"></span>';
+      } else if (state === 'done') {
+        modalEl.innerHTML = '<span style="color:var(--green)">Done</span>';
+      } else {
+        modalEl.innerHTML = '<span style="color:var(--text-dim)">Idle</span>';
+      }
+    }
+  }
+}
+
+async function startScan() {
+  document.getElementById('scan-overlay').style.display = 'flex';
+  document.getElementById('btn-scan').disabled = true;
+  ['wifi','ble','sdr'].forEach(n => {
+    const el = document.getElementById(`scan-${n}-status`);
+    if (el) el.innerHTML = '<span class="spinner"></span>';
+  });
+  document.getElementById('scan-found').textContent = '';
+
+  try {
+    await fetch('/api/scan', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' });
+    pollInterval = setInterval(refreshStatus, 1000);
+  } catch(e) {
+    document.getElementById('scan-overlay').style.display = 'none';
+  }
+  document.getElementById('btn-scan').disabled = false;
+}
+
+async function clearTargets() {
+  await fetch('/api/clear', { method: 'POST' });
+  targets = [];
+  selectedTargetId = null;
+  renderTargetList();
+  document.getElementById('detail-content').style.display = 'none';
+  document.getElementById('detail-empty').style.display = 'flex';
+  document.getElementById('target-count').textContent = '0 targets';
+}
+
+function renderTargetList() {
+  const container = document.getElementById('target-items');
+  if (targets.length === 0) {
+    container.innerHTML = `
+      <div class="empty-state" style="padding:48px 16px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="width:64px;height:64px;opacity:0.3">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 6v6l4 2"/>
+        </svg>
+        <p>No targets found. Click Scan to begin.</p>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = targets.map(t => {
+    const protoClass = 'proto-' + t.protocol.replace(/_.*/, '');
+    const selected = t.id === selectedTargetId ? 'selected' : '';
+    const signal = renderSignal(t.signal);
+    const vulnBadges = (t.vulns || []).slice(0, 3).map(v =>
+      `<span class="badge badge-${threatToClass(t.threat_level)}">${v}</span>`
+    ).join('');
+
+    return `
+      <div class="target-item ${selected}" onclick="selectTarget('${escHtml(t.id)}')">
+        <div class="target-item-top">
+          <span class="target-name">${escHtml(t.name)}</span>
+          <span>
+            <span class="target-protocol ${protoClass}">${escHtml(t.protocol)}</span>
+            <span class="threat-indicator threat-${t.threat_level}">${t.threat_level}</span>
+          </span>
+        </div>
+        <div class="target-type">${escHtml(t.type)} ${signal}</div>
+        <div class="target-badges">${vulnBadges}</div>
+      </div>`;
+  }).join('');
+}
+
+function renderSignal(dbm) {
+  if (dbm == null) return '';
+  const abs = Math.abs(dbm);
+  let cls = 'strong';
+  if (abs > 70) cls = 'weak';
+  else if (abs > 55) cls = 'medium';
+  const bars = [4, 6, 8, 10].map(h =>
+    `<span style="height:${h}px"></span>`
+  ).join('');
+  return `<span class="signal-bar ${cls}">${bars}</span> ${dbm} dBm`;
+}
+
+function threatToClass(level) {
+  return (level || 'low').toLowerCase();
+}
+
+function selectTarget(id) {
+  selectedTargetId = id;
+  const t = targets.find(t => t.id === id);
+  if (t) {
+    renderDetail(t);
+    renderTargetList();
+  }
+}
+
+function renderDetail(t) {
+  document.getElementById('detail-empty').style.display = 'none';
+  const el = document.getElementById('detail-content');
+  el.style.display = 'block';
+
+  const details = t.details || {};
+  const detailRows = Object.entries(details).map(([k, v]) => {
+    let val = v;
+    if (typeof v === 'object') val = JSON.stringify(v);
+    if (typeof v === 'boolean') val = v ? 'Yes' : 'No';
+    return `<span class="detail-label">${escHtml(k)}</span><span class="detail-value">${escHtml(String(val))}</span>`;
+  }).join('');
+
+  const vulns = (t.vulns || []).map(v =>
+    `<div class="vuln-tag">${escHtml(v)}</div>`
+  ).join('');
+
+  const actions = (t.available_actions || []).map(a => {
+    const def = actionDefs[a] || {};
+    const sev = def.severity || 'info';
+    return `
+      <div class="action-card severity-${sev}" onclick="executeAction('${escHtml(t.id)}', '${escHtml(a)}')">
+        <div class="action-label">${escHtml(def.label || a)}</div>
+        <div class="action-desc">${escHtml(def.description || '')}</div>
+      </div>`;
+  }).join('');
+
+  const scoreColor = t.score >= 80 ? 'var(--red)' : t.score >= 60 ? 'var(--orange)' : t.score >= 40 ? 'var(--yellow)' : 'var(--green)';
+
+  el.innerHTML = `
+    <div class="detail-header">
+      <div>
+        <div class="detail-title">${escHtml(t.name)}</div>
+        <div style="font-size:13px;color:var(--text-dim);margin-top:4px">${escHtml(t.type)}</div>
+      </div>
+      <div style="text-align:right">
+        <span class="threat-indicator threat-${t.threat_level}" style="font-size:13px;padding:4px 10px">${t.threat_level}</span>
+        <div style="font-size:11px;color:var(--text-dim);margin-top:6px">
+          Score: ${t.score || 0}/100
+          <span class="score-bar"><span class="score-fill" style="width:${t.score||0}%;background:${scoreColor}"></span></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>Properties</h3>
+      <div class="detail-grid">
+        <span class="detail-label">Protocol</span><span class="detail-value">${escHtml(t.protocol)}</span>
+        <span class="detail-label">Encryption</span><span class="detail-value">${escHtml(t.encryption || 'Unknown')}</span>
+        ${t.signal != null ? `<span class="detail-label">Signal</span><span class="detail-value">${t.signal} dBm</span>` : ''}
+        ${detailRows}
+      </div>
+    </div>
+
+    ${vulns ? `
+    <div class="detail-section">
+      <h3>Vulnerabilities</h3>
+      <div class="vuln-list">${vulns}</div>
+    </div>` : ''}
+
+    <div class="detail-section">
+      <h3>Available Actions</h3>
+      ${actions ? `<div class="actions-grid">${actions}</div>` : '<div style="color:var(--text-dim);font-size:13px">No actions available</div>'}
+      <div id="action-result"></div>
+    </div>
+
+    <div class="detail-section log-panel">
+      <h3>Action Log</h3>
+      <div id="action-log-entries"></div>
+    </div>`;
+
+  refreshActionLog(t.id);
+}
+
+async function executeAction(targetId, actionName) {
+  const resultEl = document.getElementById('action-result');
+  resultEl.innerHTML = '<div style="color:var(--text-dim);font-size:12px;padding:8px">Executing...</div>';
+
+  try {
+    const resp = await fetch(`/api/targets/${encodeURIComponent(targetId)}/action`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ action: actionName }),
+    });
+    const data = await resp.json();
+
+    if (resp.ok) {
+      resultEl.innerHTML = `
+        <div class="action-result">
+          <strong>${escHtml(data.label || actionName)}</strong>: ${escHtml(data.result)}
+        </div>`;
+    } else {
+      resultEl.innerHTML = `
+        <div class="action-result error">
+          Error: ${escHtml(data.error || 'Unknown error')}
+        </div>`;
+    }
+  } catch(e) {
+    resultEl.innerHTML = `<div class="action-result error">Network error: ${escHtml(e.message)}</div>`;
+  }
+
+  refreshActionLog(targetId);
+}
+
+async function refreshActionLog(targetId) {
+  try {
+    const resp = await fetch('/api/log');
+    const log = await resp.json();
+    const entries = log.filter(e => e.target_id === targetId).reverse().slice(0, 10);
+    const el = document.getElementById('action-log-entries');
+    if (!el) return;
+    if (entries.length === 0) {
+      el.innerHTML = '<div style="color:var(--text-dim);font-size:12px">No actions performed yet</div>';
+      return;
+    }
+    el.innerHTML = entries.map(e => {
+      const time = new Date(e.timestamp).toLocaleTimeString();
+      return `
+        <div class="log-entry">
+          <span class="log-time">${time}</span>
+          <span class="log-action">${escHtml(e.label || e.action)}</span>
+          <span class="log-result">[${e.status}]</span>
+        </div>`;
+    }).join('');
+  } catch(e) {}
+}
+
+function escHtml(s) {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+init();
+</script>
+</body>
+</html>
