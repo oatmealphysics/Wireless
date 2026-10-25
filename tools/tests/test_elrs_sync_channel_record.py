@@ -22,6 +22,7 @@ class SyncChannelRecordTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("elrs_sync_record", TOOL)
         cls.tool = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.tool)
+        cls.tool.WORK_ROOT.mkdir(parents=True, exist_ok=True)
 
     def test_private_output_and_no_overwrite(self):
         with self.assertRaises(ValueError):

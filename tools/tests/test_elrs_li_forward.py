@@ -72,7 +72,10 @@ class LongInterleaverForwardTests(unittest.TestCase):
             import numpy  # noqa: F401
         except ImportError:
             self.skipTest("NumPy unavailable")
-        symbols_tool = load(SYMBOLS, "elrs_iq_symbols_forward_test")
+        try:
+            symbols_tool = load(SYMBOLS, "elrs_iq_symbols_forward_test")
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"Optional dependency unavailable: {exc.name}")
         packet = bytes.fromhex("0123456789abcdef")
         encoded = self.forward.encode_symbols(packet)
         iq = self.forward.modulate_symbols(encoded)
