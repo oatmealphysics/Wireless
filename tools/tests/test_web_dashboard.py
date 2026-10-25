@@ -20,9 +20,17 @@ sys.path.insert(0, TOOLS_DIR)
 sys.path.insert(0, os.path.join(TOOLS_DIR, "exploit_chains"))
 sys.path.insert(0, WEB_DIR)
 
-import app as web_app
+try:
+    import app as web_app
+    HAS_FLASK = True
+except ImportError:
+    HAS_FLASK = False
+    web_app = None
+
+needs_flask = unittest.skipUnless(HAS_FLASK, "Flask not installed")
 
 
+@needs_flask
 class TestHostileSSIDs(unittest.TestCase):
     """Verify that hostile target names/SSIDs cannot inject script."""
 
@@ -112,6 +120,7 @@ class TestHostileSSIDs(unittest.TestCase):
         self.assertEqual(data["name"], "<img src=x onerror=alert(1)>")
 
 
+@needs_flask
 class TestActionValidation(unittest.TestCase):
     """Verify action validation and dry-run gating."""
 
@@ -192,6 +201,7 @@ class TestActionValidation(unittest.TestCase):
         self.assertEqual(resp.status_code, 404)
 
 
+@needs_flask
 class TestActionCategories(unittest.TestCase):
     """Verify action definitions include category field."""
 
@@ -223,6 +233,7 @@ class TestActionCategories(unittest.TestCase):
             self.assertIn("category", defn)
 
 
+@needs_flask
 class TestScannerFailureCleanup(unittest.TestCase):
     """Verify that scanner exceptions reset is_scanning."""
 
@@ -273,6 +284,7 @@ class TestScannerFailureCleanup(unittest.TestCase):
         self.assertEqual(resp.status_code, 409)
 
 
+@needs_flask
 class TestScoreAndThreatLabels(unittest.TestCase):
     """Verify threat labels derive from calculated score."""
 
@@ -338,6 +350,7 @@ class TestLocalhostBinding(unittest.TestCase):
         self.assertNotIn('default="0.0.0.0"', source)
 
 
+@needs_flask
 class TestDryRunDefault(unittest.TestCase):
     """Verify dry-run is the default mode."""
 
