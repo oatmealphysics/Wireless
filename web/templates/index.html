@@ -538,6 +538,195 @@ body {
   transition: width 0.3s;
 }
 
+.hw-widget {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: border-color 0.15s;
+  position: relative;
+  font-family: inherit;
+}
+
+.hw-widget:hover { border-color: var(--accent); }
+
+.hw-widget-title {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.hw-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.hw-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.hw-dot.available { background: var(--green); }
+.hw-dot.unavailable { background: var(--red); }
+.hw-dot.checking { background: var(--yellow); animation: pulse 1s infinite; }
+
+.hw-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 300px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  z-index: 60;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  display: none;
+}
+
+.hw-popover.open { display: block; }
+
+.hw-popover h4 {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+
+.hw-popover-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 12px;
+}
+
+.hw-popover-row:last-child { border-bottom: none; }
+
+.hw-popover-label { color: var(--text); font-weight: 500; }
+.hw-popover-detail { color: var(--text-dim); font-size: 11px; margin-top: 2px; }
+.hw-popover-status { display: flex; align-items: center; gap: 4px; font-size: 11px; }
+
+.log-viewer {
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.log-viewer.collapsed { height: 32px; }
+.log-viewer.expanded { height: 220px; }
+
+.log-viewer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  cursor: pointer;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  user-select: none;
+  min-height: 32px;
+}
+
+.log-viewer-header:hover { background: var(--bg-card-hover); }
+
+.log-viewer-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.log-viewer-count {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.log-viewer-toggle {
+  font-size: 10px;
+  color: var(--text-dim);
+  transition: transform 0.2s;
+}
+
+.log-viewer.collapsed .log-viewer-toggle { transform: rotate(0deg); }
+.log-viewer.expanded .log-viewer-toggle { transform: rotate(180deg); }
+
+.log-viewer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+  font-size: 11px;
+  min-height: 0;
+}
+
+.log-viewer.collapsed .log-viewer-body { display: none; }
+
+.log-line {
+  display: flex;
+  gap: 8px;
+  padding: 2px 16px;
+  line-height: 1.6;
+}
+
+.log-line:hover { background: rgba(255,255,255,0.02); }
+
+.log-ts { color: var(--text-dim); white-space: nowrap; flex-shrink: 0; }
+.log-type { width: 80px; flex-shrink: 0; font-weight: 600; text-transform: uppercase; font-size: 10px; padding-top: 1px; }
+.log-type.target_found { color: var(--green); }
+.log-type.scanner_done { color: var(--cyan); }
+.log-type.scanner_error { color: var(--red); }
+.log-type.scan_complete { color: var(--green); }
+.log-type.scan_start { color: var(--yellow); }
+.log-type.action_executed { color: var(--purple); }
+.log-type.targets_cleared { color: var(--text-dim); }
+.log-type.scanner_start { color: var(--yellow); }
+.log-type.info { color: var(--accent); }
+.log-msg { color: var(--text); word-break: break-all; }
+
+.log-viewer-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.log-viewer-actions button {
+  padding: 2px 8px;
+  font-size: 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.log-viewer-actions button:hover { border-color: var(--accent); color: var(--text); }
+
 .event-feed {
   position: fixed;
   bottom: 16px;
@@ -592,6 +781,10 @@ body {
   .detail-grid { grid-template-columns: minmax(90px, 35%) minmax(0, 1fr); }
   .actions-grid { grid-template-columns: 1fr; }
   .event-feed { width: min(220px, calc(100vw - 32px)); }
+  .hw-widget .hw-item span:not(.hw-dot) { display: none; }
+  .hw-popover { right: -60px; width: min(280px, calc(100vw - 32px)); }
+  .log-viewer.expanded { height: 180px; }
+  .log-line { padding: 2px 12px; }
 }
 </style>
 </head>
@@ -614,6 +807,22 @@ body {
   <button type="button" class="btn" id="btn-clear">Clear</button>
   <span style="flex:1"></span>
   <span id="mode-badge" style="font-size:11px; color:var(--text-dim)"></span>
+  <button type="button" class="hw-widget" id="hw-widget" aria-expanded="false" aria-haspopup="true">
+    <span class="hw-widget-title">HW</span>
+    <span class="hw-item" id="hw-wifi-indicator"><span class="hw-dot checking"></span><span>WiFi</span></span>
+    <span class="hw-item" id="hw-ble-indicator"><span class="hw-dot checking"></span><span>BLE</span></span>
+    <span class="hw-item" id="hw-sdr-indicator"><span class="hw-dot checking"></span><span>SDR</span></span>
+    <span class="hw-item" id="hw-mav-indicator"><span class="hw-dot checking"></span><span>MAV</span></span>
+    <div class="hw-popover" id="hw-popover" role="tooltip">
+      <h4>Hardware Status</h4>
+      <div id="hw-popover-body">
+        <div style="color:var(--text-dim);font-size:12px;padding:8px 0">Detecting hardware...</div>
+      </div>
+      <div style="margin-top:8px;text-align:right">
+        <button type="button" class="btn btn-sm" id="hw-refresh-btn">Refresh</button>
+      </div>
+    </div>
+  </button>
 </div>
 
 <div class="main">
@@ -642,6 +851,19 @@ body {
     </div>
     <div id="detail-content" style="display:none"></div>
   </div>
+</div>
+
+<div class="log-viewer collapsed" id="log-viewer">
+  <div class="log-viewer-header" id="log-viewer-header" role="button" aria-expanded="false" tabindex="0">
+    <span class="log-viewer-title">
+      Event Log <span class="log-viewer-count" id="log-viewer-count">0</span>
+    </span>
+    <span class="log-viewer-actions">
+      <button type="button" id="log-clear-btn">Clear</button>
+      <span class="log-viewer-toggle" aria-hidden="true">&#9650;</span>
+    </span>
+  </div>
+  <div class="log-viewer-body" id="log-viewer-body" role="log" aria-live="polite" aria-relevant="additions"></div>
 </div>
 
 <div class="scan-overlay" id="scan-overlay" style="display:none" role="status" aria-live="polite" aria-busy="true" aria-hidden="true">
@@ -691,6 +913,8 @@ async function init() {
   document.getElementById('btn-clear').addEventListener('click', clearTargets);
   document.getElementById('target-items').addEventListener('keydown', handleTargetListKeydown);
 
+  initLogViewer();
+  initHwWidget();
   connectSSE();
   try {
     actionDefs = await fetchJson('/api/actions');
@@ -1206,6 +1430,240 @@ function escAttr(s) {
 
 function safeCssClass(s) {
   return String(s || '').replace(/[^a-zA-Z0-9_-]/g, '');
+}
+
+// --- Hardware status widget ---
+
+let hwData = null;
+
+async function refreshHardware() {
+  const indicators = {
+    wifi: document.getElementById('hw-wifi-indicator'),
+    ble: document.getElementById('hw-ble-indicator'),
+    sdr: document.getElementById('hw-sdr-indicator'),
+    mavlink: document.getElementById('hw-mav-indicator'),
+  };
+
+  for (const el of Object.values(indicators)) {
+    const dot = el?.querySelector('.hw-dot');
+    if (dot) dot.className = 'hw-dot checking';
+  }
+
+  try {
+    hwData = await fetchJson('/api/hardware');
+    updateHwIndicators(hwData, indicators);
+    renderHwPopover(hwData);
+  } catch (e) {
+    for (const el of Object.values(indicators)) {
+      const dot = el?.querySelector('.hw-dot');
+      if (dot) dot.className = 'hw-dot unavailable';
+    }
+    document.getElementById('hw-popover-body').innerHTML =
+      '<div style="color:var(--red);font-size:12px">Unable to detect hardware</div>';
+  }
+}
+
+function updateHwIndicators(data, indicators) {
+  const mapping = {
+    wifi: data.wifi,
+    ble: data.ble,
+    sdr: data.sdr,
+    mavlink: data.mavlink,
+  };
+  for (const [key, info] of Object.entries(mapping)) {
+    const el = indicators[key];
+    if (!el || !info) continue;
+    const dot = el.querySelector('.hw-dot');
+    if (dot) dot.className = 'hw-dot ' + (info.available ? 'available' : 'unavailable');
+  }
+}
+
+function renderHwPopover(data) {
+  const body = document.getElementById('hw-popover-body');
+  if (!body) return;
+
+  const rows = [
+    { label: 'WiFi', info: data.wifi, detail: () => {
+      const ifaces = data.wifi?.interfaces || [];
+      return ifaces.length ? ifaces.join(', ') : (data.wifi?.error || 'Not detected');
+    }},
+    { label: 'Bluetooth LE', info: data.ble, detail: () => {
+      const ifaces = data.ble?.interfaces || [];
+      const note = data.ble?.note || '';
+      return ifaces.length ? ifaces.join(', ') + (note ? ` (${note})` : '') : (data.ble?.error || 'Not detected');
+    }},
+    { label: 'SDR (SoapySDR)', info: data.sdr, detail: () => {
+      const devs = data.sdr?.devices || [];
+      return devs.length ? devs.join(', ') : (data.sdr?.error || 'Not detected');
+    }},
+    { label: 'MAVLink UDP', info: data.mavlink, detail: () => {
+      const ports = data.mavlink?.bindable_ports || [];
+      return ports.length ? `Ports: ${ports.join(', ')}` : (data.mavlink?.note || 'Available');
+    }},
+  ];
+
+  body.innerHTML = rows.map(r => {
+    const avail = r.info?.available;
+    const dotCls = avail ? 'available' : 'unavailable';
+    const statusText = avail ? 'Connected' : 'Unavailable';
+    const statusColor = avail ? 'var(--green)' : 'var(--red)';
+    return `
+      <div class="hw-popover-row">
+        <div>
+          <div class="hw-popover-label">${escHtml(r.label)}</div>
+          <div class="hw-popover-detail">${escHtml(r.detail())}</div>
+        </div>
+        <div class="hw-popover-status">
+          <span class="hw-dot ${dotCls}"></span>
+          <span style="color:${statusColor}">${statusText}</span>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function initHwWidget() {
+  const widget = document.getElementById('hw-widget');
+  const popover = document.getElementById('hw-popover');
+  const refreshBtn = document.getElementById('hw-refresh-btn');
+
+  widget.addEventListener('click', (e) => {
+    if (e.target === refreshBtn || refreshBtn.contains(e.target)) return;
+    const isOpen = popover.classList.toggle('open');
+    widget.setAttribute('aria-expanded', isOpen);
+  });
+
+  refreshBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    refreshHardware();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!widget.contains(e.target)) {
+      popover.classList.remove('open');
+      widget.setAttribute('aria-expanded', 'false');
+    }
+  });
+
+  refreshHardware();
+}
+
+// --- Collapsible log viewer ---
+
+let logEntries = [];
+const MAX_LOG_ENTRIES = 200;
+
+function addLogEntry(type, message) {
+  const entry = {
+    time: new Date(),
+    type: type,
+    message: message,
+  };
+  logEntries.push(entry);
+  if (logEntries.length > MAX_LOG_ENTRIES) {
+    logEntries = logEntries.slice(-MAX_LOG_ENTRIES);
+  }
+  renderLogEntry(entry);
+  updateLogCount();
+}
+
+function renderLogEntry(entry) {
+  const body = document.getElementById('log-viewer-body');
+  if (!body) return;
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  const ts = entry.time.toLocaleTimeString();
+  const typeCls = safeCssClass(entry.type);
+  line.innerHTML =
+    `<span class="log-ts">${ts}</span>` +
+    `<span class="log-type ${typeCls}">${escHtml(entry.type.replace(/_/g, ' '))}</span>` +
+    `<span class="log-msg">${escHtml(entry.message)}</span>`;
+  body.appendChild(line);
+  body.scrollTop = body.scrollHeight;
+}
+
+function updateLogCount() {
+  const countEl = document.getElementById('log-viewer-count');
+  if (countEl) countEl.textContent = logEntries.length;
+}
+
+function clearLog() {
+  logEntries = [];
+  const body = document.getElementById('log-viewer-body');
+  if (body) body.innerHTML = '';
+  updateLogCount();
+}
+
+function initLogViewer() {
+  const viewer = document.getElementById('log-viewer');
+  const header = document.getElementById('log-viewer-header');
+  const clearBtn = document.getElementById('log-clear-btn');
+
+  header.addEventListener('click', (e) => {
+    if (e.target === clearBtn || clearBtn.contains(e.target)) return;
+    const isExpanded = viewer.classList.contains('expanded');
+    viewer.classList.toggle('collapsed', isExpanded);
+    viewer.classList.toggle('expanded', !isExpanded);
+    header.setAttribute('aria-expanded', !isExpanded);
+  });
+
+  header.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      header.click();
+    }
+  });
+
+  clearBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    clearLog();
+  });
+
+  addLogEntry('info', 'Dashboard initialized');
+}
+
+// Patch connectSSE to also feed the log viewer
+const _originalConnectSSE = connectSSE;
+connectSSE = function() {
+  _originalConnectSSE();
+
+  const sseLogEvents = [
+    'target_found', 'scanner_done', 'scanner_error',
+    'scan_complete', 'scan_start', 'targets_cleared', 'action_executed',
+  ];
+
+  for (const eventType of sseLogEvents) {
+    eventSource.addEventListener(eventType, (e) => {
+      let data;
+      try { data = JSON.parse(e.data); } catch { return; }
+      const msg = formatLogMessage(eventType, data);
+      if (msg) addLogEntry(eventType, msg);
+    });
+  }
+
+  eventSource.addEventListener('open', () => {
+    addLogEntry('info', 'Connected to live event stream');
+  });
+};
+
+function formatLogMessage(type, data) {
+  switch (type) {
+    case 'target_found':
+      return `Target discovered: ${data.name || 'Unknown'} [${data.protocol || ''}]`;
+    case 'scanner_done':
+      return `${data.scanner || 'Scanner'} scan finished` + (data.count != null ? ` (${data.count} found)` : '');
+    case 'scanner_error':
+      return `${data.scanner || 'Scanner'} error: ${data.error || 'unknown'}`;
+    case 'scan_complete':
+      return `Scan complete — ${data.target_count || 0} target(s) found [${data.mode || ''}]`;
+    case 'scan_start':
+      return `Scan started [${data.mode || ''}]` + (data.protocols ? ` protocols: ${data.protocols.join(', ')}` : '');
+    case 'targets_cleared':
+      return 'All targets cleared';
+    case 'action_executed':
+      return `${data.label || data.action || 'Action'}: ${data.status || 'done'}` + (data.target_name ? ` on ${data.target_name}` : '');
+    default:
+      return JSON.stringify(data);
+  }
 }
 
 init();

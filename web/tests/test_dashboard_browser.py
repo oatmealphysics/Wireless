@@ -14,6 +14,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import threading
 import time
@@ -146,7 +147,12 @@ class DashboardBrowserTests(unittest.TestCase):
         self.guard_hardware = patch.object(
             web_app,
             "detect_hardware",
-            side_effect=AssertionError("browser test attempted hardware detection"),
+            return_value={
+                "wifi": {"available": True, "interfaces": ["wlan0"], "default": "wlan0"},
+                "ble": {"available": False, "interfaces": [], "error": "No BLE stack found"},
+                "sdr": {"available": False, "devices": [], "error": "SoapySDR not installed"},
+                "mavlink": {"available": True, "bindable_ports": [14550], "note": "UDP listener"},
+            },
         )
         self.guard_live_scan.start()
         self.addCleanup(self.guard_live_scan.stop)
@@ -405,6 +411,92 @@ class DashboardBrowserTests(unittest.TestCase):
         action_log.scroll_into_view_if_needed()
         expect(action_log).to_be_in_viewport()
         self.assertGreater(detail_panel.evaluate("element => element.scrollTop"), 0)
+        self.assertEqual(self.console_errors, [])
+
+
+    def test_log_viewer_toggle_and_entries(self):
+        self._open_dashboard()
+
+        log_viewer = self.page.locator("#log-viewer")
+        expect(log_viewer).to_have_class(re.compile(r"collapsed"))
+        expect(self.page.locator("#log-viewer-body")).to_be_hidden()
+
+        self.page.locator("#log-viewer-header").click()
+        expect(log_viewer).to_have_class(re.compile(r"expanded"))
+        expect(self.page.locator("#log-viewer-body")).to_be_visible()
+        expect(self.page.locator("#log-viewer-count")).not_to_have_text("0")
+        expect(self.page.locator(".log-line")).to_have_count(
+            self.page.locator(".log-line").count(), timeout=2000,
+        )
+
+        self.page.locator("#log-viewer-header").click()
+        expect(log_viewer).to_have_class(re.compile(r"collapsed"))
+        self.assertEqual(self.console_errors, [])
+
+    def test_log_viewer_clear(self):
+        self._open_dashboard()
+        self.page.locator("#log-viewer-header").click()
+        expect(self.page.locator("#log-viewer-body")).to_be_visible()
+        initial_count = int(self.page.locator("#log-viewer-count").text_content())
+        self.assertGreater(initial_count, 0)
+
+        self.page.locator("#log-clear-btn").click()
+        expect(self.page.locator("#log-viewer-count")).to_have_text("0")
+        expect(self.page.locator(".log-line")).to_have_count(0)
+        self.assertEqual(self.console_errors, [])
+
+    def test_hardware_widget_popover(self):
+        self._open_dashboard()
+
+        hw_widget = self.page.locator("#hw-widget")
+        expect(hw_widget).to_be_visible()
+        expect(hw_widget).to_have_attribute("aria-expanded", "false")
+
+        popover = self.page.locator("#hw-popover")
+        expect(popover).to_be_hidden()
+
+        hw_widget.click()
+        expect(popover).to_be_visible()
+        expect(hw_widget).to_have_attribute("aria-expanded", "true")
+        expect(popover).to_contain_text("WiFi")
+        expect(popover).to_contain_text("MAVLink UDP")
+
+        self.page.locator("body").click(position={"x": 10, "y": 10})
+        expect(popover).to_be_hidden()
+        expect(hw_widget).to_have_attribute("aria-expanded", "false")
+        self.assertEqual(self.console_errors, [])
+
+    def test_hardware_indicators_reflect_status(self):
+        self._open_dashboard()
+
+        self.page.wait_for_timeout(500)
+        wifi_dot = self.page.locator("#hw-wifi-indicator .hw-dot")
+        ble_dot = self.page.locator("#hw-ble-indicator .hw-dot")
+        sdr_dot = self.page.locator("#hw-sdr-indicator .hw-dot")
+        mav_dot = self.page.locator("#hw-mav-indicator .hw-dot")
+
+        expect(wifi_dot).to_have_class(re.compile(r"available"))
+        expect(ble_dot).to_have_class(re.compile(r"unavailable"))
+        expect(sdr_dot).to_have_class(re.compile(r"unavailable"))
+        expect(mav_dot).to_have_class(re.compile(r"available"))
+        self.assertEqual(self.console_errors, [])
+
+    def test_scan_events_appear_in_log_viewer(self):
+        self._open_dashboard()
+
+        self.page.locator("#log-viewer-header").click()
+        expect(self.page.locator("#log-viewer-body")).to_be_visible()
+
+        self.page.locator("#log-clear-btn").click()
+        expect(self.page.locator("#log-viewer-count")).to_have_text("0")
+
+        scan_button = self.page.locator("#btn-scan")
+        scan_button.click()
+        expect(scan_button).to_be_enabled(timeout=15_000)
+
+        log_count = int(self.page.locator("#log-viewer-count").text_content())
+        self.assertGreater(log_count, 0)
+        expect(self.page.locator("#log-viewer-body")).to_contain_text("scan", ignore_case=True)
         self.assertEqual(self.console_errors, [])
 
 
