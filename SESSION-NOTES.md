@@ -3503,3 +3503,110 @@ pushed to `origin/main`; no force push or history rewrite.
   integration histories.
 - Extract inline CSS/JavaScript into versioned static assets once the UI grows
   beyond the current single-page prototype.
+
+## 57. Receiver acceptance validation plan and test scaffolding (Claude, 2026-10-26)
+
+**Starting revision:** `362ab66` (HEAD of main)
+
+**Objective:** Build the offline receiver acceptance validation plan (roadmap
+item 10) and test scaffolding that exercises the entire software pipeline
+without hardware, SDR, or RF. The plan defines four stages (A–D) that
+progressively establish M2–M5 evidence milestones, from passive baseline
+capture through demonstrated receiver behavior.
+
+**Scope, authorization, and device-specific prohibitions:**
+
+- No hardware, serial, RF, SDR, or external network access.
+- No firmware flashing (absolute no-flash constraint for E8 and TinyHawk).
+- All testing is offline against the vendored `elrs_core` library.
+- Codex-owned files (ELRS capture validator, MSP simulator, OTA-v3
+  transmitter/packet-forger corrections, protocol CI) were not modified.
+
+**Actions:**
+
+1. Created `research/receiver-acceptance-validation-plan.md` — four-stage
+   validation methodology:
+   - **Stage A (M2):** Passive baseline capture. Record normal E8→TinyHawk
+     link, decode frames, cross-check forger output against real RF.
+   - **Stage B (M4):** Read-only MSP probe. Transmit a single
+     `MSP_API_VERSION` (cmd 1) request — pure read, no state change. Success
+     observable via telemetry response.
+   - **Stage C (M4+):** Bounded neutral RC canary. Inject a single RC packet
+     with safe values (throttle min, disarmed, centered pitch/yaw, bounded
+     roll). Observable via Betaflight CLI channel readout.
+   - **Stage D (M5):** Demonstrated receiver behavior via MSP_REBOOT (cmd 68).
+     Observable, reversible. Does not claim "commandeering."
+
+   Plan includes: safety constraints (props removed, min power, documented
+   stop conditions), prerequisites, abort conditions, evidence grading, and
+   dependency mapping.
+
+2. Created `tools/tests/test_receiver_acceptance.py` — 46 offline tests in
+   11 test classes:
+   - `TestV3CrcInitDerivation` — v3 vs v4 CRC init formula verification
+   - `TestV3SyncChannel` — sync channel 41 (v3) vs 40 (v4)
+   - `TestV3FhssSequence` — sequence length, sync-at-block-start, range, determinism
+   - `TestV3SyncRoundTrip` — encode→decode→compare, CRC validate/corrupt/wrong-UID
+   - `TestV3RcDataRoundTrip` — neutral RC packet, armed flag propagation
+   - `TestMspCommandSafetyGate` — allowed vs destructive MSP command classification
+   - `TestBoundedRcSafetyInvariants` — 8 safe/unsafe RC state checks
+   - `TestModelMatchAlwaysSatisfied` — model_id=255 confirmation
+   - `TestEvidenceSchema` — JSON schema validation for all 3 evidence reports
+   - `TestLiveTargetParameters` — cross-check against §17 confirmed parameters
+   - `TestMspFragmentConstruction` — MSPv1 header and stubborn-sender sequence
+   - `TestAbortConditionDetection` — arming/mode-change/link-loss detection
+
+**Evidence (SYNTHETIC-TEST only — no live RF or hardware):**
+
+- `python -B tools/validate-project.py` — PASS (232 files)
+- `python -B -m unittest discover -s tools/tests -p "test_*.py"` — 516 tests
+  passed (60 skipped: SITL binary and Flask optional)
+- `git diff --check` — clean
+
+**What worked and what it establishes:**
+
+- The v3 protocol layer (CRC14, FHSS, SYNC, RC DATA) round-trips correctly
+  through `elrs_core` + `v3_compat`. All confirmed live parameters (v3, LoRa,
+  channel 41, model_id=255) are cross-verified in tests.
+- The safety invariant checks confirm that bounded-RC rejects unsafe inputs
+  (armed, high throttle, unconstrained roll, full pitch/yaw).
+- The MSP command gate correctly excludes destructive commands from all stages.
+- Evidence schemas are JSON-serializable and contain all required fields.
+
+**What failed, was blocked, or remained inconclusive:**
+
+- Stages B-D are blocked on LoRa TX modulation (Phase 2 PHY, §9.4 steps 9-11).
+  The forger produces correct bytes but cannot transmit without the PHY layer.
+- Stage A requires the owner's bench (B205 + TinyHawk + E8).
+- No live RF validation — all evidence is SYNTHETIC-TEST grade.
+
+**Private-data handling and safety state:**
+
+- No private UID, binding phrase, or capture data used in tests (test UID
+  derived from the public example phrase "iloveflying").
+- No hardware accessed, no RF transmitted, no serial ports opened.
+- Absolute no-flash constraint preserved.
+
+**Changed files:**
+
+- `research/receiver-acceptance-validation-plan.md` (new)
+- `tools/tests/test_receiver_acceptance.py` (new)
+- `SESSION-NOTES.md` (this entry)
+
+**Validation:**
+
+- `python -B tools/validate-project.py` — PASS (232 files)
+- `python -B -m unittest discover -s tools/tests -p "test_*.py"` — 516/516 PASS
+  (60 skipped)
+- `git diff --check` — clean
+
+**Next steps:**
+
+- Stage A: Owner captures baseline RF from the live TinyHawk–E8 pair on the
+  B205. Cross-check against the forger's SYNC/FHSS/CRC output.
+- Phase 2 PHY (Codex): vendor `elrs_core` LoRa modulation, rewire the TX
+  emulator. Unblocks Stages B–D.
+- Betaflight AUX/mode dump (owner, read-only CLI): required before Stage C
+  bounded-RC injection.
+- After Stage A passes, Stage B (read-only MSP_API_VERSION probe) is the
+  first live transmission test.
