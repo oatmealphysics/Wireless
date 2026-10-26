@@ -14,6 +14,8 @@ Usage:
 For authorized CTF research only.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -25,6 +27,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Generator
 
 from flask import Flask, jsonify, render_template, request, Response
 
@@ -60,7 +63,7 @@ VALID_PROTOCOLS = frozenset(scanner_status)
 DEFAULT_PROTOCOLS = tuple(scanner_status)
 
 
-def _push_event(event_type, data):
+def _push_event(event_type: str, data: dict[str, Any]) -> None:
     global next_event_id
     with events_lock:
         event_id = next_event_id
@@ -75,7 +78,7 @@ def _push_event(event_type, data):
             del events[:len(events) - MAX_EVENTS]
 
 
-def _finish_scan():
+def _finish_scan() -> None:
     """Release the scan slot and resolve any stale in-progress statuses."""
     global is_scanning
     with scan_lock:
@@ -87,7 +90,7 @@ def _finish_scan():
 
 # --- Hardware detection ---
 
-def detect_hardware():
+def detect_hardware() -> dict[str, Any]:
     """Probe for available scanner hardware. Results cached in hw_status."""
     global hw_status
     checks = {}
@@ -413,7 +416,7 @@ ACTION_DEFS = {
 }
 
 
-def run_scan_simulated(protocols=None):
+def run_scan_simulated(protocols: list[str] | None = None) -> None:
     """Run a simulated scan for demo mode."""
     global targets, is_scanning, scanner_status
     import random
@@ -460,7 +463,7 @@ def run_scan_simulated(protocols=None):
         _finish_scan()
 
 
-def run_scan_live(protocols, config):
+def run_scan_live(protocols: list[str], config: dict[str, Any]) -> None:
     """Run live scanning using the real scanner backends."""
     global targets, is_scanning, scanner_status
 
@@ -559,7 +562,7 @@ def run_scan_live(protocols, config):
         _finish_scan()
 
 
-def _scan_mavlink_udp(timeout, logger, abort):
+def _scan_mavlink_udp(timeout: float, logger: ChainLogger, abort: AbortHandler) -> list[dict[str, Any]]:
     """Scan common MAVLink UDP ports for traffic (pure UDP, no SDR needed)."""
     from exploit_chains.mavlink_chain import parse_mavlink_packet, parse_heartbeat
 
@@ -596,7 +599,7 @@ def _scan_mavlink_udp(timeout, logger, abort):
     return results
 
 
-def _scan_passive_telemetry(sdr_args, timeout, logger, abort):
+def _scan_passive_telemetry(sdr_args: str, timeout: float, logger: ChainLogger, abort: AbortHandler) -> list[dict[str, Any]]:
     """Quick passive telemetry scan on 2.4 GHz for CRSF/ELRS frames."""
     try:
         import SoapySDR
@@ -655,7 +658,7 @@ def _scan_passive_telemetry(sdr_args, timeout, logger, abort):
     return results
 
 
-def _make_target_id(t):
+def _make_target_id(t: dict[str, Any]) -> str:
     proto = t.get("protocol", "unknown")
     if proto == "wifi":
         return f"wifi:{t.get('ssid', uuid.uuid4().hex[:8])}"
@@ -668,7 +671,7 @@ def _make_target_id(t):
     return f"unknown:{uuid.uuid4().hex[:8]}"
 
 
-def _convert_recon_target(t, tid, now):
+def _convert_recon_target(t: dict[str, Any], tid: str, now: float) -> dict[str, Any]:
     proto = t.get("protocol", "unknown")
     dtype = t.get("drone_type", "unknown")
     chain_map = {
@@ -714,8 +717,8 @@ def _convert_recon_target(t, tid, now):
     }
 
 
-def _detect_vulns(t):
-    vulns = []
+def _detect_vulns(t: dict[str, Any]) -> list[str]:
+    vulns: list[str] = []
     if t.get("is_open"):
         vulns.append("OPEN_WIFI")
     if t.get("signed") is False:
@@ -732,7 +735,7 @@ def _detect_vulns(t):
     return vulns
 
 
-def _threat_from_score(t):
+def _threat_from_score(t: dict[str, Any]) -> str:
     score = t.get("score", 50)
     if score >= 80:
         return "CRITICAL"
@@ -751,7 +754,7 @@ EXPLOITABILITY_SCORES = {
 }
 
 
-def _score_target(t):
+def _score_target(t: dict[str, Any]) -> int:
     dtype = t.get("drone_type", "unknown")
     base = EXPLOITABILITY_SCORES.get(dtype, 30)
     if t.get("is_open"):
@@ -763,7 +766,7 @@ def _score_target(t):
 
 # --- Action execution ---
 
-def execute_action_simulated(target, action_name):
+def execute_action_simulated(target: dict[str, Any], action_name: str) -> dict[str, Any]:
     """Simulate executing an action (dry-run only)."""
     action_def = ACTION_DEFS.get(action_name, {})
     entry = {
@@ -783,7 +786,7 @@ def execute_action_simulated(target, action_name):
     return entry
 
 
-def execute_action_live(target, action_name):
+def execute_action_live(target: dict[str, Any], action_name: str) -> dict[str, Any]:
     """Execute an action using the real exploit chain tools."""
     chain = target.get("chain", "")
     details = target.get("details", {})
@@ -828,7 +831,7 @@ def execute_action_live(target, action_name):
     return entry
 
 
-def _exec_wifi_tello(target, action_name, details):
+def _exec_wifi_tello(target: dict[str, Any], action_name: str, details: dict[str, Any]) -> dict[str, Any]:
     """Execute Tello SDK commands over UDP."""
     from exploit_chains.wifi_tello_chain import TELLO_COMMANDS
 
@@ -870,7 +873,7 @@ def _exec_wifi_tello(target, action_name, details):
         sock.close()
 
 
-def _exec_wifi_parrot(target, action_name, details):
+def _exec_wifi_parrot(target: dict[str, Any], action_name: str, details: dict[str, Any]) -> dict[str, Any]:
     """Execute Parrot drone commands via Telnet / AT commands."""
     target_ip = details.get("ip", "192.168.1.1")
 
@@ -904,7 +907,7 @@ def _exec_wifi_parrot(target, action_name, details):
     return {"status": "error", "message": f"Unknown Parrot action: {action_name}"}
 
 
-def _exec_mavlink(target, action_name, details):
+def _exec_mavlink(target: dict[str, Any], action_name: str, details: dict[str, Any]) -> dict[str, Any]:
     """Execute MAVLink commands (injection or sniff)."""
     from exploit_chains.mavlink_chain import (
         build_command_long, sniff_mavlink, parse_mavlink_packet,
@@ -980,7 +983,7 @@ def _exec_mavlink(target, action_name, details):
         }
 
 
-def _exec_elrs(target, action_name, details):
+def _exec_elrs(target: dict[str, Any], action_name: str, details: dict[str, Any]) -> dict[str, Any]:
     """Execute ELRS exploit chain actions."""
     from exploit_chains.elrs_chain import (
         phrase_to_uid, uid_to_fhss_seed, uid_to_crc_init,
@@ -1061,7 +1064,7 @@ def _exec_elrs(target, action_name, details):
     return {"status": "error", "message": f"Unknown ELRS action: {action_name}"}
 
 
-def _exec_ble(target, action_name, details):
+def _exec_ble(target: dict[str, Any], action_name: str, details: dict[str, Any]) -> dict[str, Any]:
     """Execute BLE scanning/enumeration actions."""
     if action_name == "ble_scan_services":
         address = details.get("address", "")
@@ -1111,12 +1114,12 @@ def _exec_ble(target, action_name, details):
 # --- Flask routes ---
 
 @app.route("/")
-def index():
+def index() -> str:
     return render_template("index.html")
 
 
 @app.route("/api/status")
-def api_status():
+def api_status() -> Response:
     with scan_lock:
         target_list = sorted(
             targets.values(),
@@ -1137,7 +1140,7 @@ def api_status():
 
 
 @app.route("/api/scan", methods=["POST"])
-def api_scan():
+def api_scan() -> tuple[Response, int] | Response:
     global is_scanning
     body = request.get_json(silent=True)
     if body is None:
@@ -1188,7 +1191,7 @@ def api_scan():
 
 
 @app.route("/api/targets/<path:target_id>")
-def api_target_detail(target_id):
+def api_target_detail(target_id: str) -> tuple[Response, int] | Response:
     with scan_lock:
         target = targets.get(target_id)
     if not target:
@@ -1197,7 +1200,7 @@ def api_target_detail(target_id):
 
 
 @app.route("/api/targets/<path:target_id>/action", methods=["POST"])
-def api_target_action(target_id):
+def api_target_action(target_id: str) -> tuple[Response, int] | Response:
     with scan_lock:
         target = targets.get(target_id)
     if not target:
@@ -1220,17 +1223,17 @@ def api_target_action(target_id):
 
 
 @app.route("/api/actions")
-def api_action_defs():
+def api_action_defs() -> Response:
     return jsonify(ACTION_DEFS)
 
 
 @app.route("/api/log")
-def api_log():
+def api_log() -> Response:
     return jsonify(action_log[-50:])
 
 
 @app.route("/api/clear", methods=["POST"])
-def api_clear():
+def api_clear() -> tuple[Response, int] | Response:
     with scan_lock:
         if is_scanning:
             return jsonify({"error": "Cannot clear targets while a scan is in progress"}), 409
@@ -1240,12 +1243,12 @@ def api_clear():
 
 
 @app.route("/api/hardware")
-def api_hardware():
+def api_hardware() -> Response:
     return jsonify(detect_hardware())
 
 
 @app.route("/api/events")
-def api_events():
+def api_events() -> Response:
     """Server-Sent Events stream for real-time status updates.
 
     A brand-new browser starts at the current event tail so retained history is
@@ -1268,7 +1271,7 @@ def api_events():
     if not cursor_provided or last_id is None or last_id >= next_id:
         last_id = tail_id
 
-    def generate():
+    def generate() -> Generator[str, None, None]:
         local_last = last_id
         # Flush headers immediately without replaying a domain event. Browsers
         # otherwise remain in EventSource.CONNECTING until the next event.
@@ -1298,12 +1301,12 @@ chain2_state = {
 
 
 @app.route("/api/chain2/status")
-def api_chain2_status():
+def api_chain2_status() -> Response:
     return jsonify(chain2_state)
 
 
 @app.route("/api/chain2/simulate", methods=["POST"])
-def api_chain2_simulate():
+def api_chain2_simulate() -> tuple[Response, int] | Response:
     """Run a simulated Chain 2 attack for demo purposes."""
     try:
         from exploit_chains.wifi_mavlink_chain import (
@@ -1356,7 +1359,7 @@ def api_chain2_simulate():
 
 
 @app.route("/api/chain2/inject", methods=["POST"])
-def api_chain2_inject():
+def api_chain2_inject() -> tuple[Response, int] | Response:
     """Inject a MAVLink command via Chain 2 (dry-run in simulate mode)."""
     if not request.json:
         return jsonify({"error": "JSON body required"}), 400
@@ -1426,7 +1429,7 @@ def api_chain2_inject():
 
 
 @app.route("/api/chain2/commands")
-def api_chain2_commands():
+def api_chain2_commands() -> tuple[Response, int] | Response:
     """List available Chain 2 attack commands."""
     try:
         from exploit_chains.wifi_mavlink_chain import ATTACK_COMMANDS
@@ -1435,7 +1438,7 @@ def api_chain2_commands():
         return jsonify({"error": "Chain 2 module not found"}), 500
 
 
-def main():
+def main() -> None:
     global simulate_mode, dry_run_mode
 
     parser = argparse.ArgumentParser(description="Drone Scanner Web UI")
