@@ -1,0 +1,647 @@
+<title>Codex Task Descriptions</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+/* Utilitarian reference doc — clean hierarchy, scannable sections */
+:root {
+  --bg: #fafaf9;
+  --bg-card: #ffffff;
+  --bg-code: #f4f4f2;
+  --border: #e0ddd8;
+  --fg: #1c1917;
+  --fg-dim: #57534e;
+  --accent: #2563eb;
+  --accent-light: #eff4ff;
+  --tag-bg: #e8e5e0;
+  --tag-fg: #44403c;
+  --green: #16a34a;
+  --green-light: #f0fdf4;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121210;
+    --bg-card: #1c1b18;
+    --bg-code: #24231f;
+    --border: #2e2c28;
+    --fg: #e7e5e4;
+    --fg-dim: #a8a29e;
+    --accent: #60a5fa;
+    --accent-light: #1e293b;
+    --tag-bg: #292524;
+    --tag-fg: #d6d3d1;
+    --green: #4ade80;
+    --green-light: #14261a;
+    --codex-bg: #1e3a5f;
+    --codex-fg: #93c5fd;
+    --codex-border: #2563eb;
+    --claude-bg: #451a03;
+    --claude-fg: #fcd34d;
+    --claude-border: #b45309;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121210;
+  --bg-card: #1c1b18;
+  --bg-code: #24231f;
+  --border: #2e2c28;
+  --fg: #e7e5e4;
+  --fg-dim: #a8a29e;
+  --accent: #60a5fa;
+  --accent-light: #1e293b;
+  --tag-bg: #292524;
+  --tag-fg: #d6d3d1;
+  --green: #4ade80;
+  --green-light: #14261a;
+  --codex-bg: #1e3a5f;
+  --codex-fg: #93c5fd;
+  --codex-border: #2563eb;
+  --claude-bg: #451a03;
+  --claude-fg: #fcd34d;
+  --claude-border: #b45309;
+  color-scheme: dark;
+}
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0;
+}
+.wrap {
+  max-width: 760px;
+  margin: 0 auto;
+  padding-block: 32px 64px;
+}
+h1 {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 1.5rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin-bottom: 8px;
+  text-wrap: balance;
+}
+.subtitle {
+  color: var(--fg-dim);
+  font-size: 0.875rem;
+  margin-bottom: 32px;
+}
+h2 {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-top: 40px;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-wrap: balance;
+}
+h2 .num {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--accent);
+  background: var(--accent-light);
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.section-desc {
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+  margin-bottom: 16px;
+}
+.task {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin-bottom: 12px;
+}
+.task-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.task-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.tags {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+.tag {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.65rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--tag-bg);
+  color: var(--tag-fg);
+  padding: 2px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+.tag.easy { background: var(--green-light); color: var(--green); }
+.tag.assign { font-size: 0.6rem; font-weight: 600; letter-spacing: 0.06em; padding: 2px 7px; border-radius: 3px; border: 1px solid transparent; }
+.tag.codex { background: var(--codex-bg, #eff6ff); color: var(--codex-fg, #1d4ed8); border-color: var(--codex-border, #bfdbfe); }
+.tag.claude { background: var(--claude-bg, #fef3c7); color: var(--claude-fg, #92400e); border-color: var(--claude-border, #fde68a); }
+.task p, .task ul {
+  font-size: 0.85rem;
+  color: var(--fg-dim);
+  margin-bottom: 8px;
+}
+.task ul {
+  padding-left: 18px;
+}
+.task li {
+  margin-bottom: 3px;
+}
+.task strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+code {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.82em;
+  background: var(--bg-code);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.files {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.78rem;
+  color: var(--accent);
+  margin-top: 8px;
+}
+.files span {
+  display: inline-block;
+  margin-right: 10px;
+}
+.deliverable {
+  font-size: 0.8rem;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--fg-dim);
+}
+.deliverable strong {
+  color: var(--fg);
+}
+.copy-btn {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.7rem;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  float: right;
+  margin: -2px 0 4px 8px;
+}
+.copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+.note {
+  background: var(--accent-light);
+  border-left: 3px solid var(--accent);
+  padding: 12px 14px;
+  border-radius: 0 6px 6px 0;
+  font-size: 0.85rem;
+  margin: 24px 0;
+  color: var(--fg);
+}
+@media (max-width: 600px) {
+  h1 { font-size: 1.25rem; }
+  .task { padding: 14px; }
+  .task-header { flex-direction: column; gap: 6px; }
+}
+</style>
+
+<div class="wrap">
+
+<h1>Codex Task Descriptions</h1>
+<p class="subtitle">Self-contained tasks split between Codex (safe infrastructure) and Claude (security-adjacent). Each can be completed independently.</p>
+
+<div class="note">
+  <strong>Repo structure:</strong> Flask app in <code>web/</code>, Python tools in <code>tools/</code>, tests in <code>tools/tests/</code>, CI in <code>.github/workflows/validate.yml</code>. No <code>pyproject.toml</code> or <code>requirements.txt</code> exists yet.
+</div>
+
+<!-- ============================================ -->
+<h2><span class="num">01</span> Web UI Styling &amp; UX</h2>
+<p class="section-desc">The dashboard lives in <code>web/templates/index.html</code> (inline CSS/JS) and <code>web/app.py</code> (Flask + SSE).</p>
+
+<div class="task" id="task-1a">
+<div class="task-header">
+  <span class="task-title">Add dark/light theme toggle to the dashboard</span>
+  <div class="tags"><span class="tag assign codex">Codex</span><span class="tag easy">easy</span><span class="tag">css</span></div>
+</div>
+<p>The dashboard currently has a single dark theme hard-coded via CSS custom properties on <code>:root</code> in <code>web/templates/index.html</code>. Add a toggle button in the header bar (next to the target count) that switches between dark and light themes.</p>
+<ul>
+  <li>Define a second set of CSS custom property values for a light theme.</li>
+  <li>Use a <code>data-theme</code> attribute on <code>&lt;html&gt;</code> to switch palettes.</li>
+  <li>Persist the choice in <code>localStorage</code> and respect <code>prefers-color-scheme</code> as the default.</li>
+  <li>The toggle icon should reflect the current state (sun/moon).</li>
+</ul>
+<div class="files"><span>web/templates/index.html</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Updated <code>index.html</code> with working theme toggle, both themes visually coherent.</div>
+</div>
+
+<div class="task" id="task-1b">
+<div class="task-header">
+  <span class="task-title">Make the dashboard fully responsive at mobile widths</span>
+  <div class="tags"><span class="tag assign codex">Codex</span><span class="tag easy">easy</span><span class="tag">css</span></div>
+</div>
+<p>The existing <code>@media (max-width: 768px)</code> block does basic stacking but the UI has issues at phone sizes: the target list header overlaps, the detail panel actions grid doesn't wrap well, and the event toast feed covers content.</p>
+<ul>
+  <li>Target list should collapse into a horizontal scrollable strip or bottom drawer on mobile.</li>
+  <li>Action cards should stack to a single column below 480px.</li>
+  <li>Event toasts should appear at the top on mobile, not overlap the action buttons.</li>
+  <li>Scanner status indicators in the header should wrap gracefully.</li>
+</ul>
+<div class="files"><span>web/templates/index.html</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Updated CSS/HTML. Test at 375px, 414px, and 768px viewport widths.</div>
+</div>
+
+<div class="task" id="task-1c">
+<div class="task-header">
+  <span class="task-title">Build a collapsible log viewer panel</span>
+  <div class="tags"><span class="tag assign claude">Claude</span><span class="tag">html</span><span class="tag">js</span></div>
+</div>
+<p>The action log currently appears inline in the target detail view. Create a separate, collapsible bottom panel (like a terminal drawer) that shows all action log entries across all targets.</p>
+<ul>
+  <li>Add a drag handle or toggle button to expand/collapse the panel.</li>
+  <li>Panel should show the last 50 log entries from <code>/api/log</code>, auto-updating.</li>
+  <li>Each entry shows timestamp, target name, action label, and status with color coding.</li>
+  <li>Add a "Copy log" button that copies the visible entries as plain text.</li>
+  <li>Panel height should be resizable by dragging, persisted in <code>localStorage</code>.</li>
+</ul>
+<div class="files"><span>web/templates/index.html</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Working log panel integrated into the existing layout.</div>
+</div>
+
+<div class="task" id="task-1d">
+<div class="task-header">
+  <span class="task-title">Add SSE reconnection with exponential backoff</span>
+  <div class="tags"><span class="tag assign codex">Codex</span><span class="tag easy">easy</span><span class="tag">js</span></div>
+</div>
+<p>The current <code>connectSSE()</code> function in <code>index.html</code> reconnects after a fixed 3-second delay on error. Improve this.</p>
+<ul>
+  <li>Implement exponential backoff: 1s, 2s, 4s, 8s, cap at 30s.</li>
+  <li>Reset the backoff timer on successful connection.</li>
+  <li>Show a "Reconnecting..." banner at the top of the page when disconnected.</li>
+  <li>Include a "Retry now" button in the banner.</li>
+  <li>Pass <code>last_id</code> from the most recently received event so the server can replay missed events (the server-side <code>/api/events</code> already supports the <code>last_id</code> query param).</li>
+</ul>
+<div class="files"><span>web/templates/index.html</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Updated <code>connectSSE()</code> with backoff, reconnect banner, and last-event-ID recovery.</div>
+</div>
+
+<div class="task" id="task-1e">
+<div class="task-header">
+  <span class="task-title">Add a hardware status widget to the toolbar</span>
+  <div class="tags"><span class="tag assign claude">Claude</span><span class="tag">html</span><span class="tag">js</span></div>
+</div>
+<p>The app detects hardware (WiFi interfaces, BLE adapters, SDR devices, MAVLink ports) via <code>/api/hardware</code> but this data isn't shown in the UI unless you visit that endpoint directly.</p>
+<ul>
+  <li>Add a "Hardware" button in the toolbar that opens a dropdown/popover.</li>
+  <li>Show each hardware category (WiFi, BLE, SDR, MAVLink) with available/unavailable status.</li>
+  <li>List detected interfaces/devices under each category.</li>
+  <li>Color-code: green for available, red for unavailable, yellow for degraded.</li>
+  <li>Fetch on page load and add a refresh button.</li>
+</ul>
+<div class="files"><span>web/templates/index.html</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Hardware status popover accessible from the toolbar.</div>
+</div>
+
+<!-- ============================================ -->
+<h2><span class="num">02</span> CI/CD Improvements</h2>
+<p class="section-desc">Current CI is in <code>.github/workflows/validate.yml</code>. Runs validation and unit tests on Ubuntu + Windows, Python 3.10 + 3.12.</p>
+
+<div class="task" id="task-2a">
+<div class="task-header">
+  <span class="task-title">Add a lint job to the CI workflow</span>
+  <div class="tags"><span class="tag assign codex">Codex</span><span class="tag easy">easy</span><span class="tag">ci</span></div>
+</div>
+<p>Add a separate <code>lint</code> job to <code>.github/workflows/validate.yml</code> that runs <code>ruff check</code> and <code>ruff format --check</code> on all Python files.</p>
+<ul>
+  <li>Job should run on <code>ubuntu-latest</code> with Python 3.12 only (linting doesn't need a matrix).</li>
+  <li>Install ruff via <code>pip install ruff</code>.</li>
+  <li>Run <code>ruff check .</code> and <code>ruff format --check .</code> as separate steps.</li>
+  <li>The lint job should not block the existing <code>validate</code> job (run in parallel, not as a dependency).</li>
+</ul>
+<div class="files"><span>.github/workflows/validate.yml</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Updated workflow with a parallel lint job. Create a <code>ruff.toml</code> config at the repo root with sensible defaults (line-length 120, target Python 3.10).</div>
+</div>
+
+<div class="task" id="task-2b">
+<div class="task-header">
+  <span class="task-title">Add Python 3.13 to the test matrix</span>
+  <div class="tags"><span class="tag assign codex">Codex</span><span class="tag easy">easy</span><span class="tag">ci</span></div>
+</div>
+<p>The current test matrix covers Python 3.10 and 3.12. Add 3.13 to catch forward-compatibility issues.</p>
+<ul>
+  <li>Add <code>'3.13'</code> to the <code>python</code> matrix in <code>validate.yml</code>.</li>
+  <li>If any tests fail on 3.13, mark them with <code>@unittest.skipIf</code> with a comment explaining the version-specific issue, rather than removing 3.13.</li>
+  <li>Note: the <code>telnetlib</code> module was removed in Python 3.13 — if any test imports it, gate that import.</li>
+</ul>
+<div class="files"><span>.github/workflows/validate.yml</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Updated matrix, any necessary skip decorators, and a test run confirming 3.13 passes or has documented skips.</div>
+</div>
+
+<div class="task" id="task-2c">
+<div class="task-header">
+  <span class="task-title">Add a type-check job using mypy</span>
+  <div class="tags"><span class="tag assign codex">Codex</span><span class="tag">ci</span><span class="tag">typing</span></div>
+</div>
+<p>Add a <code>typecheck</code> job that runs <code>mypy</code> on key modules. Start permissively and tighten over time.</p>
+<ul>
+  <li>Install mypy via pip in the CI job.</li>
+  <li>Target <code>web/app.py</code> and <code>tools/exploit_chains/</code> initially.</li>
+  <li>Use <code>--ignore-missing-imports</code> since many dependencies (SoapySDR, bleak, etc.) won't be installed.</li>
+  <li>Create a <code>mypy.ini</code> at the repo root with <code>[mypy]</code> section setting <code>python_version = 3.10</code>, <code>warn_return_any = True</code>, <code>warn_unused_configs = True</code>.</li>
+  <li>This job should be non-blocking (use <code>continue-on-error: true</code>) until the codebase is ready.</li>
+</ul>
+<div class="files"><span>.github/workflows/validate.yml</span> <span>mypy.ini</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> New CI job + mypy config. Document any errors found in a comment at the top of <code>mypy.ini</code>.</div>
+</div>
+
+<!-- ============================================ -->
+<h2><span class="num">03</span> Python Packaging</h2>
+<p class="section-desc">No packaging config exists yet. All scripts are run directly. Dependencies are implicit.</p>
+
+<div class="task" id="task-3a">
+<div class="task-header">
+  <span class="task-title">Create pyproject.toml with project metadata and dependencies</span>
+  <div class="tags"><span class="tag assign codex">Codex</span><span class="tag">packaging</span></div>
+</div>
+<p>The repo has no <code>pyproject.toml</code>, <code>setup.py</code>, or <code>requirements.txt</code>. Create a proper <code>pyproject.toml</code> using modern Python packaging standards.</p>
+<ul>
+  <li>Project name: <code>drone-scanner</code>, version <code>0.1.0</code>.</li>
+  <li>Requires Python &ge; 3.10.</li>
+  <li><strong>Core dependencies</strong> (always needed): <code>flask</code></li>
+  <li><strong>Optional dependency groups:</strong>
+    <ul>
+      <li><code>[sdr]</code>: <code>numpy</code>, <code>SoapySDR</code> (note: SoapySDR is system-installed, just document it)</li>
+      <li><code>[ble]</code>: <code>bleak</code></li>
+      <li><code>[dev]</code>: <code>ruff</code>, <code>mypy</code>, <code>pytest</code></li>
+    </ul>
+  </li>
+  <li>Define a console script entry point: <code>drone-scanner = "web.app:main"</code></li>
+  <li>Set <code>[tool.ruff]</code> section with line-length 120, target-version "py310".</li>
+  <li>Set <code>[tool.mypy]</code> section matching the mypy config described in task 2c.</li>
+</ul>
+<div class="files"><span>pyproject.toml</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> A complete <code>pyproject.toml</code> at the repo root. Verify it with <code>pip install -e .</code> in a venv.</div>
+</div>
+
+<div class="task" id="task-3b">
+<div class="task-header">
+  <span class="task-title">Add a requirements-dev.txt for quick dev setup</span>
+  <div class="tags"><span class="tag assign codex">Codex</span><span class="tag easy">easy</span><span class="tag">packaging</span></div>
+</div>
+<p>Even with pyproject.toml, a flat requirements file is handy for CI and quick setup. Generate a pinned <code>requirements-dev.txt</code>.</p>
+<ul>
+  <li>Include: <code>flask</code>, <code>bleak</code>, <code>numpy</code>, <code>ruff</code>, <code>mypy</code>, <code>pytest</code>.</li>
+  <li>Pin to current stable versions.</li>
+  <li>Add a comment header explaining this is for development and CI, not production.</li>
+  <li>Update the CI workflow to <code>pip install -r requirements-dev.txt</code> before running tests.</li>
+</ul>
+<div class="files"><span>requirements-dev.txt</span> <span>.github/workflows/validate.yml</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Pinned requirements file and updated CI step.</div>
+</div>
+
+<!-- ============================================ -->
+<h2><span class="num">04</span> Documentation</h2>
+<p class="section-desc">README exists but is minimal. No install guide, API docs, or usage examples for the web UI.</p>
+
+<div class="task" id="task-4a">
+<div class="task-header">
+  <span class="task-title">Write a Web UI quick-start guide</span>
+  <div class="tags"><span class="tag assign claude">Claude</span><span class="tag easy">easy</span><span class="tag">docs</span></div>
+</div>
+<p>Create <code>web/README.md</code> documenting how to run the dashboard.</p>
+<ul>
+  <li>Prerequisites: Python 3.10+, Flask.</li>
+  <li>Quick start: <code>python3 web/app.py --simulate</code> for demo mode.</li>
+  <li>CLI flags: <code>--port</code>, <code>--host</code>, <code>--simulate</code>, <code>--debug</code>, <code>--wifi-iface</code>, <code>--ble-iface</code>, <code>--sdr-args</code>.</li>
+  <li>API endpoints table: list every <code>/api/*</code> route with method, description, and example request/response.</li>
+  <li>SSE events: document each event type (<code>target_found</code>, <code>scanner_done</code>, <code>scan_complete</code>, <code>action_executed</code>, etc.).</li>
+  <li>Architecture overview: Flask app &rarr; scanner threads &rarr; SSE event stream &rarr; browser.</li>
+</ul>
+<div class="files"><span>web/README.md</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Complete <code>web/README.md</code> with all sections above.</div>
+</div>
+
+<div class="task" id="task-4b">
+<div class="task-header">
+  <span class="task-title">Add install and contributing guide to the main README</span>
+  <div class="tags"><span class="tag assign claude">Claude</span><span class="tag easy">easy</span><span class="tag">docs</span></div>
+</div>
+<p>Expand the root <code>README.md</code> with practical setup instructions.</p>
+<ul>
+  <li>Add an "Installation" section with venv setup, pip install steps.</li>
+  <li>Add a "Quick Start" section with the simulate-mode command.</li>
+  <li>Add a "Development" section: how to run tests (<code>python -m unittest discover -s tools/tests</code>), how to lint, how to type-check.</li>
+  <li>Add a "Project Structure" section with a tree diagram of the key directories.</li>
+  <li>Keep the existing links section but organize it better with grouping headers.</li>
+</ul>
+<div class="files"><span>README.md</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Updated README with install, quick start, development, and structure sections.</div>
+</div>
+
+<div class="task" id="task-4c">
+<div class="task-header">
+  <span class="task-title">Document the tools/ directory</span>
+  <div class="tags"><span class="tag assign claude">Claude</span><span class="tag">docs</span></div>
+</div>
+<p>Create <code>tools/README.md</code> that catalogs each script in <code>tools/</code> with a one-line description, usage, and required dependencies.</p>
+<ul>
+  <li>Group scripts by category (analysis, capture, validation, exploit chains).</li>
+  <li>For each script: name, one-line purpose, CLI flags (read them from argparse in each file), and which optional dependencies it needs.</li>
+  <li>Include a table showing which scripts need hardware (SDR, WiFi, BLE) vs. which are purely offline.</li>
+  <li>Document the <code>tools/exploit_chains/</code> package: what <code>common.py</code> provides (<code>ChainLogger</code>, <code>AbortHandler</code>), and how the chain modules are structured.</li>
+</ul>
+<div class="files"><span>tools/README.md</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Complete tool catalog with dependency and hardware requirement tables.</div>
+</div>
+
+<!-- ============================================ -->
+<h2><span class="num">05</span> Code Quality</h2>
+<p class="section-desc">Python files have no type hints, no linting config, and inconsistent formatting.</p>
+
+<div class="task" id="task-5a">
+<div class="task-header">
+  <span class="task-title">Add type hints to web/app.py</span>
+  <div class="tags"><span class="tag assign claude">Claude</span><span class="tag">typing</span></div>
+</div>
+<p>Add type annotations to all functions in <code>web/app.py</code>. This file is the largest module (~1350 lines) and the main entry point.</p>
+<ul>
+  <li>Add return types and parameter types to every function.</li>
+  <li>Use <code>TypedDict</code> for the target, action, and event dictionaries (define at the top of the file).</li>
+  <li>Type the global state variables: <code>targets: dict[str, TargetDict]</code>, <code>action_log: list[ActionEntry]</code>, etc.</li>
+  <li>Use <code>from __future__ import annotations</code> for forward references.</li>
+  <li>Do NOT change any runtime behavior &mdash; types only.</li>
+</ul>
+<div class="files"><span>web/app.py</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Fully type-annotated <code>app.py</code> that passes <code>mypy --ignore-missing-imports</code>.</div>
+</div>
+
+<div class="task" id="task-5b">
+<div class="task-header">
+  <span class="task-title">Add type hints to tools/exploit_chains/common.py</span>
+  <div class="tags"><span class="tag assign claude">Claude</span><span class="tag easy">easy</span><span class="tag">typing</span></div>
+</div>
+<p>The <code>common.py</code> module defines <code>ChainLogger</code> and <code>AbortHandler</code>, used across every chain module. Add full type annotations.</p>
+<ul>
+  <li>Type all methods on <code>ChainLogger</code> and <code>AbortHandler</code>.</li>
+  <li>Add a <code>Protocol</code> or <code>ABC</code> if these classes define an interface other modules depend on.</li>
+  <li>Ensure <code>mypy --strict</code> passes on this file alone.</li>
+</ul>
+<div class="files"><span>tools/exploit_chains/common.py</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Fully annotated <code>common.py</code>.</div>
+</div>
+
+<div class="task" id="task-5c">
+<div class="task-header">
+  <span class="task-title">Create ruff config and auto-format the codebase</span>
+  <div class="tags"><span class="tag assign codex">Codex</span><span class="tag easy">easy</span><span class="tag">formatting</span></div>
+</div>
+<p>Set up ruff as the project's linter and formatter.</p>
+<ul>
+  <li>Create <code>ruff.toml</code> at repo root (or a <code>[tool.ruff]</code> section in <code>pyproject.toml</code> if that exists).</li>
+  <li>Settings: line-length 120, target-version "py310", select rules: E, F, W, I (isort), UP (pyupgrade).</li>
+  <li>Run <code>ruff format .</code> across the whole repo.</li>
+  <li>Run <code>ruff check --fix .</code> to auto-fix import sorting and simple issues.</li>
+  <li>Commit the formatting changes as a single "style: auto-format with ruff" commit, separate from the config commit.</li>
+</ul>
+<div class="files"><span>ruff.toml</span> <span>all .py files</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Ruff config + two commits: config first, then formatting pass.</div>
+</div>
+
+<!-- ============================================ -->
+<h2><span class="num">06</span> Test Scaffolding</h2>
+<p class="section-desc">Tests are in <code>tools/tests/</code>. Currently 23 test files, all using <code>unittest</code>. No shared fixtures or helpers.</p>
+
+<div class="task" id="task-6a">
+<div class="task-header">
+  <span class="task-title">Create a shared test helpers module</span>
+  <div class="tags"><span class="tag assign claude">Claude</span><span class="tag">testing</span></div>
+</div>
+<p>Many test files in <code>tools/tests/</code> likely duplicate setup code for things like temporary directories, mock objects, and test data. Create a shared helpers module.</p>
+<ul>
+  <li>Create <code>tools/tests/helpers.py</code> with:
+    <ul>
+      <li>A <code>TempDirMixin</code> class that creates/cleans up a temp directory for each test.</li>
+      <li>A <code>make_sample_target(overrides)</code> factory function that returns a target dict matching the schema used in <code>web/app.py</code> (the <code>SIMULATED_TARGETS</code> structure).</li>
+      <li>A <code>make_sample_event(event_type, data)</code> factory for SSE event dicts.</li>
+      <li>A <code>captured_output()</code> context manager that captures stdout/stderr.</li>
+    </ul>
+  </li>
+  <li>Add <code>tools/tests/__init__.py</code> if it doesn't exist.</li>
+</ul>
+<div class="files"><span>tools/tests/helpers.py</span> <span>tools/tests/__init__.py</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Helper module with the utilities above, plus a <code>test_helpers.py</code> that verifies they work.</div>
+</div>
+
+<div class="task" id="task-6b">
+<div class="task-header">
+  <span class="task-title">Add Flask test client tests for the web API</span>
+  <div class="tags"><span class="tag assign claude">Claude</span><span class="tag">testing</span></div>
+</div>
+<p>The web app has no tests at all. Create <code>tools/tests/test_web_api.py</code> using Flask's built-in test client.</p>
+<ul>
+  <li>Test <code>GET /</code> returns 200 and contains "DRONE SCANNER".</li>
+  <li>Test <code>GET /api/status</code> returns valid JSON with expected keys (<code>scanning</code>, <code>targets</code>, <code>scanner_status</code>).</li>
+  <li>Test <code>POST /api/scan</code> starts a scan (check for 200 response and <code>scanning</code> status).</li>
+  <li>Test <code>POST /api/scan</code> while already scanning returns 409.</li>
+  <li>Test <code>GET /api/actions</code> returns the action definitions dict.</li>
+  <li>Test <code>POST /api/clear</code> resets the target list.</li>
+  <li>Test <code>GET /api/targets/nonexistent</code> returns 404.</li>
+  <li>All tests should use simulate mode so no hardware is needed.</li>
+  <li>Use <code>app.test_client()</code> from Flask, no external dependencies.</li>
+</ul>
+<div class="files"><span>tools/tests/test_web_api.py</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Test file with &ge;7 passing test cases covering all the above.</div>
+</div>
+
+<div class="task" id="task-6c">
+<div class="task-header">
+  <span class="task-title">Add a pytest configuration alongside unittest</span>
+  <div class="tags"><span class="tag assign codex">Codex</span><span class="tag easy">easy</span><span class="tag">testing</span></div>
+</div>
+<p>The project uses <code>unittest</code> but <code>pytest</code> can run unittest tests natively and provides better output. Make both runners work.</p>
+<ul>
+  <li>Add a <code>[tool.pytest.ini_options]</code> section in <code>pyproject.toml</code> (or <code>pytest.ini</code> at root).</li>
+  <li>Set <code>testpaths = ["tools/tests"]</code>.</li>
+  <li>Set <code>python_files = test_*.py</code>, <code>python_classes = Test*</code>, <code>python_functions = test_*</code>.</li>
+  <li>Add <code>-v --tb=short</code> as default addopts.</li>
+  <li>Verify all existing tests still pass with both <code>python -m unittest discover -s tools/tests</code> and <code>pytest</code>.</li>
+  <li>Do NOT convert existing tests from unittest to pytest style &mdash; just make pytest able to discover and run them.</li>
+</ul>
+<div class="files"><span>pyproject.toml or pytest.ini</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> Config file that lets <code>pytest</code> run all existing tests.</div>
+</div>
+
+<div class="task" id="task-6d">
+<div class="task-header">
+  <span class="task-title">Add conftest.py with reusable fixtures</span>
+  <div class="tags"><span class="tag assign codex">Codex</span><span class="tag">testing</span></div>
+</div>
+<p>If pytest is configured (task 6c), create <code>tools/tests/conftest.py</code> with shared fixtures for tests that may be added in the future.</p>
+<ul>
+  <li><code>tmp_workspace</code> fixture: yields a temporary directory, cleans up after.</li>
+  <li><code>flask_client</code> fixture: returns <code>app.test_client()</code> with simulate mode enabled and test config.</li>
+  <li><code>sample_targets</code> fixture: returns a list of target dicts from <code>SIMULATED_TARGETS</code>.</li>
+  <li><code>reset_app_state</code> autouse fixture: resets global state in <code>web/app.py</code> between tests (clear targets, action log, events).</li>
+</ul>
+<div class="files"><span>tools/tests/conftest.py</span></div>
+<div class="deliverable"><strong>Deliverable:</strong> conftest.py with the four fixtures. Verify with a trivial test that uses <code>flask_client</code>.</div>
+</div>
+
+</div>
+
+<script>
+document.querySelectorAll('.task').forEach(task => {
+  const btn = document.createElement('button');
+  btn.className = 'copy-btn';
+  btn.textContent = 'Copy';
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const title = task.querySelector('.task-title')?.textContent || '';
+    const tags = [...task.querySelectorAll('.tag')].map(t => t.textContent).join(', ');
+    const body = task.querySelector('.deliverable')?.previousElementSibling ?
+      [...task.querySelectorAll('p, li')].map(el => el.textContent).join('\n') : '';
+    const deliverable = task.querySelector('.deliverable')?.textContent || '';
+    const files = task.querySelector('.files')?.textContent?.trim() || '';
+    const text = `# ${title}\nTags: ${tags}\n\n${body}\n\nFiles: ${files}\n${deliverable}`;
+    try {
+      navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+      }).catch(() => {
+        const range = document.createRange();
+        range.selectNodeContents(task);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      });
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(task);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  });
+  task.querySelector('.task-header')?.appendChild(btn);
+});
+</script>
