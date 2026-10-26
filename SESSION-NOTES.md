@@ -3504,6 +3504,93 @@ pushed to `origin/main`; no force push or history rewrite.
 - Extract inline CSS/JavaScript into versioned static assets once the UI grows
   beyond the current single-page prototype.
 
+## 60. Safe bench controller (Claude, 2026-10-26)
+
+**Starting revision:** `6d04761` (main, "Add combined attack demo chain and tests")
+
+**Objective:** Build a safe bench controller (roadmap item 9) that creates a
+bench plan, verifies prerequisites, and stops before any transmission. Require
+explicit arming for RF actions. Include frequency, power, duration, expected
+receiver state, abort conditions, and evidence capture parameters. Preserve
+the absolute no-flashing rule for the E8 and TinyHawk.
+
+**Scope and authorization:**
+- No hardware, serial ports, RF transmitters, or live target access.
+- Did not modify ELRS capture validator, MSP-over-ELRS simulator, OTA-v3
+  transmitter/packet-forger corrections, or protocol CI (Codex scope).
+- The bench controller itself never transmits — it produces a validated plan
+  file that a separate TX tool would consume.
+
+**Actions:**
+
+1. **Created `tools/bench-controller.py`** — safe bench test planner.
+   - `plan` subcommand: derives all ELRS crypto parameters (UID, CRC init,
+     FHSS seed/sequence, sync channel) from a binding phrase, assembles a
+     complete bench test plan with RF parameters, safety constraints, abort
+     conditions, evidence capture config, and expected receiver state.
+   - `verify` subcommand: checks all prerequisites (plan version, no-flash
+     enforcement, device list, arm gate, RF power/duration bounds, frequency
+     range, test type, abort conditions, UID validity, evidence config).
+   - `review` subcommand: displays full plan summary and JSON for inspection.
+   - `arm` subcommand: two-step arming gate — requires `--arm` CLI flag AND
+     interactive confirmation (type 'ARM'). Blocked by any failing
+     prerequisite. Cannot arm an aborted plan.
+   - `abort` subcommand: disarms a plan immediately.
+   - Safety: EMAX_E8 and TINYHAWK_III in a frozen `BLOCKED_DEVICES` set;
+     no-flash enforced at verification; power capped at 10 dBm; duration
+     capped at 60s; dry-run is always the default.
+   - Version-parameterized: supports OTA v3 (default, live TinyHawk) and v4.
+   - Uses vendored `elrs_core` for all crypto (no local reimplementation).
+
+2. **Created `tools/tests/test_bench_controller.py`** — 40 focused tests:
+   - `TestPlanCreation` (11 tests): required fields, UID derivation, v3/v4
+     parameters, frequency calculation, safety defaults, no-flash devices,
+     power/duration bounds, evidence capture, UID privacy.
+   - `TestPlanVerification` (14 tests): valid plan passes; version, no-flash,
+     device list, arm gate, power, duration, frequency, test type, abort
+     conditions, UID, evidence each verified; props warning.
+   - `TestPlanArming` (7 tests): confirmation required, interactive ARM,
+     blockers prevent arming, already-armed, aborted plan, EOF cancels.
+   - `TestPlanAbort` (2 tests): disarms, handles draft.
+   - `TestPlanFileIO` (1 test): save/load round-trip.
+   - `TestCLIHelp` (3 tests): help, subcommand parsing, arm flag required.
+   - `TestNoFlashConstraint` (3 tests): E8 and TinyHawk in frozen set.
+
+**Safety boundaries:**
+- No hardware access, serial ports, RF transmission, or live network use.
+- No firmware flashing (absolute no-flash constraint preserved in code).
+- The controller produces plan files only — transmission is gated behind
+  a separate tool that reads the armed plan.
+- Props-removed check is a prerequisite warning.
+- Codex-owned files were not modified.
+
+**Changed files:**
+- `tools/bench-controller.py` (new)
+- `tools/tests/test_bench_controller.py` (new)
+- `SESSION-NOTES.md` (this entry)
+
+**Validation:**
+- `python -B tools/validate-project.py` — PASS (226 files)
+- `python -B -m unittest discover -s tools/tests -p "test_*.py"` — 458 tests
+  passed (60 skipped), including all 40 new bench controller tests
+- `python -B -m unittest tools/tests/test_bench_controller.py` — 40/40 OK
+- `git diff --check` — clean
+
+**Evidence class:** SYNTHETIC-TEST (no live RF, no hardware).
+
+**Limitations:**
+- The controller is the planning/gating layer only. A TX execution tool
+  that consumes the armed plan file is a separate future deliverable.
+- No SDR hardware detection (would require UHD/SoapySDR imports).
+- Plan files stored under `work/bench/` (gitignored) to keep UID private.
+
+**Next steps:**
+- Build the TX execution tool that reads an armed plan and gates on the
+  plan's safety constraints before any transmission.
+- Add SDR prerequisite detection to the `verify` subcommand when UHD is
+  available on the bench machine.
+- Integrate with the SITL harness for Chain 2 bench testing.
+
 ---
 
 ### §59 — Evidence-grade passive ELRS capture pipeline (Claude, 2026-10-26)
