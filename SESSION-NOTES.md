@@ -3504,7 +3504,7 @@ pushed to `origin/main`; no force push or history rewrite.
 - Extract inline CSS/JavaScript into versioned static assets once the UI grows
   beyond the current single-page prototype.
 
-## 57. Receiver acceptance validation plan and test scaffolding (Claude, 2026-10-26)
+## 58. Receiver acceptance validation plan and test scaffolding (Claude, 2026-10-26)
 
 **Starting revision:** `362ab66` (HEAD of main)
 
@@ -3610,3 +3610,117 @@ capture through demonstrated receiver behavior.
   bounded-RC injection.
 - After Stage A passes, Stage B (read-only MSP_API_VERSION probe) is the
   first live transmission test.
+
+## 57. Offline browser validation and multi-client UI state (Codex, 2026-10-26)
+
+**Starting revision:** `7757f42` after the required initial sync. Claude pushed
+additional non-overlapping tool work during this session, so the tree was
+fast-forwarded again to `362ab66` before validation and handoff.
+
+**Objective:** Continue the application-engineering track without hardware,
+RF, serial, or live-target interaction. Exercise the dashboard in a real browser
+and fix the UI-state defects exposed by multi-tab, keyboard, and narrow-screen
+usage.
+
+**Actions and evidence:**
+
+1. **Added a real offline browser suite.**
+   - Added a pinned Playwright test dependency layered on the existing Flask
+     requirements.
+   - The tests serve the actual Flask app through a threaded Werkzeug server on
+     an ephemeral `127.0.0.1` port and drive an installed Chrome-family browser.
+   - A browser route guard aborts and records every non-loopback HTTP(S)
+     request initiated by the dashboard page. Live scan, live action, and
+     hardware-detection functions are patched to fail the test if reached.
+     Simulation and dry-run modes are asserted after every case.
+   - Six browser cases cover page boot/console errors, a complete simulated
+     scan plus dry-run action/log/clear flow, keyboard selection and Arrow-key
+     focus movement, out-of-band clear focus recovery, scan-request failure
+     recovery, and 390 px horizontal/vertical reachability.
+
+2. **Corrected event-stream cursor semantics.**
+   - A new tab now starts at the current SSE tail instead of replaying as many
+     as 500 retained events as new notifications.
+   - Genuine `Last-Event-ID` reconnects still replay only newer events.
+   - A cursor ahead of the server counter, as after a process restart, resets
+     to the current tail so future events are not stranded.
+   - Added deterministic route-level tests for all three cases.
+
+3. **Improved multi-client and keyboard behavior.**
+   - SSE-triggered status requests are coalesced to avoid request bursts.
+   - `scan_start` and `targets_cleared` now refresh other open tabs, while
+     `action_executed` refreshes the selected target's action log.
+   - Target rows preserve focus across DOM re-renders, expose `aria-current`,
+     and support Arrow Up/Down plus Home/End navigation. If another client
+     clears the focused row, focus moves to the stable Scan control.
+   - Action results expose live-region and busy state for assistive technology.
+
+4. **Made the layout resilient at narrow widths and zoom.**
+   - Replaced the fixed viewport-height calculation with a dynamic-viewport
+     flex shell.
+   - Header/status/toolbar rows wrap, detail columns become bounded responsive
+     tracks, and the event feed cannot exceed the viewport width.
+
+5. **Expanded executable CI coverage.**
+   - The dedicated dashboard job now runs on both Ubuntu and Windows with
+     Python 3.12 and installed Chrome, in addition to the existing four-cell
+     offline validator matrix.
+
+**What failed or needed correction:**
+
+- Flask's test client waits for the first streaming chunk, so the initial SSE
+  test design deadlocked before it could enqueue a new event. The tests were
+  corrected to invoke the streaming route inside a request context and drive
+  its generator directly.
+- Final review found that `min-height: 100dvh` plus hidden body overflow let the
+  mobile flex shell grow beyond the viewport and clip content. It now uses a
+  definite dynamic viewport height, and the browser test scrolls the detail
+  panel to prove the bottom action log is reachable.
+- The out-of-band clear test showed that a fresh SSE response did not flush its
+  headers until the first domain event. The stream now emits a harmless initial
+  comment, so `EventSource` becomes ready immediately without replaying history.
+- The same cross-client flow exposed focus falling back to the document body
+  when a focused target disappeared. It now moves to the stable Scan control.
+- The host had Edge rather than Chrome. The browser channel is configurable via
+  `DASHBOARD_BROWSER_CHANNEL`; local validation used `msedge`, while CI
+  explicitly uses the `chrome` channel available on hosted runners.
+
+**Safety boundaries:**
+
+- Dashboard-page HTTP(S) requests could contact only `127.0.0.1`/`localhost`;
+  no external application request was permitted.
+- No E8/TinyHawk access, serial access, firmware changes, RF transmission,
+  hardware probing, or live actions occurred.
+- Flask and Playwright were installed only into the ignored repository-local
+  `work/python312-venv` environment.
+
+**Changed files:**
+
+- `.github/workflows/validate.yml`
+- `web/requirements-e2e.txt`
+- `web/tests/test_dashboard_browser.py`
+- `web/app.py`
+- `web/templates/index.html`
+- `tools/tests/test_web_dashboard.py`
+- `SESSION-NOTES.md`
+
+**Validation:**
+
+- Browser suite on local Edge: 6/6 PASS.
+- Flask-enabled dashboard unit suite: 52/52 PASS.
+- Full tool test discovery: 484 PASS, 23 optional SITL tests skipped.
+- `python -B tools/validate-project.py`: PASS (232 files before this log update).
+- `git diff --check`: clean.
+
+**Commit/push status:** Included in the commit containing this section and
+pushed to `origin/main`; no force push or history rewrite.
+
+**Next application-engineering steps:**
+
+- Move mutable dashboard globals behind an app/state factory so separate app
+  instances and test clients cannot share scan or history state.
+- Bound and lock action and auxiliary integration histories consistently.
+- Extract inline CSS/JavaScript into versioned static assets and add a strict
+  self-only content policy once style attributes have been removed.
+- Add persistent scan-session summaries and a non-blocking cancelable progress
+  surface for longer scans.
