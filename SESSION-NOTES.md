@@ -3504,7 +3504,7 @@ pushed to `origin/main`; no force push or history rewrite.
 - Extract inline CSS/JavaScript into versioned static assets once the UI grows
   beyond the current single-page prototype.
 
-## 57. Responsible disclosure packaging (Claude, 2026-10-26)
+## 61. Responsible disclosure packaging (Claude, 2026-10-26)
 
 **Starting revision:** `6d04761` (HEAD of main)
 
@@ -3587,3 +3587,391 @@ readiness.
 - Send DISC-01 and DISC-02 first (highest severity, clearest reproduction).
 - Send DISC-04 and DISC-05 to Betaflight (safety-critical, source-derived).
 - Track responses and 90-day windows in `docs/disclosure-tracking.md`.
+
+## 60. Safe bench controller (Claude, 2026-10-26)
+
+**Starting revision:** `6d04761` (main, "Add combined attack demo chain and tests")
+
+**Objective:** Build a safe bench controller (roadmap item 9) that creates a
+bench plan, verifies prerequisites, and stops before any transmission. Require
+explicit arming for RF actions. Include frequency, power, duration, expected
+receiver state, abort conditions, and evidence capture parameters. Preserve
+the absolute no-flashing rule for the E8 and TinyHawk.
+
+**Scope and authorization:**
+- No hardware, serial ports, RF transmitters, or live target access.
+- Did not modify ELRS capture validator, MSP-over-ELRS simulator, OTA-v3
+  transmitter/packet-forger corrections, or protocol CI (Codex scope).
+- The bench controller itself never transmits — it produces a validated plan
+  file that a separate TX tool would consume.
+
+**Actions:**
+
+1. **Created `tools/bench-controller.py`** — safe bench test planner.
+   - `plan` subcommand: derives all ELRS crypto parameters (UID, CRC init,
+     FHSS seed/sequence, sync channel) from a binding phrase, assembles a
+     complete bench test plan with RF parameters, safety constraints, abort
+     conditions, evidence capture config, and expected receiver state.
+   - `verify` subcommand: checks all prerequisites (plan version, no-flash
+     enforcement, device list, arm gate, RF power/duration bounds, frequency
+     range, test type, abort conditions, UID validity, evidence config).
+   - `review` subcommand: displays full plan summary and JSON for inspection.
+   - `arm` subcommand: two-step arming gate — requires `--arm` CLI flag AND
+     interactive confirmation (type 'ARM'). Blocked by any failing
+     prerequisite. Cannot arm an aborted plan.
+   - `abort` subcommand: disarms a plan immediately.
+   - Safety: EMAX_E8 and TINYHAWK_III in a frozen `BLOCKED_DEVICES` set;
+     no-flash enforced at verification; power capped at 10 dBm; duration
+     capped at 60s; dry-run is always the default.
+   - Version-parameterized: supports OTA v3 (default, live TinyHawk) and v4.
+   - Uses vendored `elrs_core` for all crypto (no local reimplementation).
+
+2. **Created `tools/tests/test_bench_controller.py`** — 40 focused tests:
+   - `TestPlanCreation` (11 tests): required fields, UID derivation, v3/v4
+     parameters, frequency calculation, safety defaults, no-flash devices,
+     power/duration bounds, evidence capture, UID privacy.
+   - `TestPlanVerification` (14 tests): valid plan passes; version, no-flash,
+     device list, arm gate, power, duration, frequency, test type, abort
+     conditions, UID, evidence each verified; props warning.
+   - `TestPlanArming` (7 tests): confirmation required, interactive ARM,
+     blockers prevent arming, already-armed, aborted plan, EOF cancels.
+   - `TestPlanAbort` (2 tests): disarms, handles draft.
+   - `TestPlanFileIO` (1 test): save/load round-trip.
+   - `TestCLIHelp` (3 tests): help, subcommand parsing, arm flag required.
+   - `TestNoFlashConstraint` (3 tests): E8 and TinyHawk in frozen set.
+
+**Safety boundaries:**
+- No hardware access, serial ports, RF transmission, or live network use.
+- No firmware flashing (absolute no-flash constraint preserved in code).
+- The controller produces plan files only — transmission is gated behind
+  a separate tool that reads the armed plan.
+- Props-removed check is a prerequisite warning.
+- Codex-owned files were not modified.
+
+**Changed files:**
+- `tools/bench-controller.py` (new)
+- `tools/tests/test_bench_controller.py` (new)
+- `SESSION-NOTES.md` (this entry)
+
+**Validation:**
+- `python -B tools/validate-project.py` — PASS (226 files)
+- `python -B -m unittest discover -s tools/tests -p "test_*.py"` — 458 tests
+  passed (60 skipped), including all 40 new bench controller tests
+- `python -B -m unittest tools/tests/test_bench_controller.py` — 40/40 OK
+- `git diff --check` — clean
+
+**Evidence class:** SYNTHETIC-TEST (no live RF, no hardware).
+
+**Limitations:**
+- The controller is the planning/gating layer only. A TX execution tool
+  that consumes the armed plan file is a separate future deliverable.
+- No SDR hardware detection (would require UHD/SoapySDR imports).
+- Plan files stored under `work/bench/` (gitignored) to keep UID private.
+
+**Next steps:**
+- Build the TX execution tool that reads an armed plan and gates on the
+  plan's safety constraints before any transmission.
+- Add SDR prerequisite detection to the `verify` subcommand when UHD is
+  available on the bench machine.
+- Integrate with the SITL harness for Chain 2 bench testing.
+
+---
+
+### §59 — Evidence-grade passive ELRS capture pipeline (Claude, 2026-10-26)
+
+**Goal:** Build the full passive IQ→packet decode chain that was missing from
+the existing tooling. The prior `elrs-iq-symbols.py` stopped at symbol
+extraction and explicitly noted the gap: SX1280 long interleaving, FEC, and
+CRC decode were unimplemented.
+
+**What was built:**
+
+1. **`tools/lora_decode.py`** — LoRa PHY decode module (standard library only):
+   - Gray encode/decode for all SF values
+   - Diagonal de-interleave (standard and SX1280 long interleaving)
+   - Hamming(7,4) and extended Hamming(8,4) FEC with error correction
+   - SX12xx LFSR whitening/de-whitening (poly 0x171, seed 0xFF)
+   - Full `encode_payload()` and `decode_payload()` chains for round-trip testing
+   - Evidence class: SELF-CONSISTENT (encode→decode round-trips proven; hardware
+     validation awaits real SX1280 captures)
+
+2. **`tools/elrs-passive-pipeline.py`** — End-to-end pipeline CLI (NumPy/SciPy):
+   - IQ reading: sc16le, cf32le, cu8 formats with bounded window reads
+   - Preamble detection via upchirp correlation with deduplication
+   - Payload symbol extraction (dechirp + FFT after preamble+SFD skip)
+   - LoRa decode integration (symbols → bytes via lora_decode)
+   - ELRS v3/v4 CRC14 validation with the vendored elrs_core
+   - SYNC/RCDATA/DATA frame field decoding
+   - FHSS hop correlation: brute-force offset search with STRONG/MODERATE/WEAK/NONE
+     quality classification
+   - Two modes: live IQ capture processing and offline FHSS correlation from JSONL
+   - Sanitized reporting: no UID material or packet bytes in stdout; full report
+     written only to `work/` (gitignored)
+
+3. **`tools/tests/test_elrs_passive_pipeline.py`** — 57-test suite covering:
+   - Gray coding round-trip for all 7-bit values
+   - Hamming(7,4) single-error correction for all 16 nibbles × 7 bit positions
+   - Hamming(8,4) single-error correction and double-error detection
+   - Full encode→decode round-trip for multiple 8-byte payloads (CR 4/7 and 4/8)
+   - ELRS CRC14 generate-then-validate and corruption detection
+   - FHSS correlation with synthetic perfect, random, and empty frame sets
+   - Report sanitization: confirms no UID, raw_hex, or symbols in sanitized output
+   - Edge cases: empty symbols, short payloads, zero inputs
+
+**Bugs found and fixed during testing:**
+
+- Hamming(7,4)/(8,4) syndrome-to-position mapping was using raw syndrome value as
+  array index instead of mapping through Hamming position table. Fixed with explicit
+  `_HAM_POS_TO_IDX` lookup.
+- Hamming(8,4) p3-only error case (syndrome=0, overall_parity=1) was unreachable
+  because the outer condition required `syndrome != 0`. Added a separate branch.
+- Long interleave encode/decode had a tail-handling bug: the last codeword group's
+  rows extended past the matrix when `n_cw` wasn't a multiple of `sf`. Replaced the
+  diagonal-per-group algorithm with a flat column-major transposition that handles
+  any payload length correctly.
+
+**Validation:**
+
+- `python -B tools/validate-project.py` — PASS (227 files)
+- `python -B -m unittest discover -s tools/tests -p "test_*.py"` — 483 tests pass, 57 skipped (SITL)
+- `git diff --check` — clean
+
+**Security constraints honored:**
+
+- No hardware access, serial ports, RF transmitters, or live targets used.
+- No vendored `elrs_core` files modified.
+- No Codex-scoped files modified (elrs-capture-forge-validate.py, elrs-iq-symbols.py, etc.).
+- UID material never appears in tracked files or sanitized stdout output.
+- Packet bytes written only under gitignored `work/`.
+
+**Commit/push status:** Pushed to `claude/project-thread-cao82c` branch.
+
+**Next steps:**
+
+- Validate the LoRa PHY decode against a real SX1280 capture (requires running the
+  pipeline on an actual IQ file from the TinyHawk pair).
+- Compare decoded packet bytes against `elrs-li-offline.py` output on the same
+  captures for cross-validation.
+- Once validated against hardware, upgrade evidence class from SELF-CONSISTENT to
+  CAPTURE-VALIDATED.
+
+## 58. Receiver acceptance validation plan and test scaffolding (Claude, 2026-10-26)
+
+**Starting revision:** `362ab66` (HEAD of main)
+
+**Objective:** Build the offline receiver acceptance validation plan (roadmap
+item 10) and test scaffolding that exercises the entire software pipeline
+without hardware, SDR, or RF. The plan defines four stages (A–D) that
+progressively establish M2–M5 evidence milestones, from passive baseline
+capture through demonstrated receiver behavior.
+
+**Scope, authorization, and device-specific prohibitions:**
+
+- No hardware, serial, RF, SDR, or external network access.
+- No firmware flashing (absolute no-flash constraint for E8 and TinyHawk).
+- All testing is offline against the vendored `elrs_core` library.
+- Codex-owned files (ELRS capture validator, MSP simulator, OTA-v3
+  transmitter/packet-forger corrections, protocol CI) were not modified.
+
+**Actions:**
+
+1. Created `research/receiver-acceptance-validation-plan.md` — four-stage
+   validation methodology:
+   - **Stage A (M2):** Passive baseline capture. Record normal E8→TinyHawk
+     link, decode frames, cross-check forger output against real RF.
+   - **Stage B (M4):** Read-only MSP probe. Transmit a single
+     `MSP_API_VERSION` (cmd 1) request — pure read, no state change. Success
+     observable via telemetry response.
+   - **Stage C (M4+):** Bounded neutral RC canary. Inject a single RC packet
+     with safe values (throttle min, disarmed, centered pitch/yaw, bounded
+     roll). Observable via Betaflight CLI channel readout.
+   - **Stage D (M5):** Demonstrated receiver behavior via MSP_REBOOT (cmd 68).
+     Observable, reversible. Does not claim "commandeering."
+
+   Plan includes: safety constraints (props removed, min power, documented
+   stop conditions), prerequisites, abort conditions, evidence grading, and
+   dependency mapping.
+
+2. Created `tools/tests/test_receiver_acceptance.py` — 46 offline tests in
+   11 test classes:
+   - `TestV3CrcInitDerivation` — v3 vs v4 CRC init formula verification
+   - `TestV3SyncChannel` — sync channel 41 (v3) vs 40 (v4)
+   - `TestV3FhssSequence` — sequence length, sync-at-block-start, range, determinism
+   - `TestV3SyncRoundTrip` — encode→decode→compare, CRC validate/corrupt/wrong-UID
+   - `TestV3RcDataRoundTrip` — neutral RC packet, armed flag propagation
+   - `TestMspCommandSafetyGate` — allowed vs destructive MSP command classification
+   - `TestBoundedRcSafetyInvariants` — 8 safe/unsafe RC state checks
+   - `TestModelMatchAlwaysSatisfied` — model_id=255 confirmation
+   - `TestEvidenceSchema` — JSON schema validation for all 3 evidence reports
+   - `TestLiveTargetParameters` — cross-check against §17 confirmed parameters
+   - `TestMspFragmentConstruction` — MSPv1 header and stubborn-sender sequence
+   - `TestAbortConditionDetection` — arming/mode-change/link-loss detection
+
+**Evidence (SYNTHETIC-TEST only — no live RF or hardware):**
+
+- `python -B tools/validate-project.py` — PASS (232 files)
+- `python -B -m unittest discover -s tools/tests -p "test_*.py"` — 516 tests
+  passed (60 skipped: SITL binary and Flask optional)
+- `git diff --check` — clean
+
+**What worked and what it establishes:**
+
+- The v3 protocol layer (CRC14, FHSS, SYNC, RC DATA) round-trips correctly
+  through `elrs_core` + `v3_compat`. All confirmed live parameters (v3, LoRa,
+  channel 41, model_id=255) are cross-verified in tests.
+- The safety invariant checks confirm that bounded-RC rejects unsafe inputs
+  (armed, high throttle, unconstrained roll, full pitch/yaw).
+- The MSP command gate correctly excludes destructive commands from all stages.
+- Evidence schemas are JSON-serializable and contain all required fields.
+
+**What failed, was blocked, or remained inconclusive:**
+
+- Stages B-D are blocked on LoRa TX modulation (Phase 2 PHY, §9.4 steps 9-11).
+  The forger produces correct bytes but cannot transmit without the PHY layer.
+- Stage A requires the owner's bench (B205 + TinyHawk + E8).
+- No live RF validation — all evidence is SYNTHETIC-TEST grade.
+
+**Private-data handling and safety state:**
+
+- No private UID, binding phrase, or capture data used in tests (test UID
+  derived from the public example phrase "iloveflying").
+- No hardware accessed, no RF transmitted, no serial ports opened.
+- Absolute no-flash constraint preserved.
+
+**Changed files:**
+
+- `research/receiver-acceptance-validation-plan.md` (new)
+- `tools/tests/test_receiver_acceptance.py` (new)
+- `SESSION-NOTES.md` (this entry)
+
+**Validation:**
+
+- `python -B tools/validate-project.py` — PASS (232 files)
+- `python -B -m unittest discover -s tools/tests -p "test_*.py"` — 516/516 PASS
+  (60 skipped)
+- `git diff --check` — clean
+
+**Next steps:**
+
+- Stage A: Owner captures baseline RF from the live TinyHawk–E8 pair on the
+  B205. Cross-check against the forger's SYNC/FHSS/CRC output.
+- Phase 2 PHY (Codex): vendor `elrs_core` LoRa modulation, rewire the TX
+  emulator. Unblocks Stages B–D.
+- Betaflight AUX/mode dump (owner, read-only CLI): required before Stage C
+  bounded-RC injection.
+- After Stage A passes, Stage B (read-only MSP_API_VERSION probe) is the
+  first live transmission test.
+
+## 57. Offline browser validation and multi-client UI state (Codex, 2026-10-26)
+
+**Starting revision:** `7757f42` after the required initial sync. Claude pushed
+additional non-overlapping tool work during this session, so the tree was
+fast-forwarded again to `362ab66` before validation and handoff.
+
+**Objective:** Continue the application-engineering track without hardware,
+RF, serial, or live-target interaction. Exercise the dashboard in a real browser
+and fix the UI-state defects exposed by multi-tab, keyboard, and narrow-screen
+usage.
+
+**Actions and evidence:**
+
+1. **Added a real offline browser suite.**
+   - Added a pinned Playwright test dependency layered on the existing Flask
+     requirements.
+   - The tests serve the actual Flask app through a threaded Werkzeug server on
+     an ephemeral `127.0.0.1` port and drive an installed Chrome-family browser.
+   - A browser route guard aborts and records every non-loopback HTTP(S)
+     request initiated by the dashboard page. Live scan, live action, and
+     hardware-detection functions are patched to fail the test if reached.
+     Simulation and dry-run modes are asserted after every case.
+   - Six browser cases cover page boot/console errors, a complete simulated
+     scan plus dry-run action/log/clear flow, keyboard selection and Arrow-key
+     focus movement, out-of-band clear focus recovery, scan-request failure
+     recovery, and 390 px horizontal/vertical reachability.
+
+2. **Corrected event-stream cursor semantics.**
+   - A new tab now starts at the current SSE tail instead of replaying as many
+     as 500 retained events as new notifications.
+   - Genuine `Last-Event-ID` reconnects still replay only newer events.
+   - A cursor ahead of the server counter, as after a process restart, resets
+     to the current tail so future events are not stranded.
+   - Added deterministic route-level tests for all three cases.
+
+3. **Improved multi-client and keyboard behavior.**
+   - SSE-triggered status requests are coalesced to avoid request bursts.
+   - `scan_start` and `targets_cleared` now refresh other open tabs, while
+     `action_executed` refreshes the selected target's action log.
+   - Target rows preserve focus across DOM re-renders, expose `aria-current`,
+     and support Arrow Up/Down plus Home/End navigation. If another client
+     clears the focused row, focus moves to the stable Scan control.
+   - Action results expose live-region and busy state for assistive technology.
+
+4. **Made the layout resilient at narrow widths and zoom.**
+   - Replaced the fixed viewport-height calculation with a dynamic-viewport
+     flex shell.
+   - Header/status/toolbar rows wrap, detail columns become bounded responsive
+     tracks, and the event feed cannot exceed the viewport width.
+
+5. **Expanded executable CI coverage.**
+   - The dedicated dashboard job now runs on both Ubuntu and Windows with
+     Python 3.12 and installed Chrome, in addition to the existing four-cell
+     offline validator matrix.
+
+**What failed or needed correction:**
+
+- Flask's test client waits for the first streaming chunk, so the initial SSE
+  test design deadlocked before it could enqueue a new event. The tests were
+  corrected to invoke the streaming route inside a request context and drive
+  its generator directly.
+- Final review found that `min-height: 100dvh` plus hidden body overflow let the
+  mobile flex shell grow beyond the viewport and clip content. It now uses a
+  definite dynamic viewport height, and the browser test scrolls the detail
+  panel to prove the bottom action log is reachable.
+- The out-of-band clear test showed that a fresh SSE response did not flush its
+  headers until the first domain event. The stream now emits a harmless initial
+  comment, so `EventSource` becomes ready immediately without replaying history.
+- The same cross-client flow exposed focus falling back to the document body
+  when a focused target disappeared. It now moves to the stable Scan control.
+- The host had Edge rather than Chrome. The browser channel is configurable via
+  `DASHBOARD_BROWSER_CHANNEL`; local validation used `msedge`, while CI
+  explicitly uses the `chrome` channel available on hosted runners.
+
+**Safety boundaries:**
+
+- Dashboard-page HTTP(S) requests could contact only `127.0.0.1`/`localhost`;
+  no external application request was permitted.
+- No E8/TinyHawk access, serial access, firmware changes, RF transmission,
+  hardware probing, or live actions occurred.
+- Flask and Playwright were installed only into the ignored repository-local
+  `work/python312-venv` environment.
+
+**Changed files:**
+
+- `.github/workflows/validate.yml`
+- `web/requirements-e2e.txt`
+- `web/tests/test_dashboard_browser.py`
+- `web/app.py`
+- `web/templates/index.html`
+- `tools/tests/test_web_dashboard.py`
+- `SESSION-NOTES.md`
+
+**Validation:**
+
+- Browser suite on local Edge: 6/6 PASS.
+- Flask-enabled dashboard unit suite: 52/52 PASS.
+- Full tool test discovery: 484 PASS, 23 optional SITL tests skipped.
+- `python -B tools/validate-project.py`: PASS (232 files before this log update).
+- `git diff --check`: clean.
+
+**Commit/push status:** Included in the commit containing this section and
+pushed to `origin/main`; no force push or history rewrite.
+
+**Next application-engineering steps:**
+
+- Move mutable dashboard globals behind an app/state factory so separate app
+  instances and test clients cannot share scan or history state.
+- Bound and lock action and auxiliary integration histories consistently.
+- Extract inline CSS/JavaScript into versioned static assets and add a strict
+  self-only content policy once style attributes have been removed.
+- Add persistent scan-session summaries and a non-blocking cancelable progress
+  surface for longer scans.

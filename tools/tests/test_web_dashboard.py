@@ -452,8 +452,11 @@ class TestScoreAndThreatLabels(unittest.TestCase):
 @needs_flask
 class TestEventRetention(unittest.TestCase):
     def setUp(self):
-        web_app.events = []
-        web_app.next_event_id = 0
+        with web_app.events_lock:
+            web_app.events = []
+            web_app.next_event_id = 0
+        web_app.app.testing = True
+        self.client = web_app.app.test_client()
 
     def test_event_ids_remain_monotonic_after_pruning(self):
         for index in range(web_app.MAX_EVENTS + 3):
@@ -467,6 +470,56 @@ class TestEventRetention(unittest.TestCase):
         previous = ids[-1]
         web_app._push_event("test", {"index": "next"})
         self.assertEqual(web_app.events[-1]["id"], previous + 1)
+
+    def test_fresh_stream_starts_at_current_tail(self):
+        web_app._push_event("stale", {"value": "old"})
+        with web_app.app.test_request_context("/api/events"):
+            response = web_app.api_events()
+            try:
+                web_app._push_event("fresh", {"value": "new"})
+                stream = iter(response.response)
+                self.assertEqual(next(stream), ": connected\n\n")
+                chunk = next(stream)
+            finally:
+                response.close()
+
+        self.assertIn("event: fresh", chunk)
+        self.assertIn('"value": "new"', chunk)
+        self.assertNotIn("event: stale", chunk)
+
+    def test_reconnect_cursor_replays_only_newer_events(self):
+        for index in range(3):
+            web_app._push_event("test", {"index": index})
+
+        with web_app.app.test_request_context(
+                "/api/events", headers={"Last-Event-ID": "0"}):
+            response = web_app.api_events()
+            try:
+                stream = iter(response.response)
+                self.assertEqual(next(stream), ": connected\n\n")
+                chunk = next(stream)
+            finally:
+                response.close()
+
+        self.assertIn("id: 1", chunk)
+        self.assertIn('"index": 1', chunk)
+        self.assertNotIn('"index": 0', chunk)
+
+    def test_cursor_ahead_after_restart_resets_to_tail(self):
+        web_app._push_event("before_restart", {})
+        with web_app.app.test_request_context(
+                "/api/events", headers={"Last-Event-ID": "999"}):
+            response = web_app.api_events()
+            try:
+                web_app._push_event("after_restart", {"ok": True})
+                stream = iter(response.response)
+                self.assertEqual(next(stream), ": connected\n\n")
+                chunk = next(stream)
+            finally:
+                response.close()
+
+        self.assertIn("event: after_restart", chunk)
+        self.assertIn('"ok": true', chunk)
 
 
 class TestLocalhostBinding(unittest.TestCase):
@@ -623,7 +676,26 @@ class TestFrontendXSSMitigations(unittest.TestCase):
     def test_live_regions_and_reduced_motion_present(self):
         self.assertIn('role="log" aria-live="polite"', self.html)
         self.assertIn('aria-busy="true"', self.html)
+        self.assertIn('id="action-result" role="status" aria-live="polite"', self.html)
         self.assertIn("prefers-reduced-motion", self.html)
+
+    def test_cross_tab_events_are_coalesced_and_refresh_logs(self):
+        self.assertIn("function queueStatusRefresh", self.html)
+        self.assertIn("'scan_start'", self.html)
+        self.assertIn("'targets_cleared'", self.html)
+        self.assertIn("refreshActionLog(selectedTargetId)", self.html)
+
+    def test_target_keyboard_navigation_and_focus_restoration(self):
+        self.assertIn("handleTargetListKeydown", self.html)
+        self.assertIn("'ArrowDown'", self.html)
+        self.assertIn('aria-current="${selected ?', self.html)
+        self.assertIn("focusFallback?.focus({preventScroll: true})", self.html)
+        self.assertIn("document.getElementById('btn-scan')?.focus", self.html)
+
+    def test_layout_uses_dynamic_viewport_and_wrapping(self):
+        self.assertIn("height: 100dvh", self.html)
+        self.assertIn("flex-wrap: wrap", self.html)
+        self.assertIn("grid-template-columns: minmax(90px, 35%)", self.html)
 
 
 if __name__ == "__main__":

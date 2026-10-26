@@ -1246,15 +1246,33 @@ def api_hardware():
 
 @app.route("/api/events")
 def api_events():
-    """Server-Sent Events stream for real-time status updates."""
+    """Server-Sent Events stream for real-time status updates.
+
+    A brand-new browser starts at the current event tail so retained history is
+    not replayed as fresh notifications.  Genuine EventSource reconnects still
+    resume from ``Last-Event-ID``.  If the server restarted and its monotonic
+    counter is now behind the browser's cursor, reset that stale cursor to the
+    current tail so future events are delivered.
+    """
     header_last_id = request.headers.get("Last-Event-ID", type=int)
-    last_id = request.args.get(
-        "last_id", type=int,
-        default=header_last_id if header_last_id is not None else -1,
+    query_last_id = request.args.get("last_id", type=int)
+    cursor_provided = (
+        "last_id" in request.args or "Last-Event-ID" in request.headers
     )
+
+    with events_lock:
+        tail_id = events[-1]["id"] if events else -1
+        next_id = next_event_id
+
+    last_id = query_last_id if query_last_id is not None else header_last_id
+    if not cursor_provided or last_id is None or last_id >= next_id:
+        last_id = tail_id
 
     def generate():
         local_last = last_id
+        # Flush headers immediately without replaying a domain event. Browsers
+        # otherwise remain in EventSource.CONNECTING until the next event.
+        yield ": connected\n\n"
         while True:
             with events_lock:
                 new_events = [e for e in events if e["id"] > local_last]
