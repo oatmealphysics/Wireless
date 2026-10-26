@@ -3503,3 +3503,87 @@ pushed to `origin/main`; no force push or history rewrite.
   integration histories.
 - Extract inline CSS/JavaScript into versioned static assets once the UI grows
   beyond the current single-page prototype.
+
+## 57. Responsible disclosure packaging (Claude, 2026-10-26)
+
+**Starting revision:** `6d04761` (HEAD of main)
+
+**Objective:** Package the private CRSF and parser findings with exact affected
+revisions and sanitizer traces. Create a disclosure tracking system and
+sanitized advisory drafts. Keep operational payloads private until maintainers
+have acknowledged them. Track disclosure state separately from game-day
+readiness.
+
+**Scope and authorization:**
+- No hardware, serial, RF, or live-network access.
+- No Codex-owned files modified (ELRS capture validator, MSP simulator, OTA-v3
+  tools, protocol CI).
+- Preserved the absolute no-flashing rule for E8 and TinyHawk.
+
+**Actions:**
+
+1. **Surveyed all vulnerability findings across the repository.** Reviewed
+   `research/tbs-crossfire-wireless-security-audit-2026-10-20.md`,
+   `research/betaflight-442-vulnerability-audit.md`,
+   `research/betaflight-442-elrs-nonrc-failsafe-finding.md`,
+   `research/common-drone-wireless-subsystem-rce-survey-2026-10-19.md`,
+   `docs/crsf-protocol-analysis.md`, and `SECURITY.md` to inventory all
+   findings requiring coordinated disclosure.
+
+2. **Created `docs/disclosure-tracking.md`.** Central tracking document for
+   all disclosure-eligible findings. Covers:
+   - 6 findings requiring maintainer contact (DISC-01 through DISC-06)
+   - 9 already-public findings with CVEs/PRs/vendor acks (PUB-01 through PUB-09)
+   - 90-day coordinated disclosure policy
+   - Operational security rules (payloads stay under ignored `work/disclosure/`)
+   - Prioritized contact sequence (DISC-01/02 first, then DISC-04/05)
+
+3. **Created sanitized advisory drafts** in `docs/advisories/`:
+   - `DISC-01-crsf-parser-oob.md` — CRSF ecosystem routed-message parser OOB
+     read/write. Component identity withheld. Evidence: offline ASan/UBSan
+     reproduction. RF delivery unproven.
+   - `DISC-02-backpack-espnow-overflow.md` — ExpressLRS Backpack ESP-NOW MSPv2
+     stack buffer overflow. Affected: release 1.5.9 and master. Evidence:
+     offline ASan reproduction. ESP-NOW delivery source-confirmed.
+   - `DISC-03-crsf-consumer-length.md` — Two downstream CRSF consumers with
+     type-specific length-validation candidates. No fault demonstrated.
+   - `DISC-04-betaflight-failsafe-suppression.md` — Betaflight 4.4.2 SPI ELRS
+     non-RC packets refresh signal timer, suppressing failsafe. Source-derived.
+   - `DISC-05-elrs-msp-injection-design.md` — ELRS v3 + Betaflight design
+     advisory: unauthenticated MSP command injection including force-disarm,
+     reboot, GPS overwrite. Source-derived.
+
+4. **Verified operational payloads stay private.** All sanitized advisories
+   contain no trigger bytes, reproduction scripts, sanitizer traces, or
+   weaponizable payloads. Those materials are referenced as belonging under
+   ignored `work/disclosure/` paths. No UIDs, binding phrases, or device
+   secrets appear in any tracked file.
+
+**Evidence classification of disclosure materials:**
+- DISC-01: Offline-reproduced (ASan/UBSan)
+- DISC-02: Offline-reproduced (ASan)
+- DISC-03: Source review only
+- DISC-04: Source-derived
+- DISC-05: Source-derived + design analysis
+
+**Safety boundaries:**
+- No RF transmitted, no hardware accessed, no firmware modified.
+- No operational payloads committed to the repository.
+- Sanitized advisories are safe to share with maintainers.
+- CTF game-day use tracked separately from disclosure state.
+
+**Changed files:**
+- `docs/disclosure-tracking.md` (new)
+- `docs/advisories/DISC-01-crsf-parser-oob.md` (new)
+- `docs/advisories/DISC-02-backpack-espnow-overflow.md` (new)
+- `docs/advisories/DISC-03-crsf-consumer-length.md` (new)
+- `docs/advisories/DISC-04-betaflight-failsafe-suppression.md` (new)
+- `docs/advisories/DISC-05-elrs-msp-injection-design.md` (new)
+- `SESSION-NOTES.md` (this entry)
+
+**Next steps:**
+- Identify security reporting channels for each affected component.
+- Prepare private `work/disclosure/` packets with reproduction steps.
+- Send DISC-01 and DISC-02 first (highest severity, clearest reproduction).
+- Send DISC-04 and DISC-05 to Betaflight (safety-critical, source-derived).
+- Track responses and 90-day windows in `docs/disclosure-tracking.md`.
