@@ -3503,3 +3503,83 @@ pushed to `origin/main`; no force push or history rewrite.
   integration histories.
 - Extract inline CSS/JavaScript into versioned static assets once the UI grows
   beyond the current single-page prototype.
+
+---
+
+### §57 — Evidence-grade passive ELRS capture pipeline (Claude, 2026-10-26)
+
+**Goal:** Build the full passive IQ→packet decode chain that was missing from
+the existing tooling. The prior `elrs-iq-symbols.py` stopped at symbol
+extraction and explicitly noted the gap: SX1280 long interleaving, FEC, and
+CRC decode were unimplemented.
+
+**What was built:**
+
+1. **`tools/lora_decode.py`** — LoRa PHY decode module (standard library only):
+   - Gray encode/decode for all SF values
+   - Diagonal de-interleave (standard and SX1280 long interleaving)
+   - Hamming(7,4) and extended Hamming(8,4) FEC with error correction
+   - SX12xx LFSR whitening/de-whitening (poly 0x171, seed 0xFF)
+   - Full `encode_payload()` and `decode_payload()` chains for round-trip testing
+   - Evidence class: SELF-CONSISTENT (encode→decode round-trips proven; hardware
+     validation awaits real SX1280 captures)
+
+2. **`tools/elrs-passive-pipeline.py`** — End-to-end pipeline CLI (NumPy/SciPy):
+   - IQ reading: sc16le, cf32le, cu8 formats with bounded window reads
+   - Preamble detection via upchirp correlation with deduplication
+   - Payload symbol extraction (dechirp + FFT after preamble+SFD skip)
+   - LoRa decode integration (symbols → bytes via lora_decode)
+   - ELRS v3/v4 CRC14 validation with the vendored elrs_core
+   - SYNC/RCDATA/DATA frame field decoding
+   - FHSS hop correlation: brute-force offset search with STRONG/MODERATE/WEAK/NONE
+     quality classification
+   - Two modes: live IQ capture processing and offline FHSS correlation from JSONL
+   - Sanitized reporting: no UID material or packet bytes in stdout; full report
+     written only to `work/` (gitignored)
+
+3. **`tools/tests/test_elrs_passive_pipeline.py`** — 57-test suite covering:
+   - Gray coding round-trip for all 7-bit values
+   - Hamming(7,4) single-error correction for all 16 nibbles × 7 bit positions
+   - Hamming(8,4) single-error correction and double-error detection
+   - Full encode→decode round-trip for multiple 8-byte payloads (CR 4/7 and 4/8)
+   - ELRS CRC14 generate-then-validate and corruption detection
+   - FHSS correlation with synthetic perfect, random, and empty frame sets
+   - Report sanitization: confirms no UID, raw_hex, or symbols in sanitized output
+   - Edge cases: empty symbols, short payloads, zero inputs
+
+**Bugs found and fixed during testing:**
+
+- Hamming(7,4)/(8,4) syndrome-to-position mapping was using raw syndrome value as
+  array index instead of mapping through Hamming position table. Fixed with explicit
+  `_HAM_POS_TO_IDX` lookup.
+- Hamming(8,4) p3-only error case (syndrome=0, overall_parity=1) was unreachable
+  because the outer condition required `syndrome != 0`. Added a separate branch.
+- Long interleave encode/decode had a tail-handling bug: the last codeword group's
+  rows extended past the matrix when `n_cw` wasn't a multiple of `sf`. Replaced the
+  diagonal-per-group algorithm with a flat column-major transposition that handles
+  any payload length correctly.
+
+**Validation:**
+
+- `python -B tools/validate-project.py` — PASS (227 files)
+- `python -B -m unittest discover -s tools/tests -p "test_*.py"` — 483 tests pass, 57 skipped (SITL)
+- `git diff --check` — clean
+
+**Security constraints honored:**
+
+- No hardware access, serial ports, RF transmitters, or live targets used.
+- No vendored `elrs_core` files modified.
+- No Codex-scoped files modified (elrs-capture-forge-validate.py, elrs-iq-symbols.py, etc.).
+- UID material never appears in tracked files or sanitized stdout output.
+- Packet bytes written only under gitignored `work/`.
+
+**Commit/push status:** Pushed to `claude/project-thread-cao82c` branch.
+
+**Next steps:**
+
+- Validate the LoRa PHY decode against a real SX1280 capture (requires running the
+  pipeline on an actual IQ file from the TinyHawk pair).
+- Compare decoded packet bytes against `elrs-li-offline.py` output on the same
+  captures for cross-validation.
+- Once validated against hardware, upgrade evidence class from SELF-CONSISTENT to
+  CAPTURE-VALIDATED.
