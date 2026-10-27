@@ -3975,3 +3975,98 @@ pushed to `origin/main`; no force push or history rewrite.
   self-only content policy once style attributes have been removed.
 - Add persistent scan-session summaries and a non-blocking cancelable progress
   surface for longer scans.
+---
+
+### §60 — Claude handoff validation and capture-proven passive pipeline (Codex, 2026-10-27)
+
+**Starting point:** Claude's `ba8abdb` handoff reached `origin/main` through
+merge `e176dc4`. After rebasing onto `origin/main` at `3e7e480`, the three next
+steps listed in §59 were executed entirely offline against the tracked passive
+capture corpus.
+
+**Initial audit result:** The handoff's 57 synthetic encode/decode tests passed,
+but the draft was not compatible with the recorded SX1280 signal: it produced
+0/54 byte matches against the established decoder and found zero candidates in
+a bounded real-IQ window. The draft modeled a 16-symbol generic CR 4/7 path;
+the measured link uses 21 payload symbols and SX1280 mode `0x07` (4/8 long
+interleaving).
+
+**What changed:**
+
+1. Added a separately implemented, capture-validated SX1280 SF7/4-8-LI inverse
+   in `tools/lora_decode.py`, including the measured shortened opening, parity
+   layout, nibble order, and whitening sequence. Generic round-trip helpers are
+   retained but explicitly labeled synthetic.
+2. Reworked `tools/elrs-passive-pipeline.py` into an orchestrator around the
+   established `elrs-phy-scan.py` candidate extractor, the new independent byte
+   decoder, and `elrs-li-offline.py` as a byte-for-byte reference.
+3. Corrected v3 packet labels and RC unpacking, ExpressLRS binding-phrase UID
+   derivation, exact measured-frequency handling, full-file SHA-256 hashing,
+   and four-packets-per-hop FHSS timing.
+4. Made evidence grading fail closed. `CAPTURE-VALIDATED` now requires a passing
+   independent byte cross-check plus either an independently supplied UID or at
+   least two distinct CRC-valid SYNC observations. A lone self-derived SYNC,
+   duplicate inputs, duplicate observations, and single-SYNC-dependent frames
+   cannot promote evidence. FHSS correlation requires at least eight distinct
+   observations spanning two channels.
+5. Hardened all JSON inputs and reports: non-object rows, boolean bins, invalid
+   channel metadata, non-finite timestamps, and non-boolean CRC flags are
+   rejected; repeated paths/channels are rejected; raw bytes, UID material,
+   source paths, and full provenance remain confined to new files below ignored
+   `work/`; existing output files are never overwritten.
+6. Added exact per-input SHA-256 and per-frame source/line provenance to private
+   reports, kept sanitized stdout path-free, and synchronized two stale JSONL
+   entries in `captures/SHA256SUMS.txt` with the exact tracked file bytes.
+
+**Capture evidence:**
+
+- Both ranked corpora together: 62 PHY candidates, 54 CRC-valid frames, 16
+  SYNC, 38 RC, and 8 unresolved. All 54 accepted packet byte strings match
+  `elrs-li-offline.py`; mismatches and false positives are both zero.
+- Independent decoder regression: all 62 candidates at both candidate-wide bin
+  offsets, 124 comparisons total, exactly match the maintained reference.
+- Full October 15 IQ capture: SHA-256
+  `5faf27cb6b8c7261950ebf38a67034bee9223c290c49dc6f47c4f5e93f0fee2f`,
+  34 candidates, 32 CRC-valid, 10 SYNC, 22 RC, zero byte mismatches.
+- Full October 16 IQ capture: SHA-256
+  `b5898512f0d07c370b1249db870899400c309c7449e36debecf8843c513b96b5`,
+  28 candidates, 22 CRC-valid, 6 SYNC, 16 RC, zero byte mismatches.
+- A bounded 0.06-second IQ probe recovered 4/4 CRC-valid frames (1 SYNC, 3 RC)
+  and intentionally remained `CRC-VALIDATED`, because one self-derived SYNC is
+  not independent identity evidence.
+
+`CAPTURE-VALIDATED` here means that the passive PHY/byte decode is reproduced by
+two implementations over multiple tracked off-air observations. It does not
+claim live receiver acceptance, transmitter identity authentication, or measured
+multi-channel FHSS agreement.
+
+**Changed files:**
+
+- `captures/SHA256SUMS.txt`
+- `tools/elrs-passive-pipeline.py`
+- `tools/lora_decode.py`
+- `tools/tests/test_elrs_passive_pipeline.py`
+- `tools/tests/test_sx1280_capture_decode.py`
+- `SESSION-NOTES.md`
+
+**Validation:**
+
+- Focused pipeline/decoder suite: 78/78 PASS under dependency-free `python -S -B`.
+- Full tool suite: 562 PASS, 23 optional SITL tests skipped.
+- `python -B tools/validate-project.py`: PASS (236 files before this log update).
+- `git diff --check`: clean.
+- Two independent final reviews found no remaining correctness, privacy,
+  Windows/Python-3.10, or evidence-class blocker.
+
+**Safety boundary:** No hardware, serial port, RF transmission, firmware change,
+network target, or live action was used. Work was limited to tracked passive IQ
+and ranked-symbol captures, deterministic local decoding, tests, and reporting.
+
+**Commit/push status:** Corrective implementation is commit `5075c86`; this
+canonical log entry is a follow-up documentation commit. Both are intended for
+normal push to `origin/main` without force or history rewrite.
+
+**Remaining evidence work:** Strong FHSS claims still require one coherent
+multi-channel timeline, a complete independently supplied UID, and at least
+eight distinct CRC-valid observations across two or more channels. Until then,
+the pipeline reports insufficient evidence rather than promoting the result.
