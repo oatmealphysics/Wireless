@@ -1,26 +1,120 @@
-"""LoRa PHY decode: symbols → payload bytes for SX1280 ELRS captures.
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""LoRa PHY helpers and a capture-validated SX1280 4/8-LI decoder.
 
-Implements the standard LoRa decode chain:
+The generic helpers implement a conventional, configurable LoRa decode chain:
   1. Gray decode (reverse Gray coding on each symbol)
   2. De-interleave (diagonal bit-shuffle across SF symbols)
   3. Hamming FEC decode (CR-dependent error correction)
   4. De-whiten (XOR with SX12xx LFSR sequence)
 
-Parameters are configurable for SF 5-12, CR 4/5 through 4/8, and both
-standard and long interleaving modes (SX1280-specific).
+Parameters are configurable for SF 5-12, CR 4/5 through 4/8, and synthetic
+standard/long transpose modes used by the matching round-trip encoder.
 
-Evidence class: SELF-CONSISTENT (encode→decode round-trips pass; not yet
-validated against a real SX1280 capture — that is the pipeline's job).
+Those generic helpers remain SELF-CONSISTENT: their encode→decode round trips
+pass, but they are not the measured SX1280 long-interleaver mapping.  Use
+``decode_sx1280_li()`` for captured SX1280 SF7/4-8-LI symbol bins.  That
+inverse matches the separately maintained ``elrs-li-offline.py`` decoder and
+the two tracked off-air capture sets (54 CRC-valid ELRS frames out of 62 PHY
+candidates).
 
-For the live TinyHawk III (BF 4.4.2, rate_index=2, 150 Hz):
-  SF=7, BW=812500 Hz, CR=4/7, long interleaving, implicit header, no HW CRC,
-  payload = 8 bytes (OTA_Packet4_s).
+For the measured TinyHawk III link (Betaflight 4.4.2, local rate index 2,
+over-air rate code 7, 150 Hz): SF=7, BW=812500 Hz, SX1280 coding register
+0x07 (4/8 long interleaving), implicit header, no hardware CRC, and an
+8-byte ``OTA_Packet4_s`` payload.
+
+The measured map and whitening sequence in ``decode_sx1280_li()`` are
+adapted from v0l/WaveShark's empirically measured SX128x LI implementation,
+commit 62b513a7b699fd3a6928908102902abf9d9b2650, GPL-3.0-or-later:
+https://github.com/v0l/waveshark/blob/62b513a7b699fd3a6928908102902abf9d9b2650/crates/decode/src/lora_li.rs
 
 Python 3.10+, no external dependencies.
 For authorized CTF research only.
 """
 
 from __future__ import annotations
+
+
+# ---------------------------------------------------------------------------
+# Capture-validated SX1280 4/8 long-interleaver inverse
+# ---------------------------------------------------------------------------
+_SX1280_LI_SF = 7
+_SX1280_LI_WHITENING = bytes.fromhex("fffefcf8f0e1c2850b172f5ebc")
+
+
+def _sx1280_li_parity(data: list[int]) -> tuple[int, int, int, int]:
+    """Return the four measured SX1280 4/8-LI parity bits."""
+    a, b, c, d = data
+    return a ^ b ^ c, b ^ c ^ d, a ^ b ^ d, a ^ c ^ d
+
+
+def decode_sx1280_li(symbols: list[int], payload_bytes: int = 8
+                     ) -> tuple[bytes, int] | None:
+    """Decode canonical SX1280 SF7/4-8-LI bins from an off-air capture.
+
+    ``symbols`` contains relative FFT bins after preamble/sync removal and
+    any candidate-wide bin offset has already been applied.  The first eight
+    payload symbols use the SX1280's measured five-bit opening; subsequent
+    symbols use all seven SF7 bits.
+
+    Returns ``(payload, corrected_nibbles)``.  ``None`` means the measured
+    4/8 parity checks found an uncorrectable codeword.  This decoder is
+    intentionally separate from the generic round-trip helpers below: the
+    bit order, shortened opening, parity layout, nibble order, and whitening
+    bytes are capture-validated SX1280 behavior rather than a synthetic
+    transpose chosen to invert this module's encoder.
+    """
+    needed_symbols = 8 + max(0, (16 * payload_bytes - 40 + 6) // 7)
+    if len(symbols) < needed_symbols:
+        raise ValueError(
+            f"need {needed_symbols} symbols for {payload_bytes} bytes"
+        )
+
+    bits: list[int] = []
+    for symbol_index, symbol in enumerate(symbols[:needed_symbols]):
+        if not isinstance(symbol, int) or not 0 <= symbol < (1 << _SX1280_LI_SF):
+            raise ValueError("symbol bins must be integers in 0..127")
+        width = 5 if symbol_index < 8 else 7
+        deoffset = ((symbol - 1) & 0x7F) >> (_SX1280_LI_SF - width)
+        gray = deoffset ^ (deoffset >> 1)
+        bits.extend((gray >> bit) & 1 for bit in range(width))
+
+    nibble_count = 2 * payload_bytes
+    payload = bytearray(payload_bytes)
+    corrected = 0
+    for nibble_index in range(nibble_count):
+        data = [
+            bits[nibble_index + nibble_count * bit]
+            for bit in range(4)
+        ]
+        check = [
+            bits[4 * nibble_count + nibble_index + nibble_count * bit]
+            for bit in range(4)
+        ]
+        if _sx1280_li_parity(data) != tuple(check):
+            repaired = False
+            for bit in range(4):
+                trial = data.copy()
+                trial[bit] ^= 1
+                if _sx1280_li_parity(trial) == tuple(check):
+                    data = trial
+                    repaired = True
+                    break
+            if (not repaired and
+                    sum(actual != expected for actual, expected in
+                        zip(_sx1280_li_parity(data), check)) == 1):
+                repaired = True  # one parity-bit error; data is unchanged
+            if not repaired:
+                return None
+            corrected += 1
+
+        value = sum(bit << index for index, bit in enumerate(data))
+        payload[nibble_index // 2] |= value << (4 * (nibble_index % 2))
+
+    for index in range(payload_bytes):
+        payload[index] ^= _SX1280_LI_WHITENING[
+            index % len(_SX1280_LI_WHITENING)
+        ]
+    return bytes(payload), corrected
 
 
 # ---------------------------------------------------------------------------
@@ -99,15 +193,17 @@ def deinterleave_standard(symbols: list[int], sf: int, cr: int) -> list[list[int
 
 def deinterleave_long(symbols: list[int], sf: int, cr: int,
                       payload_nibbles: int) -> list[list[int]]:
-    """SX1280 long interleaving de-interleave.
+    """Synthetic long transpose used by the generic round-trip helpers.
 
-    In long interleaving mode, all codeword bits are transposed through
+    In this helper, all codeword bits are transposed through
     a (n_symbols × sf) matrix. Bits were written column-major during
     encoding; here we read the matrix row-major (from symbols) and
     extract them column-major to recover the bit stream, then split
     into ppg-bit codewords.
 
-    This is the mode ELRS uses for 150Hz (CR_LI_4_7).
+    This function is retained for compatibility with ``encode_payload()``;
+    it is not the measured SX1280 4/8-LI mapping.  Capture callers must use
+    ``decode_sx1280_li()`` instead.
     """
     ppg = cr + 4
     n_symbols = len(symbols)
@@ -255,10 +351,10 @@ def fec_decode(codewords: list[list[int]], cr: int) -> tuple[list[int], int]:
 
 
 # ---------------------------------------------------------------------------
-# Whitening (SX12xx LFSR)
+# Whitening (generic round-trip model)
 # ---------------------------------------------------------------------------
-# The SX1280 uses a whitening LFSR with polynomial x^8 + x^6 + x^5 + x^4 + 1
-# (0x171, taps at bits 4,5,6). Seed is 0xFF.
+# The generic encoder/decoder pair uses this deterministic LFSR model.  It is
+# not the capture-validated SX1280 byte sequence used by decode_sx1280_li().
 _WHITEN_POLY = 0x171
 _WHITEN_SEED = 0xFF
 
@@ -382,7 +478,8 @@ def encode_payload(payload: bytes, sf: int = 7, cr: int = 3,
                    long_interleave: bool = True) -> list[int]:
     """Encode payload bytes → LoRa symbol values (for round-trip testing).
 
-    Returns: list of Gray-coded symbol values ready for chirp modulation.
+    Returns synthetic Gray-coded values for ``decode_payload()``.  They are
+    not capture-validated SX1280 bins or ready-to-transmit PHY symbols.
     """
     # Bytes → nibbles (high nibble first)
     nibbles = []
@@ -423,7 +520,7 @@ def encode_payload(payload: bytes, sf: int = 7, cr: int = 3,
 
 
 def interleave_long(codewords: list[list[int]], sf: int) -> list[int]:
-    """Long interleave encode: codewords → symbols.
+    """Synthetic long transpose for the generic round-trip encoder.
 
     Flatten all codeword bits, write them column-major into a
     (n_symbols × sf) matrix, then read rows as symbols.

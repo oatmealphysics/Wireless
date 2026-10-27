@@ -23,6 +23,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 TOOLS = Path(__file__).resolve().parent.parent
+ROOT = TOOLS.parent
 sys.path.insert(0, str(TOOLS))
 
 import lora_decode
@@ -246,7 +247,8 @@ class TestPipelineImports(unittest.TestCase):
         self.assertEqual(mod["SF"], 7)
         self.assertEqual(mod["BW_HZ"], 812_500)
         self.assertEqual(mod["ELRS_PAYLOAD_BYTES"], 8)
-        self.assertEqual(mod["ELRS_CR"], 3)
+        self.assertEqual(mod["ELRS_CR"], 4)
+        self.assertEqual(mod["PAYLOAD_SYMBOLS"], 21)
         self.assertTrue(mod["LONG_INTERLEAVE"])
 
 
@@ -279,6 +281,8 @@ class TestDecodedFrameSanitization(unittest.TestCase):
             rc_channels=[],
             fhss_position=7,
             confidence="CRC_VALID",
+            source="C:/private/capture.jsonl",
+            source_line=17,
         )
         return frame
 
@@ -291,6 +295,12 @@ class TestDecodedFrameSanitization(unittest.TestCase):
         frame = self._make_frame()
         d = frame.to_sanitized_dict()
         self.assertNotIn("symbols", d)
+
+    def test_sanitized_strips_private_provenance(self):
+        frame = self._make_frame()
+        d = frame.to_sanitized_dict()
+        self.assertNotIn("source", d)
+        self.assertNotIn("source_line", d)
 
     def test_sanitized_strips_uid_fields(self):
         frame = self._make_frame()
@@ -314,9 +324,12 @@ class TestDecodedFrameSanitization(unittest.TestCase):
 
     def test_full_dict_includes_uid(self):
         frame = self._make_frame()
+        frame.to_sanitized_dict()
         d = frame.to_dict()
         self.assertIn("raw_hex", d)
         self.assertIn("symbols", d)
+        self.assertEqual(d["source"], "C:/private/capture.jsonl")
+        self.assertEqual(d["source_line"], 17)
         sf = d.get("sync_fields", {})
         self.assertIn("uid3", sf)
 
@@ -341,12 +354,12 @@ class TestFHSSCorrelation(unittest.TestCase):
         self.sequence = v3_build_sequence(self.uid, 80)
 
     def test_perfect_correlation(self):
-        hop_interval = 1.0 / 150.0
+        packet_interval = 1.0 / 150.0
         frames = []
         for i in range(20):
-            ch_idx = self.sequence[i % len(self.sequence)]
+            ch_idx = self.sequence[(i // 4) % len(self.sequence)]
             frame = self.DecodedFrame(
-                timestamp_s=i * hop_interval,
+                timestamp_s=i * packet_interval,
                 channel_freq_hz=2400_400_000 + ch_idx * 1_000_000,
                 channel_index=ch_idx,
                 frame_type="RCDATA",
@@ -376,11 +389,11 @@ class TestFHSSCorrelation(unittest.TestCase):
     def test_random_channels_weak_correlation(self):
         import random
         rng = random.Random(42)
-        hop_interval = 1.0 / 150.0
+        packet_interval = 1.0 / 150.0
         frames = []
         for i in range(30):
             frame = self.DecodedFrame(
-                timestamp_s=i * hop_interval,
+                timestamp_s=i * packet_interval,
                 channel_index=rng.randint(0, 79),
                 crc_valid=True,
             )
@@ -390,6 +403,37 @@ class TestFHSSCorrelation(unittest.TestCase):
         self.assertEqual(result["status"], "COMPUTED")
         # Random channels shouldn't produce strong correlation
         self.assertIn(result["quality"], ("NONE", "WEAK"))
+
+    def test_single_channel_is_insufficient(self):
+        frames = [self.DecodedFrame(
+            timestamp_s=i / 150.0,
+            channel_index=41,
+            crc_valid=True,
+        ) for i in range(12)]
+        result = self.correlate_fhss(frames, self.uid, ota_version=3)
+        self.assertEqual(result["status"], "INSUFFICIENT_OBSERVATIONS")
+        self.assertEqual(result["quality"], "NONE")
+
+    def test_duplicate_observations_cannot_inflate_correlation(self):
+        frames = []
+        for _ in range(4):
+            frames.extend([
+                self.DecodedFrame(
+                    timestamp_s=0.0,
+                    channel_index=self.sequence[0],
+                    crc_valid=True,
+                ),
+                self.DecodedFrame(
+                    timestamp_s=4.0 / 150.0,
+                    channel_index=self.sequence[1],
+                    crc_valid=True,
+                ),
+            ])
+
+        result = self.correlate_fhss(frames, self.uid, ota_version=3)
+        self.assertEqual(result["status"], "INSUFFICIENT_OBSERVATIONS")
+        self.assertEqual(result["total_observations"], 2)
+        self.assertEqual(result["unique_channels"], 2)
 
 
 class TestPipelineResult(unittest.TestCase):
@@ -423,6 +467,16 @@ class TestPipelineResult(unittest.TestCase):
         self.assertTrue(summary["capture_sha256"].endswith("..."))
         self.assertNotEqual(summary["capture_sha256"], full_hash)
 
+    def test_summary_redacts_capture_directories(self):
+        import runpy
+        mod = runpy.run_path(str(TOOLS / "elrs-passive-pipeline.py"), run_name="__test__")
+        PipelineResult = mod["PipelineResult"]
+
+        private_path = ROOT / "work" / "private-user-folder" / "capture.iq"
+        summary = PipelineResult(capture_file=str(private_path)).summary()
+        self.assertEqual(summary["capture_file"], "capture.iq")
+        self.assertNotIn(str(private_path.parent), json.dumps(summary))
+
 
 class TestELRSFrameDecode(unittest.TestCase):
     """Test ELRS frame field decoding."""
@@ -442,13 +496,13 @@ class TestELRSFrameDecode(unittest.TestCase):
         payload = bytearray(8)
         payload[0] = 0x00  # RCDATA type
         result = self.decode_elrs_frame(bytes(payload), None, ota_version=3)
-        self.assertEqual(result["type"], "RCDATA")
+        self.assertEqual(result["type"], "RC")
 
     def test_data_frame_type(self):
         payload = bytearray(8)
-        payload[0] = 0x01  # DATA type
+        payload[0] = 0x01  # MSP type in v3
         result = self.decode_elrs_frame(bytes(payload), None, ota_version=3)
-        self.assertEqual(result["type"], "DATA")
+        self.assertEqual(result["type"], "MSP")
 
     def test_short_payload_error(self):
         result = self.decode_elrs_frame(bytes(3), None, ota_version=3)
@@ -559,6 +613,32 @@ class TestLoadFramesJSONL(unittest.TestCase):
         finally:
             path.unlink()
 
+    def test_load_frames_rejects_untrusted_json_types(self):
+        import runpy
+        mod = runpy.run_path(str(TOOLS / "elrs-passive-pipeline.py"), run_name="__test__")
+        load_frames_jsonl = mod["load_frames_jsonl"]
+
+        invalid_rows = (
+            [],
+            None,
+            {"timestamp_s": 0.0, "channel_index": 41, "crc_valid": "false"},
+            {"timestamp_s": 0.0, "channel_index": "41", "crc_valid": False},
+            {"timestamp_s": 0.0, "channel_index": True, "crc_valid": False},
+            {"timestamp_s": 0.0, "channel_index": 80, "crc_valid": False},
+        )
+        for row in invalid_rows:
+            with self.subTest(row=row):
+                with tempfile.NamedTemporaryFile(
+                        mode="w", suffix=".jsonl", delete=False,
+                        encoding="utf-8") as stream:
+                    stream.write(json.dumps(row) + "\n")
+                    path = Path(stream.name)
+                try:
+                    with self.assertRaises(ValueError):
+                        load_frames_jsonl(path)
+                finally:
+                    path.unlink()
+
 
 class TestParseUID(unittest.TestCase):
 
@@ -580,6 +660,201 @@ class TestParseUID(unittest.TestCase):
         parse_uid = mod["parse_uid"]
         with self.assertRaises(ValueError):
             parse_uid("0102030405")
+
+
+class TestCaptureValidatedPipeline(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        import runpy
+        cls.mod = runpy.run_path(
+            str(TOOLS / "elrs-passive-pipeline.py"), run_name="__test__")
+
+    def test_ranked_corpus_matches_committed_baseline(self):
+        paths = [
+            ROOT / "captures" / "oct15-ranked-2026-10-16.jsonl",
+            ROOT / "captures" / "tinyhawk-rc-retry-full-phy-2026-10-16.jsonl",
+        ]
+        result = self.mod["run_ranked_pipeline"](
+            paths, cross_check=True)
+        self.assertEqual(result.total_candidates, 62)
+        self.assertEqual(result.crc_valid_frames, 54)
+        self.assertEqual(result.sync_frames, 16)
+        self.assertEqual(result.rc_frames, 38)
+        self.assertEqual(result.reference_cross_check["byte_matches"], 54)
+        self.assertEqual(result.reference_cross_check["byte_mismatches"], 0)
+        self.assertEqual(result.reference_cross_check["status"], "PASS")
+        self.assertEqual(result.evidence_class, "CAPTURE-VALIDATED")
+        self.assertEqual(len(result.input_provenance), 2)
+        self.assertEqual(
+            [item["sha256"] for item in result.input_provenance],
+            [
+                "20b59b05ae74e677e20a6e62c130402cd5ced79df8c52f1f3455375c304ffb4d",
+                "f9451c039036d65e421180e75e3c0912476d7e176a4d97aa63839bd2a8d11061",
+            ],
+        )
+        self.assertTrue(all(frame.source and frame.source_line > 0
+                            for frame in result.frames))
+
+    def test_single_self_derived_sync_is_only_crc_validated(self):
+        path = ROOT / "captures" / "oct15-ranked-2026-10-16.jsonl"
+        rows = self.mod["load_ranked_rows"]([path])
+        result = self.mod["_populate_result"](
+            self.mod["PipelineResult"](), [rows[3]], uid=None, cross_check=True)
+
+        self.assertEqual(result.crc_valid_frames, 1)
+        self.assertEqual(result.sync_frames, 1)
+        self.assertEqual(result.frames[0].crc_basis, "self_derived_sync_suffix")
+        self.assertEqual(result.reference_cross_check["status"], "PASS")
+        self.assertEqual(result.evidence_class, "CRC-VALIDATED")
+
+    def test_duplicate_self_derived_sync_cannot_inflate_evidence(self):
+        path = ROOT / "captures" / "oct15-ranked-2026-10-16.jsonl"
+        rows = self.mod["load_ranked_rows"]([path])
+        result = self.mod["_populate_result"](
+            self.mod["PipelineResult"](), [rows[3], rows[3]], uid=None,
+            cross_check=True)
+
+        self.assertEqual(result.crc_valid_frames, 2)
+        self.assertEqual(result.sync_frames, 2)
+        self.assertEqual(result.reference_cross_check["status"], "PASS")
+        self.assertEqual(result.evidence_class, "CRC-VALIDATED")
+
+    def test_repeated_ranked_path_is_rejected(self):
+        path = ROOT / "captures" / "oct15-ranked-2026-10-16.jsonl"
+        with self.assertRaisesRegex(ValueError, "paths must be unique"):
+            self.mod["run_ranked_pipeline"]([path, path])
+
+    def test_invalid_ranked_timestamps_are_rejected(self):
+        path = ROOT / "captures" / "oct15-ranked-2026-10-16.jsonl"
+        valid_row = self.mod["load_ranked_rows"]([path])[3]
+        for timestamp in ("NaN", "Infinity", -0.1, "not-a-number", True):
+            with self.subTest(timestamp=timestamp):
+                row = dict(valid_row, preamble_start_seconds=timestamp)
+                with self.assertRaisesRegex(ValueError, "finite nonnegative"):
+                    self.mod["_populate_result"](
+                        self.mod["PipelineResult"](), [row, row], uid=None,
+                        cross_check=True)
+
+    def test_ranked_rows_reject_non_objects_boolean_bins_and_bad_frequency(self):
+        with self.assertRaisesRegex(ValueError, "JSON object"):
+            self.mod["_row_bins"]([])
+        with self.assertRaisesRegex(ValueError, "21 integers"):
+            self.mod["_row_bins"]({"bins": [True] * 21})
+        for value in ("NaN", "Infinity", -1, 1.5, True, []):
+            with self.subTest(channel_hz=value):
+                with self.assertRaisesRegex(ValueError, "finite nonnegative integer"):
+                    self.mod["_row_channel_hz"]({"channel_hz": value})
+
+    def test_ranked_loader_rejects_non_object_json_line(self):
+        with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".jsonl", delete=False,
+                encoding="utf-8") as stream:
+            stream.write("[]\n")
+            path = Path(stream.name)
+        try:
+            with self.assertRaisesRegex(ValueError, "must be an object"):
+                self.mod["load_ranked_rows"]([path])
+        finally:
+            path.unlink()
+
+    def test_binding_phrase_uses_build_define_contract(self):
+        self.assertEqual(
+            self.mod["binding_phrase_uid"](
+                "default ExpressLRS binding phrase").hex(),
+            "0ab70c7c3803",
+        )
+
+    def test_private_report_is_valid_json_and_never_overwrites(self):
+        PipelineResult = self.mod["PipelineResult"]
+        work_root = ROOT / "work"
+        work_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work_root) as tmp:
+            report = Path(tmp) / "report.json"
+            result = PipelineResult(
+                capture_sha256="a" * 64,
+                input_provenance=[{
+                    "source": "C:/private/capture.iq",
+                    "sha256": "a" * 64,
+                }],
+            )
+            self.mod["write_full_report"](result, report)
+            payload = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual(payload["capture_sha256_full"], "a" * 64)
+            self.assertEqual(payload["input_provenance"], result.input_provenance)
+            self.assertIn("summary", payload)
+            self.assertIn("frames", payload)
+            with self.assertRaises(FileExistsError):
+                self.mod["write_full_report"](result, report)
+
+    def test_private_output_rejects_path_outside_work(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                self.mod["private_output"](Path(tmp) / "report.json")
+
+    def test_measured_channel_frequency_is_not_rounded(self):
+        PipelineResult = self.mod["PipelineResult"]
+        main = self.mod["main"]
+        globals_dict = main.__globals__
+        fake_result = PipelineResult(crc_valid_frames=1)
+        from unittest.mock import MagicMock
+        fake_run = MagicMock(return_value=fake_result)
+        with patch.dict(globals_dict, {
+            "run_pipeline": fake_run,
+            "write_full_report": MagicMock(),
+            "print_sanitized_report": MagicMock(),
+        }):
+            rc = main([
+                "--capture", "capture.iq",
+                "--sample-rate", "4000000",
+                "--center-hz", "2441000000",
+                "--channel-hz", "2441378800",
+                "--output-dir", str(ROOT / "work" / "cli-test-output"),
+            ])
+        self.assertEqual(rc, 0)
+        self.assertEqual(fake_run.call_args.kwargs["channel_freqs"], [2441378800])
+
+    def test_cli_rejects_duplicate_scan_channels(self):
+        with self.assertRaises(SystemExit) as context:
+            self.mod["main"]([
+                "--capture", "capture.iq",
+                "--sample-rate", "4000000",
+                "--center-hz", "2441000000",
+                "--scan-channels", "40,40",
+            ])
+        self.assertEqual(context.exception.code, 2)
+
+    def test_ranked_capture_hashes_match_manifest(self):
+        expected = {}
+        for line in (ROOT / "captures" / "SHA256SUMS.txt").read_text(
+                encoding="utf-8").splitlines():
+            digest, filename = line.split(maxsplit=1)
+            if filename.endswith(".jsonl"):
+                expected[filename] = digest.lower()
+        for filename, digest in expected.items():
+            with self.subTest(filename=filename):
+                self.assertEqual(
+                    self.mod["file_sha256"](ROOT / "captures" / filename),
+                    digest,
+                )
+
+    def test_full_capture_hashes_match_manifest_when_lfs_present(self):
+        expected = {}
+        for line in (ROOT / "captures" / "SHA256SUMS.txt").read_text(
+                encoding="utf-8").splitlines():
+            digest, filename = line.split(maxsplit=1)
+            expected[filename] = digest.lower()
+        checked = 0
+        for filename in (
+                "e8_tinyhawk_pair_on_2026-10-15_2441MHz_4Msps_rx2_sc16.iq",
+                "tinyhawk_rc_pair_20261016_retry_2441MHz_4Msps_sc16.iq"):
+            path = ROOT / "captures" / filename
+            if path.stat().st_size < 1_000_000:
+                continue  # Git LFS pointer in a minimal checkout
+            self.assertEqual(self.mod["file_sha256"](path), expected[filename])
+            checked += 1
+        if checked == 0:
+            self.skipTest("Git LFS capture objects are not present")
 
 
 if __name__ == "__main__":
