@@ -169,6 +169,94 @@ In order:
 - Exclude vendored/generated/archive material. Do not blanket-format the
   repository or install optional hardware stacks in offline validator jobs.
 
+## GATED research pathway queue
+
+R1 remains the single active implementation lane. Every RQ item below has
+status **GATED** and no active owner. Promotion requires an explicit owner
+decision and a roadmap change that moves R1 out of NOW, names the promoted
+item's implementation/review owners, and records its evidence target. Unless
+reassigned, the normal split is Codex implementation and Claude independent
+review. Merely appearing here does not authorize serial, RF, hardware, or
+live-device work.
+
+The queue was derived from the owner-provided one-screen summary, repository
+evidence, and a primary-source research pass. The linked Claude artifact
+required sign-in and was not treated as read evidence.
+
+Every promoted pathway must pin source tags or commits, hash its inputs, state
+its privacy treatment, name its evidence class, and define the next promotion
+test. Source agreement, parser success, or a valid CRC does not establish
+receiver acceptance, RF causality, device identity, or field generality.
+
+### Corrections to imported pathways
+
+- **ESP-NOW replay / CVE-2024-42483:** rename this to an enhanced-component
+  applicability and replay-semantics audit. Espressif's advisory applies to the
+  higher-level `espressif/esp-now` component through 2.5.1, whether package
+  managed or vendored, not every use of the base `esp_now_*` API. No E8 or
+  ExpressLRS applicability finding under this CVE is valid until provenance
+  proves that affected code and version are present.
+- **ESP32 hidden HCI / CVE-2025-27840:** demote this to original-ESP32
+  hosted-HCI reachability and patch attestation. Espressif states that the
+  commands cannot be triggered over Bluetooth, radio, or the Internet and that
+  ESP32-C/S/H parts are unaffected. A USB CDC port is not evidence of UART-HCI,
+  and the E8 MCU remains unconfirmed.
+- **CRSF injection:** begin with source-pinned stream conformance, differential
+  parsing, and Betaflight SITL state tests. Any later owned-device acceptance
+  check remains a separately approved, props-off bench stage.
+- **STM32F411 voltage glitching:** begin with the F411 errata, source call-site
+  mapping, and software fault-model mutation tests. Physical fault injection is
+  restricted to a separately approved expendable equivalent board; never the
+  no-flash/no-opening TinyHawk.
+- **Wideband FHSS correlation:** retain it as a hardware-gated passive path.
+  Promotion still requires one calibrated multi-channel timeline, an
+  independently supplied complete UID, and enough distinct observations; a
+  collection of unrelated single-channel captures is insufficient.
+
+Primary correction sources: [ESP-NOW replay advisory](https://github.com/espressif/esp-now/security/advisories/GHSA-wf6q-c2xr-77xj),
+[ESP-NOW component registry](https://components.espressif.com/components/espressif/esp-now/versions/2.5.2),
+[Espressif hidden-HCI follow-up](https://www.espressif.com/sites/default/files/advisory_downloads/AR2025-004_Security_Advisory_Follow-Up_Updates_and_Fixes_Regarding_ESP32_Undocumented_Bluetooth_Commands_en.pdf),
+and [STM32F411 errata](https://www.st.com/resource/en/errata_sheet/es0287-stm32f411xcxe-device-errata-stmicroelectronics.pdf).
+
+### Ranked software-first pathways
+
+| ID | Pathway | Depends on | Safe deliverable | Evidence target and promotion gate |
+|---|---|---|---|---|
+| RQ1 | **Capture corpus and timebase standardization** | Existing passive decoder and capture provenance | Adopt [SigMF](https://github.com/sigmf/SigMF) metadata for private IQ. Limit the first clock-aware event schema to the current ELRS IQ -> ranked-symbol -> frame pipeline. | `SYNTHETIC/OFFLINE-TESTED`: preserve the original file SHA-256 as provenance; record datatype, endianness, sample rate/count, and conversion; prove sample-value equivalence or a declared numeric tolerance on a sanitized fixture; validate on Windows/Linux; commit no private capture or identifier. |
+| RQ2 | **ELRS v3/v4 OTA conformance and passive version classification** | RQ1 for tracked-capture classification | Generate tag-pinned known-answer matrices for packet sizes, SYNC fields, CRC, packet-rate, and FHSS semantics from [ELRS 3.3.2 OTA](https://github.com/ExpressLRS/ExpressLRS/blob/3.3.2/src/lib/OTA/OTA.h), [3.3.2 FHSS](https://github.com/ExpressLRS/ExpressLRS/blob/3.3.2/src/lib/FHSS/FHSS.h), [4.0.0 OTA](https://github.com/ExpressLRS/ExpressLRS/blob/4.0.0/src/lib/OTA/OTA.h), and [4.0.0 FHSS](https://github.com/ExpressLRS/ExpressLRS/blob/4.0.0/src/lib/FHSS/FHSS.h); classify tracked IQ with confidence and provenance. | `SYNTHETIC/OFFLINE-TESTED`, then `PASSIVE-CAPTURE-VALIDATED` only after independent implementation agreement. Ambiguous captures stay unknown; no receiver-acceptance or transmitter-identity claim. |
+| RQ3 | **CRSF streaming conformance and differential parser testing** | Exact ExpressLRS/Betaflight/EdgeTX tags selected at promotion | Compare the commit-pinned [TBS CRSF specification](https://github.com/tbs-fpv/tbs-crsf-spec/blob/a73f7dc5386e5b8744aa4a23b3af5354ee0d4c92/crsf.md) and implementations for length bounds, truncation/noise resynchronization, optional fields, extended routing, CRC, and baud negotiation. Retain minimized offline regression corpora. | `SYNTHETIC/OFFLINE-TESTED`: deterministic sanitizer/property tests pass. A parser defect is not promoted to OTA reachability or aircraft effect. |
+| RQ4 | **Betaflight 4.4.2 / MSP API 1.45 read-only contract and SITL oracle** | Pinned 4.4.2 source; RQ3 for CRSF cases | Generate a direction- and length-aware schema from the pinned [4.4.2 MSP definitions](https://github.com/betaflight/betaflight/blob/4.4.2/src/main/msp/msp_protocol.h). The probe may encode only allowlisted read/query IDs with their exact required request payloads; it has no setter, CLI, reset, bootloader, passthrough, EEPROM, calibration, or motor-command encoder path. Use [SITL](https://betaflight.com/docs/development/SITL) for negotiation, malformed-frame, RXLOSS, and version-specific failsafe tests. | `SYNTHETIC/OFFLINE-TESTED` first. Any COM5 comparison requires explicit approval, props removed, allowlist enforcement, and no configuration write. |
+| RQ5 | **Blackbox/RF/CRSF timeline fusion and health analytics** | RQ1, RQ3, RQ4, and existing/synthetic logs | Align passive packet gaps and link statistics with [Blackbox](https://betaflight.com/docs/wiki/guides/current/Black-Box-logging-and-usage) state, RXLOSS/failsafe transitions, DShot telemetry errors, RPM imbalance, and reset markers. | `SYNTHETIC/OFFLINE-TESTED`, then `PASSIVE-CAPTURE-VALIDATED`: report clock offset, drift, dropout, and alignment residuals. Correlation is not called causation; fresh device-log retrieval remains gated. |
+| RQ6 | **Firmware provenance, SBOM, and feature reachability** | Candidate source tree or firmware artifact | Produce parse-only manifests for chip/board, firmware/framework version, Git identity, build options, hashes, dependencies, and transports. Record component presence, affected-version match, feature enablement, and reachability as separate confirmed/absent/unknown fields. | `SOURCE-DERIVED`: no advisory is marked applicable without all required evidence; missing reachability evidence is `unknown`, not `not applicable`. Never flash or sign. This gate controls every ESP CVE lane. |
+| RQ7 | **STM32F411 errata-to-source conformance** | Pinned Betaflight 4.4.2 and ST documents | Map SPI/SX1280, USB OTG, DMA, timer, timeout, reset, and watchdog call sites to [ES0287](https://www.st.com/resource/en/errata_sheet/es0287-stm32f411xcxe-device-errata-stmicroelectronics.pdf); add mocks for the exact documented failure conditions. | `SOURCE-DERIVED` and `SYNTHETIC/OFFLINE-TESTED`; do not infer a device observation, general fault susceptibility, or physical-glitch result. |
+| RQ8 | **Software safety fault-model mutation** | RQ4 state model | Simulate skipped checks, corrupted branch outcomes, timeout failures, resets, and watchdog events around safety-critical state transitions without modeling a physical injection apparatus. | `SYNTHETIC/OFFLINE-TESTED` only. Results are not labeled silicon errata, device evidence, or voltage-glitch susceptibility. |
+| RQ9 | **OpenDroneID multi-transport/dialect parser corpus** | Official sample pcaps and pinned reference source | Cross-check BLE/Wi-Fi transport framing, message fields, units, versions, duplicates, and redaction through the [OpenDroneID C reference](https://github.com/opendroneid/opendroneid-core-c) and [Wireshark dissector](https://github.com/opendroneid/wireshark-dissector). | `SYNTHETIC/OFFLINE-TESTED` against official fixtures. Parsing an Authentication message is not signature or identity trust; redact IDs/coordinates and gate live ambient capture separately. |
+| RQ10 | **DRIP authentication and trust-state verifier** | RQ9 plus pinned RFC test vectors, keys/trust roots, and registry/DNS snapshots | Verify syntax, signatures, freshness/replay, Manifest/Wrapper binding, and registry-chain state using [RFC 9374](https://www.rfc-editor.org/rfc/rfc9374.html) and [RFC 9575](https://www.rfc-editor.org/rfc/rfc9575.html). Report separate syntactically valid, signature-valid, identity-trusted, unsigned/unverifiable, stale, conflicting, and invalid states. | `SYNTHETIC/OFFLINE-TESTED`: every verdict identifies its test vector, key/trust-root snapshot, and unavailable dependency. Unsigned is not mislabeled spoofed; no live registry query by default. |
+| RQ11 | **MAVLink generated-contract and gap audit** | Existing repository MAVLink signing/replay tools; a maintained module scope approved at promotion | Generate missing message ID/length/field/`CRC_EXTRA` contracts from official dialect XML, then close uncovered routing, ACK-state, and log-redaction gaps using synthetic fixtures. Follow the official [signing](https://mavlink.io/en/guide/message_signing.html) and [routing](https://mavlink.io/en/guide/routing.html) rules. | `SYNTHETIC/OFFLINE-TESTED`: do not duplicate already-covered signing/replay tests; use no real key material, `SETUP_SIGNING` payload, or external link. Lower relevance to the current Betaflight target. |
+| RQ12 | **CFO and waveform residuals as capture QA** | RQ1 | Extract CFO, SFO/chirp-slope residuals, baseline bins, and decoder confidence from existing private IQ to detect capture drift and calibration problems. | `PASSIVE-CAPTURE-VALIDATED` only as capture QA. A device-fingerprinting claim requires a predeclared, held-out multi-device/multi-session design spanning relevant temperatures, locations, and calibrated receivers; studies show [CFO drift](https://arxiv.org/abs/2101.01668) and strong [channel/configuration/receiver sensitivity](https://ieeexplore.ieee.org/document/9580899). |
+| RQ13 | **Conditional ESP patch-differential corpus** | RQ6 confirms exact applicability | Reproduce fixed/affected behavior in offline source tests only for proven components and configurations: [CVE-2024-42484](https://github.com/espressif/esp-now/security/advisories/GHSA-q6f6-4qc5-vhx5), native ESP-IDF [CVE-2025-52471](https://github.com/espressif/esp-idf/security/advisories/GHSA-hqhh-cp47-fv5g), BLE provisioning [CVE-2026-25507](https://github.com/espressif/esp-idf/security/advisories/GHSA-h7r3-gmg9-xjmg) / [CVE-2026-25508](https://github.com/espressif/esp-idf/security/advisories/GHSA-9j5x-rf36-54x9), or SoftAP DHCP [CVE-2026-45160](https://github.com/espressif/esp-idf/security/advisories/GHSA-g764-gwc3-75m5). | `SYNTHETIC/OFFLINE-TESTED`: synthetic packets and local processes only; never present these as blanket ESP32 or E8 findings. |
+| RQ14 | **Adjacent-stack schema and topology health** | A demonstrated owned-platform or fixture need | Add offline DSDL/transfer-ID checks for [DroneCAN](https://dronecan.github.io/Specification/6._Application_level_functions/), bounded component-metadata parsing, and firmware-envelope provenance only for ecosystems actually added to the project. | `SYNTHETIC/OFFLINE-TESTED`: keep adapters dormant until needed; no CAN or external metadata fetch by default. |
+
+If the owner explicitly promotes a research task and moves R1 out of NOW, start
+with RQ1, then RQ2-RQ4. RQ5-RQ8 are the next target-specific evidence paths.
+RQ9-RQ14 are useful expansion paths, not reasons to delay current work.
+
+### Hardware queue
+
+- **SX1280 receive-only CAD/coexistence profiler:** model thresholds offline;
+  later use a dev board strictly as a receiver. CAD occupancy is not transmitter
+  attribution and is not a substitute for a wideband SDR.
+- **Wideband FHSS/Gemini/DVDA correlation:** first use a calibrated SDR for
+  UID-free occupancy, hop-timing, and coexistence measurements on one coherent
+  multi-channel timeline. UID-dependent source-model agreement is a later gate
+  requiring an independently supplied complete UID and enough distinct
+  observations. No TX or injection is part of either stage.
+- **Physical STM32F411 fault injection:** requires a sacrificial equivalent
+  board, a bounded rig, and a new explicit decision. The TinyHawk is excluded.
+- **Live Remote ID, DroneCAN, or proprietary DroneID validation:** requires the
+  appropriate receiver/adapter and an owned transmitter/node, plus privacy
+  handling. Official sample captures remain suitable for offline work now.
+
 ## LATER
 
 - Persistent scan-session summaries and cancelable simulated/offline progress.

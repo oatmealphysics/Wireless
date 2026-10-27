@@ -4151,3 +4151,62 @@ behind an explicit state/application factory and prove that two app instances
 cannot share targets, histories, event cursors, scan state, hardware cache, or
 Chain 2 state. R2 then locks and bounds all histories under that ownership
 model.
+
+---
+
+## 63. Primary-source research expansion of the canonical roadmap (Codex, 2026-10-27)
+
+**Objective:** The owner supplied Claude's one-screen research summary and
+asked for a deeper research pass, assessment, and additions to the singular
+guiding document. The linked Claude artifact required sign-in, so the pasted
+summary and repository evidence were used as the imported baseline; the
+artifact itself was not represented as read.
+
+**Starting revision:** `272d37c`. A fresh `git pull --rebase origin main`
+reported that the clean `main` checkout was already up to date before edits.
+
+**Research outcome:** Three independent primary-source passes covered radio and
+protocol work, ESP/STM32 hardware and firmware, and adjacent drone stacks. The
+result is now integrated directly into `PROJECT-ROADMAP.md`; no competing plan
+was created. The roadmap adds a ranked, fully gated software-first queue
+RQ1-RQ14 and a separate hardware queue while preserving R1 as the single active
+implementation lane. Promotion requires an explicit roadmap status change and
+named owners, dependencies, evidence target, and acceptance gate.
+
+**Material corrections:**
+
+1. CVE-2024-42483 is scoped to the higher-level `espressif/esp-now` component
+   through 2.5.1, whether package managed or vendored, not every use of the
+   base ESP-NOW API. A provenance/SBOM and feature-reachability manifest is now
+   a mandatory prerequisite.
+2. Espressif states that CVE-2025-27840 is not triggerable over Bluetooth,
+   radio, or the Internet, affects only the original ESP32 chip, and is a
+   second-stage hosted-HCI/physical-access concern. It was demoted from a radio
+   pathway to reachability and patch attestation.
+3. CRSF work now begins with differential parser conformance and Betaflight
+   SITL, not an injection claim. Physical STM32 fault work begins with errata
+   mapping and synthetic mutation tests, and the TinyHawk remains excluded.
+4. The highest-value new research candidates are SigMF capture provenance and
+   clock normalization, ELRS cross-version known-answer testing, CRSF parser
+   conformance, and a generated read-only MSP API 1.45 contract backed by
+   Betaflight 4.4.2 SITL.
+
+**Safety boundary:** This pass used public documentation, official source,
+standards, and read-only repository inspection. It did not access serial ports,
+hardware, RF, private captures, credentials, firmware, external targets, or
+state-changing services. Future hardware/serial/RF stages remain explicitly
+gated in the roadmap.
+
+**Changed files:** `PROJECT-ROADMAP.md` and this log.
+
+**Validation:** Three independent research passes and one independent final
+roadmap review completed. `python -B tools/validate-project.py` passed all 252
+tracked-file checks, including syntax, JSON, corpus/provenance data, CVE
+coverage, and local links. `git diff --check` passed.
+
+**Commit/push status:** These documentation changes are prepared for a normal
+commit and push to `origin/main`; no force push or history rewrite is used.
+
+**Next task:** R1 remains active. RQ1 (capture corpus and timebase
+standardization) becomes the first research candidate only after an explicit
+owner decision moves R1 out of NOW; RQ2-RQ4 follow it.
