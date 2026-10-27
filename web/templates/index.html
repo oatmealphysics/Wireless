@@ -550,11 +550,12 @@ body {
   color: var(--text-dim);
   cursor: pointer;
   transition: border-color 0.15s;
-  position: relative;
   font-family: inherit;
 }
 
 .hw-widget:hover { border-color: var(--accent); }
+
+.hw-widget-wrap { position: relative; }
 
 .hw-widget-title {
   font-weight: 600;
@@ -579,6 +580,7 @@ body {
 
 .hw-dot.available { background: var(--green); }
 .hw-dot.unavailable { background: var(--red); }
+.hw-dot.not-checked { background: var(--yellow); }
 .hw-dot.checking { background: var(--yellow); animation: pulse 1s infinite; }
 
 .hw-popover {
@@ -807,13 +809,15 @@ body {
   <button type="button" class="btn" id="btn-clear">Clear</button>
   <span style="flex:1"></span>
   <span id="mode-badge" style="font-size:11px; color:var(--text-dim)"></span>
-  <button type="button" class="hw-widget" id="hw-widget" aria-expanded="false" aria-haspopup="true">
-    <span class="hw-widget-title">HW</span>
-    <span class="hw-item" id="hw-wifi-indicator"><span class="hw-dot checking"></span><span>WiFi</span></span>
-    <span class="hw-item" id="hw-ble-indicator"><span class="hw-dot checking"></span><span>BLE</span></span>
-    <span class="hw-item" id="hw-sdr-indicator"><span class="hw-dot checking"></span><span>SDR</span></span>
-    <span class="hw-item" id="hw-mav-indicator"><span class="hw-dot checking"></span><span>MAV</span></span>
-    <div class="hw-popover" id="hw-popover" role="tooltip">
+  <div class="hw-widget-wrap" id="hw-widget-wrap">
+    <button type="button" class="hw-widget" id="hw-widget" aria-expanded="false" aria-controls="hw-popover">
+      <span class="hw-widget-title">HW</span>
+      <span class="hw-item" id="hw-wifi-indicator"><span class="hw-dot checking"></span><span>WiFi</span></span>
+      <span class="hw-item" id="hw-ble-indicator"><span class="hw-dot checking"></span><span>BLE</span></span>
+      <span class="hw-item" id="hw-sdr-indicator"><span class="hw-dot checking"></span><span>SDR</span></span>
+      <span class="hw-item" id="hw-mav-indicator"><span class="hw-dot checking"></span><span>MAV</span></span>
+    </button>
+    <div class="hw-popover" id="hw-popover" role="region" aria-label="Hardware status">
       <h4>Hardware Status</h4>
       <div id="hw-popover-body">
         <div style="color:var(--text-dim);font-size:12px;padding:8px 0">Detecting hardware...</div>
@@ -822,7 +826,7 @@ body {
         <button type="button" class="btn btn-sm" id="hw-refresh-btn">Refresh</button>
       </div>
     </div>
-  </button>
+  </div>
 </div>
 
 <div class="main">
@@ -1474,39 +1478,55 @@ function updateHwIndicators(data, indicators) {
     const el = indicators[key];
     if (!el || !info) continue;
     const dot = el.querySelector('.hw-dot');
-    if (dot) dot.className = 'hw-dot ' + (info.available ? 'available' : 'unavailable');
+    const display = hardwareDisplayState(info, key);
+    if (dot) dot.className = 'hw-dot ' + display.dotClass;
+    el.setAttribute('aria-label', `${key}: ${display.text}`);
   }
+}
+
+function hardwareDisplayState(info, kind) {
+  if (info?.status === 'not_checked') {
+    return { dotClass: 'not-checked', text: 'Not checked', color: 'var(--yellow)' };
+  }
+  if (kind === 'mavlink' && info?.status === 'listener_ready') {
+    return { dotClass: 'available', text: 'Listener ready', color: 'var(--green)' };
+  }
+  if (info?.available) {
+    return { dotClass: 'available', text: 'Detected', color: 'var(--green)' };
+  }
+  return { dotClass: 'unavailable', text: 'Unavailable', color: 'var(--red)' };
 }
 
 function renderHwPopover(data) {
   const body = document.getElementById('hw-popover-body');
   if (!body) return;
 
+  const simulationNotice = data.mode === 'simulation'
+    ? '<div class="hw-popover-detail" style="margin-bottom:8px;color:var(--yellow)">Simulation mode — hardware probes disabled.</div>'
+    : '';
+
   const rows = [
-    { label: 'WiFi', info: data.wifi, detail: () => {
+    { key: 'wifi', label: 'WiFi', info: data.wifi, detail: () => {
       const ifaces = data.wifi?.interfaces || [];
-      return ifaces.length ? ifaces.join(', ') : (data.wifi?.error || 'Not detected');
+      return ifaces.length ? ifaces.join(', ') : (data.wifi?.note || data.wifi?.error || 'Not detected');
     }},
-    { label: 'Bluetooth LE', info: data.ble, detail: () => {
+    { key: 'ble', label: 'Bluetooth LE', info: data.ble, detail: () => {
       const ifaces = data.ble?.interfaces || [];
       const note = data.ble?.note || '';
-      return ifaces.length ? ifaces.join(', ') + (note ? ` (${note})` : '') : (data.ble?.error || 'Not detected');
+      return ifaces.length ? ifaces.join(', ') + (note ? ` (${note})` : '') : (note || data.ble?.error || 'Not detected');
     }},
-    { label: 'SDR (SoapySDR)', info: data.sdr, detail: () => {
+    { key: 'sdr', label: 'SDR (SoapySDR)', info: data.sdr, detail: () => {
       const devs = data.sdr?.devices || [];
-      return devs.length ? devs.join(', ') : (data.sdr?.error || 'Not detected');
+      return devs.length ? devs.join(', ') : (data.sdr?.note || data.sdr?.error || 'Not detected');
     }},
-    { label: 'MAVLink UDP', info: data.mavlink, detail: () => {
+    { key: 'mavlink', label: 'MAVLink UDP', info: data.mavlink, detail: () => {
       const ports = data.mavlink?.bindable_ports || [];
       return ports.length ? `Ports: ${ports.join(', ')}` : (data.mavlink?.note || 'Available');
     }},
   ];
 
-  body.innerHTML = rows.map(r => {
-    const avail = r.info?.available;
-    const dotCls = avail ? 'available' : 'unavailable';
-    const statusText = avail ? 'Connected' : 'Unavailable';
-    const statusColor = avail ? 'var(--green)' : 'var(--red)';
+  body.innerHTML = simulationNotice + rows.map(r => {
+    const display = hardwareDisplayState(r.info, r.key);
     return `
       <div class="hw-popover-row">
         <div>
@@ -1514,14 +1534,15 @@ function renderHwPopover(data) {
           <div class="hw-popover-detail">${escHtml(r.detail())}</div>
         </div>
         <div class="hw-popover-status">
-          <span class="hw-dot ${dotCls}"></span>
-          <span style="color:${statusColor}">${statusText}</span>
+          <span class="hw-dot ${display.dotClass}"></span>
+          <span style="color:${display.color}">${display.text}</span>
         </div>
       </div>`;
   }).join('');
 }
 
 function initHwWidget() {
+  const wrapper = document.getElementById('hw-widget-wrap');
   const widget = document.getElementById('hw-widget');
   const popover = document.getElementById('hw-popover');
   const refreshBtn = document.getElementById('hw-refresh-btn');
@@ -1538,7 +1559,7 @@ function initHwWidget() {
   });
 
   document.addEventListener('click', (e) => {
-    if (!widget.contains(e.target)) {
+    if (!wrapper.contains(e.target)) {
       popover.classList.remove('open');
       widget.setAttribute('aria-expanded', 'false');
     }

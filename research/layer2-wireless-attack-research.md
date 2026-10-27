@@ -9,7 +9,8 @@ Not yet a committed design; pending timeline and approach selection.
 > The owner selected the E8–TinyHawk ELRS control link as the first benchmark
 > and paused WiFi entry, WiFi-mode forcing, and RF disruption. The E8's WiFi
 > capability and the assumptions in the controller-WiFi chain below were not
-> validated on this unit. Follow `SESSION-NOTES.md` §20 for current work.
+> validated on this unit. `SESSION-NOTES.md` §20 is historical; follow
+> `PROJECT-ROADMAP.md` for current work.
 
 **Context:** Architectural brainstorming for a hands-on research and implementation
 program covering WiFi and Bluetooth/BLE attacks against drone controllers and

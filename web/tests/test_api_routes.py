@@ -250,10 +250,34 @@ class TestHardwareEndpoint(unittest.TestCase):
     def setUp(self) -> None:
         self.client = make_flask_client(web_app)
 
-    def test_hardware_returns_200(self) -> None:
-        with patch.object(web_app, "detect_hardware", return_value={"wifi": {"available": False}}):
+    def test_simulation_hardware_never_probes_host(self) -> None:
+        with patch.object(
+            web_app,
+            "detect_hardware",
+            side_effect=AssertionError("simulation attempted a hardware probe"),
+        ) as detector:
             resp = self.client.get("/api/hardware")
         self.assertEqual(resp.status_code, 200)
+        detector.assert_not_called()
+        data = resp.get_json()
+        self.assertEqual(data["mode"], "simulation")
+        self.assertFalse(data["probe_performed"])
+        for category in ("wifi", "ble", "sdr", "mavlink"):
+            self.assertEqual(data[category]["status"], "not_checked")
+
+    def test_live_hardware_route_uses_detector(self) -> None:
+        web_app.simulate_mode = False
+        self.addCleanup(setattr, web_app, "simulate_mode", True)
+        detected = {
+            "mode": "live",
+            "probe_performed": True,
+            "wifi": {"available": False},
+        }
+        with patch.object(web_app, "detect_hardware", return_value=detected) as detector:
+            resp = self.client.get("/api/hardware")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json(), detected)
+        detector.assert_called_once_with()
 
 
 @needs_flask

@@ -4,6 +4,10 @@ Wireless security research toolkit for drone CTF competition. Covers reconnaissa
 
 **For authorized CTF research and security testing against hardware you own.** See [SECURITY.md](SECURITY.md) for the full authorization boundary and safety guardrails.
 
+Current work is coordinated through the [project roadmap](PROJECT-ROADMAP.md).
+It is the sole active priority and status source; `SESSION-NOTES.md` is the
+append-only evidence log.
+
 ## Prerequisites
 
 - **Python 3.10+** (3.12 recommended)
@@ -97,15 +101,20 @@ python3 -B tools/validate-project.py
 # Tool unit tests
 python3 -B -m unittest discover -s tools/tests -p "test_*.py" -v
 
-# Web dashboard API tests
+# Web dashboard backend tests
 python3 -m pip install -r web/requirements-e2e.txt
 python3 -B -m unittest discover -s tools/tests -p "test_web_dashboard.py" -v
+
+# Web dashboard route tests
+python3 -B -m unittest discover -s web/tests -p "test_api_routes.py" -v
 
 # Web dashboard browser tests (Playwright + Chrome)
 python3 -B -m unittest discover -s web/tests -p "test_dashboard_browser.py" -v
 ```
 
-CI runs these on every push and pull request across Ubuntu and Windows with Python 3.10 and 3.12. See [`.github/workflows/validate.yml`](.github/workflows/validate.yml).
+CI runs the offline validator/tool suite on Ubuntu and Windows with Python 3.10
+and 3.12. Dashboard backend, route, and browser checks run on both operating
+systems with Python 3.12. See [`.github/workflows/validate.yml`](.github/workflows/validate.yml).
 
 ## Project Structure
 
@@ -174,6 +183,7 @@ See [SECURITY.md](SECURITY.md) for the full review requirements.
 
 ## Key References
 
+- [Current project roadmap](PROJECT-ROADMAP.md)
 - [Security and safety guardrails](SECURITY.md)
 - [Wireless vulnerability reference](drone-wireless-vuln-reference.md)
 - [Research plan](attack-research-plan.md)

@@ -40,6 +40,7 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install --disable-pip-version-check -r web/requirements-e2e.txt
       - run: python -B -m unittest discover -s tools/tests -p "test_web_dashboard.py" -v
+      - run: python -B -m unittest discover -s web/tests -p "test_api_routes.py" -v
       - run: python -B -m unittest discover -s web/tests -p "test_dashboard_browser.py" -v
         env:
           DASHBOARD_BROWSER_CHANNEL: chrome

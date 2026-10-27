@@ -43,7 +43,11 @@ python3 web/app.py --wifi-iface wlan0mon --ble-iface hci0 --sdr-args "driver=uhd
 | `--ble-iface` | `hci0` | Bluetooth HCI device |
 | `--sdr-args` | `driver=uhd` | SoapySDR device arguments |
 
-The `/api/hardware` endpoint returns the detected hardware status as JSON.
+The `/api/hardware` endpoint returns hardware status as JSON. In simulation it
+returns deterministic `not_checked` entries and performs no subprocess, BLE,
+SDR, or socket probes. In live mode, opening the page or pressing **Refresh**
+runs the local detector. MAVLink status means only that a UDP listener can bind;
+it does not prove that a peer or hardware device is connected.
 
 ## Dashboard Features
 
@@ -98,7 +102,7 @@ The dashboard uses Server-Sent Events (SSE) at `/api/events` for live updates. E
 | `/api/actions` | GET | All action definitions |
 | `/api/log` | GET | Last 50 action log entries |
 | `/api/clear` | POST | Clear all discovered targets |
-| `/api/hardware` | GET | Detected hardware status |
+| `/api/hardware` | GET | Hardware status; deterministic and probe-free in simulation |
 | `/api/events` | GET | SSE stream for real-time updates |
 
 ## Testing
@@ -107,6 +111,7 @@ The dashboard uses Server-Sent Events (SSE) at `/api/events` for live updates. E
 
 ```bash
 python3 -m unittest discover -s tools/tests -p "test_web_dashboard.py" -v
+python3 -m unittest discover -s web/tests -p "test_api_routes.py" -v
 ```
 
 ### Browser tests (Playwright + Chrome)

@@ -1,4 +1,4 @@
-<title>Codex Task Descriptions</title>
+<title>Historical Codex Task Descriptions</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap">
 <style>
@@ -228,8 +228,15 @@ code {
 
 <div class="wrap">
 
-<h1>Codex Task Descriptions</h1>
-<p class="subtitle">Self-contained tasks split between Codex (safe infrastructure) and Claude (security-adjacent). Each can be completed independently.</p>
+<h1>Historical Codex Task Descriptions</h1>
+<p class="subtitle">Claude's original 2026-10-26 task inventory. It is preserved for context and copyable task detail; it is not the active backlog.</p>
+
+<div class="note">
+  <strong>Canonical roadmap:</strong> Current priorities, status, dependencies,
+  evidence gates, and next-task selection live in
+  <a href="PROJECT-ROADMAP.md"><code>PROJECT-ROADMAP.md</code></a>. Several tasks
+  below landed in later PRs or were re-scoped after code and test review.
+</div>
 
 <div class="note">
   <strong>Repo structure:</strong> Flask app in <code>web/</code>, Python tools in <code>tools/</code>, tests in <code>tools/tests/</code>, CI in <code>.github/workflows/validate.yml</code>. No <code>pyproject.toml</code> or <code>requirements.txt</code> exists yet.

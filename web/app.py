@@ -90,10 +90,49 @@ def _finish_scan() -> None:
 
 # --- Hardware detection ---
 
+def simulated_hardware_status() -> dict[str, Any]:
+    """Return deterministic status without touching host hardware or sockets."""
+    note = "Simulation mode: hardware probe disabled"
+    return {
+        "mode": "simulation",
+        "probe_performed": False,
+        "wifi": {
+            "available": False,
+            "status": "not_checked",
+            "interfaces": [],
+            "default": None,
+            "note": note,
+        },
+        "ble": {
+            "available": False,
+            "status": "not_checked",
+            "interfaces": [],
+            "default": None,
+            "note": note,
+        },
+        "sdr": {
+            "available": False,
+            "status": "not_checked",
+            "devices": [],
+            "default_args": "",
+            "note": note,
+        },
+        "mavlink": {
+            "available": False,
+            "status": "not_checked",
+            "bindable_ports": [],
+            "note": "Simulation mode: UDP listener readiness not checked",
+        },
+    }
+
+
 def detect_hardware() -> dict[str, Any]:
     """Probe for available scanner hardware. Results cached in hw_status."""
     global hw_status
-    checks = {}
+    checks: dict[str, Any] = {
+        "mode": "live",
+        "probe_performed": True,
+    }
 
     # WiFi interface
     try:
@@ -177,10 +216,12 @@ def detect_hardware() -> dict[str, Any]:
             mavlink_ports.append(port)
         except OSError:
             pass
+    listener_ready = bool(mavlink_ports)
     checks["mavlink"] = {
-        "available": True,
+        "available": listener_ready,
+        "status": "listener_ready" if listener_ready else "unavailable",
         "bindable_ports": mavlink_ports,
-        "note": "UDP listener (no hardware needed)",
+        "note": "UDP listener readiness only; no peer or hardware was detected",
     }
 
     hw_status = checks
@@ -1244,6 +1285,10 @@ def api_clear() -> tuple[Response, int] | Response:
 
 @app.route("/api/hardware")
 def api_hardware() -> Response:
+    global hw_status
+    if simulate_mode:
+        hw_status = simulated_hardware_status()
+        return jsonify(hw_status)
     return jsonify(detect_hardware())
 
 

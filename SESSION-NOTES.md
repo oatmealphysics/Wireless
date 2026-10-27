@@ -22,6 +22,12 @@ conclusion, append a correction and name the superseded section. Never place a
 credential, pairing UID, raw private response, identifying capture, or other
 secret in this tracked log; point to an ignored `work/` location instead.
 
+> **Current roadmap notice (2026-10-27):** `PROJECT-ROADMAP.md` is the sole
+> active priority and status source. This file remains the append-only evidence
+> and handoff log. Historical "way ahead" and "next steps" sections below are
+> preserved but do not activate or reprioritize work; see §62 for the
+> consolidation decision.
+
 ## THE WAY AHEAD — read this first
 
 **Current owner decision (2026-10-15): §20 supersedes earlier WiFi-first and
@@ -4070,3 +4076,78 @@ normal push to `origin/main` without force or history rewrite.
 multi-channel timeline, a complete independently supplied UID, and at least
 eight distinct CRC-valid observations across two or more channels. Until then,
 the pipeline reports insufficient evidence rather than promoting the result.
+
+---
+
+## 62. Canonical roadmap and probe-free dashboard simulation (Codex, 2026-10-27)
+
+**Starting point and objective:** Work resumed at local revision `de42c67`
+(`origin/main` `3e7e480`) after a fresh successful `git pull --rebase`. The
+owner asked for Claude's comprehensive way-forward document to be assessed,
+corrected, and used as one guiding document, then asked to proceed immediately.
+
+**Roadmap assessment:** Three independent read-only passes compared Claude's
+`codex-tasks.html` inventory with the current code, merged PRs, tests, and this
+evidence log. The inventory is useful, but later PRs completed or partially
+completed many of its 20 cards; several remaining tasks overlap, have stale
+premises, or would cause unnecessary whole-repository churn. The older
+`session-notes-2026-10-25.md` way-forward text was already incorporated with
+corrections in §53 and is historical.
+
+**What changed:**
+
+1. Added `PROJECT-ROADMAP.md` as the sole current priority/status source. It
+   preserves Claude's task IDs, records Done/Partial/Changed/Deferred decisions,
+   orders the safe offline backlog, defines acceptance/evidence gates, and
+   separates active work from hardware/RF/serial/receiver-acceptance work.
+2. Updated `AGENTS.md` and `README.md` to point to the roadmap. Preserved
+   `SESSION-NOTES.md` as the canonical append-only evidence/handoff log rather
+   than a competing active backlog. Marked `codex-tasks.html` as the historical
+   source inventory and linked the maintained roadmap.
+3. Used the roadmap to select and complete R0. In simulation,
+   `/api/hardware` now returns deterministic `not_checked` data and never calls
+   `detect_hardware()`. Page startup and manual refresh therefore do not run
+   local subprocess, BLE, SDR, or UDP-bind probes.
+4. Changed the hardware widget to show a yellow `Simulation / Not checked`
+   state rather than claiming devices are connected or unavailable. Live mode
+   still delegates to the detector. MAVLink status now means only UDP-listener
+   readiness and explicitly does not claim a connected peer or hardware device.
+5. Removed invalid nested-button markup from the widget and added route/browser
+   regressions whose hardware detector guard raises if simulation reaches it.
+
+**What this establishes:** R0 is `SYNTHETIC/OFFLINE-TESTED`. The dashboard's
+documented no-hardware simulation boundary is now an executable invariant at
+both route and browser levels. It does not make any claim about live detector
+accuracy or connected hardware.
+
+**Validation:**
+
+- Focused Flask API suite: 38/38 PASS.
+- Loopback Playwright/Edge browser suite: 11/11 PASS, including page load,
+  manual hardware refresh, mobile reachability, focus recovery, actions, and
+  logs.
+- Full tool suite: 648 PASS, 23 optional SITL tests skipped.
+- `python -B tools/validate-project.py`: PASS (252 files before this entry).
+- `git diff --check`: clean.
+
+**Safety and private data:** No hardware, serial port, RF transmission,
+firmware change, external target, or live action was used. Browser traffic was
+restricted to loopback. No private identifier or capture was read or added.
+
+**Changed files:** `PROJECT-ROADMAP.md`, `AGENTS.md`, `README.md`,
+`.github/workflows/validate.yml`, `codex-tasks.html`,
+`session-notes-2026-10-25.md`,
+`research/layer2-wireless-attack-research.md`, `web/app.py`,
+`web/templates/index.html`, `web/tests/test_api_routes.py`,
+`web/tests/test_dashboard_browser.py`,
+`web/README.md`, and this log.
+
+**Commit/push status:** This section is included with the roadmap and R0
+implementation in the same normal commit and is intended for a normal push to
+`origin/main`; no force push or history rewrite is used.
+
+**Next task selected by the roadmap:** R1 — move mutable dashboard globals
+behind an explicit state/application factory and prove that two app instances
+cannot share targets, histories, event cursors, scan state, hardware cache, or
+Chain 2 state. R2 then locks and bounds all histories under that ownership
+model.

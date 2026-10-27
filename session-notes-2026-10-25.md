@@ -1,5 +1,9 @@
 # Session Notes — October 25, 2026
 
+> **Historical snapshot:** This standalone note was incorporated with
+> corrections into `SESSION-NOTES.md` §53. Current priorities and status live
+> only in `PROJECT-ROADMAP.md`; nothing in this file is an active assignment.
+
 ## Overview
 
 Project status review and forward planning session. The research project has matured significantly since the October 14–15 sprint: Chain 1 (ELRS injection) is software-validated against real captures, 20+ PRs have been merged covering the full tool suite, and three PRs are staged for merge. This document captures what's proven, what's open, and the prioritized path forward.

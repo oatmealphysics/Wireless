@@ -147,18 +147,13 @@ class DashboardBrowserTests(unittest.TestCase):
         self.guard_hardware = patch.object(
             web_app,
             "detect_hardware",
-            return_value={
-                "wifi": {"available": True, "interfaces": ["wlan0"], "default": "wlan0"},
-                "ble": {"available": False, "interfaces": [], "error": "No BLE stack found"},
-                "sdr": {"available": False, "devices": [], "error": "SoapySDR not installed"},
-                "mavlink": {"available": True, "bindable_ports": [14550], "note": "UDP listener"},
-            },
+            side_effect=AssertionError("browser simulation attempted a hardware probe"),
         )
         self.guard_live_scan.start()
         self.addCleanup(self.guard_live_scan.stop)
         self.guard_live_action.start()
         self.addCleanup(self.guard_live_action.stop)
-        self.guard_hardware.start()
+        self.hardware_probe = self.guard_hardware.start()
         self.addCleanup(self.guard_hardware.stop)
 
         self.non_loopback_requests = []
@@ -460,13 +455,23 @@ class DashboardBrowserTests(unittest.TestCase):
         expect(hw_widget).to_have_attribute("aria-expanded", "true")
         expect(popover).to_contain_text("WiFi")
         expect(popover).to_contain_text("MAVLink UDP")
+        expect(popover).to_contain_text("Simulation mode")
+        expect(popover).to_contain_text("Not checked")
+
+        with self.page.expect_response(
+            lambda response: response.url.endswith("/api/hardware")
+            and response.request.method == "GET"
+        ) as response_info:
+            self.page.locator("#hw-refresh-btn").click()
+        self.assertTrue(response_info.value.ok)
+        self.hardware_probe.assert_not_called()
 
         self.page.locator("body").click(position={"x": 10, "y": 10})
         expect(popover).to_be_hidden()
         expect(hw_widget).to_have_attribute("aria-expanded", "false")
         self.assertEqual(self.console_errors, [])
 
-    def test_hardware_indicators_reflect_status(self):
+    def test_hardware_indicators_show_simulation_not_checked(self):
         self._open_dashboard()
 
         self.page.wait_for_timeout(500)
@@ -475,10 +480,14 @@ class DashboardBrowserTests(unittest.TestCase):
         sdr_dot = self.page.locator("#hw-sdr-indicator .hw-dot")
         mav_dot = self.page.locator("#hw-mav-indicator .hw-dot")
 
-        expect(wifi_dot).to_have_class(re.compile(r"available"))
-        expect(ble_dot).to_have_class(re.compile(r"unavailable"))
-        expect(sdr_dot).to_have_class(re.compile(r"unavailable"))
-        expect(mav_dot).to_have_class(re.compile(r"available"))
+        expect(wifi_dot).to_have_class(re.compile(r"not-checked"))
+        expect(ble_dot).to_have_class(re.compile(r"not-checked"))
+        expect(sdr_dot).to_have_class(re.compile(r"not-checked"))
+        expect(mav_dot).to_have_class(re.compile(r"not-checked"))
+        expect(self.page.locator("#hw-wifi-indicator")).to_have_attribute(
+            "aria-label", "wifi: Not checked",
+        )
+        self.hardware_probe.assert_not_called()
         self.assertEqual(self.console_errors, [])
 
     def test_scan_events_appear_in_log_viewer(self):

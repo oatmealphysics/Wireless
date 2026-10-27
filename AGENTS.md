@@ -26,6 +26,11 @@ This repo is co-edited by **Claude Code** and **Codex**, back and forth. Both ag
    earlier entries; correct them with a new cross-referenced entry rather than
    rewriting history. Keep secrets and raw private device data under ignored
    `work/` and put only sanitized conclusions in the log.
+8. **Use `PROJECT-ROADMAP.md` as the single active backlog.** It is the source
+   of truth for priority, status, ownership, acceptance criteria, and selecting
+   the next task. `SESSION-NOTES.md` records evidence and handoffs; older task
+   lists and embedded "next steps" are historical unless the roadmap links them
+   as an execution specification.
 
 ## Owned E8 and TinyHawk: Absolute No-Flashing Constraint
 
@@ -162,16 +167,17 @@ firmware image. See `HARDWARE-IDENTITY.md` before selecting a device target.
 - Don't add speculative features or abstractions. If a script does one thing well, that's enough.
 - Don't commit binary blobs without documenting what they are and where they came from.
 
-## Current State and Open Work
+## Current Direction
 
-> **The way ahead is in [`SESSION-NOTES.md`](SESSION-NOTES.md).** Read §1–§7
-> for the orchestrator's code-level review and P1 defect list, §16–§17 for the
-> 4.4.2 rewire and vendored-tool fixes, §19 for the v3 correction and RF-TX
-> safety gate, and **§20 for the current owner-directed ELRS pair benchmark**.
-> §18 and [`research/layer2-wireless-attack-research.md`](research/layer2-wireless-attack-research.md)
-> are earlier exploratory work, not the active path.
+> **The active way ahead is [`PROJECT-ROADMAP.md`](PROJECT-ROADMAP.md).** It is
+> the only priority/status source. `SESSION-NOTES.md` is the append-only evidence
+> log; its older "way ahead" and "next steps" sections remain historical context.
+> Focused research plans are specifications only when the roadmap links them.
 
-### Owner direction (2026-10-15): benchmark the owned ELRS pair first
+The subsections below preserve the 2026-10-15 state snapshot for context. They
+are not active assignments and must not override the roadmap.
+
+### Historical owner direction (2026-10-15): benchmark the owned ELRS pair first
 
 The owner redirected the first benchmark to the **EMAX E8 controller and
 TinyHawk III ELRS drone as a pair**, without a WiFi entry step. The previous
@@ -180,7 +186,7 @@ behavior before making any claim about forged-packet acceptance. MAVLink/WiFi,
 DJI/BLE, and RF disruption are deferred from this benchmark. The month-scale
 target remains a planning horizon, not evidence that any stage is operational.
 
-### Done
+### Done in the 2026-10-15 snapshot
 - Vulnerability reference document covering WiFi, BLE, ELRS, MAVLink, GPS, chipset exploitation (~1555 lines)
 - 7-phase attack research plan with lab exercises
 - Firmware corpus: Betaflight 4.4.2 + 2026.6.2, ELRS 4.1.0, ArduPilot 4.7.2, PX4 1.18.0-rc1, Tello SDK (24 artifacts, SHA256-verified)
@@ -193,7 +199,7 @@ target remains a planning horizon, not evidence that any stage is operational.
 - ELRS consumer-tool OTA v3 corrections (§19); the vendored core remains v4-oriented
 - Layer 2 wireless attack surface analysis and target landscape mapping
 
-### In Progress (E8–TinyHawk ELRS pair benchmark)
+### In progress in the 2026-10-15 snapshot
 - Preserve the known read-only device configuration and source-matched
   Betaflight 4.4.2 facts; keep raw UID and captures private under `work/`.
 - Obtain or locate a passive capture of this exact pair during normal operation.
@@ -204,7 +210,7 @@ target remains a planning horizon, not evidence that any stage is operational.
 - Keep ELRS RF transmission disabled until a real LoRa PHY and a separately
   authorized, safe bench-validation plan exist.
 
-### Paused or deferred
+### Paused or deferred in the 2026-10-15 snapshot
 - E8 WiFi-mode exploitation, RF disruption/jamming, and WiFi config extraction.
 - MAVLink/WiFi and DJI/BLE work while the first ELRS pair benchmark is active.
 
@@ -213,13 +219,13 @@ target remains a planning horizon, not evidence that any stage is operational.
   in `research/e8-protocol-reconstruction.md`; it does not identify the
   installed firmware version or authorize additional serial operations.
 
-### Not Yet Started
+### Not yet started in the 2026-10-15 snapshot
 - Chain 3: DJI BLE exploitation (after Chain 1 proven + DJI hw acquired)
 - Phase D: game-day playbook re-grounded in live RF output
 - Firmware binary analysis in Ghidra (4.4.2 binary ready)
 - ESP32 BLE exploitation (BrakTooth, if E8 BT is active)
 
-### Open Questions (partially resolved — see SESSION-NOTES §4 and §18)
+### Historical open questions (partially resolved — see SESSION-NOTES §4 and §18)
 - CTF target platform(s) → **Q1** (ELRS path chosen regardless; still informs Chain 2/3 priority)
 - RF rule details → **Q4** (needed before any later active RF bench stage;
   no jamming is part of the first benchmark)
