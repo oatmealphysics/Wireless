@@ -62,8 +62,9 @@ class DashboardBrowserTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         web_app.app.config.update(TESTING=True)
-        web_app.simulate_mode = True
-        web_app.dry_run_mode = True
+        state = web_app.get_dashboard_state(web_app.app)
+        state.simulate_mode = True
+        state.dry_run_mode = True
 
         cls.httpd = make_server(
             "127.0.0.1",
@@ -115,22 +116,23 @@ class DashboardBrowserTests(unittest.TestCase):
 
     def setUp(self):
         self.assertFalse(
-            web_app.is_scanning,
+            web_app.get_dashboard_state().is_scanning,
             "A scan worker leaked from the previous browser test",
         )
-        web_app.simulate_mode = True
-        web_app.dry_run_mode = True
-        with web_app.scan_lock:
-            web_app.targets.clear()
-            web_app.action_log.clear()
-            web_app.scanner_status.clear()
-            web_app.scanner_status.update(
+        state = web_app.get_dashboard_state()
+        state.simulate_mode = True
+        state.dry_run_mode = True
+        with state.scan_lock:
+            state.targets.clear()
+            state.action_log.clear()
+            state.scanner_status.clear()
+            state.scanner_status.update(
                 {name: "idle" for name in web_app.DEFAULT_PROTOCOLS}
             )
-            web_app.is_scanning = False
-        with web_app.events_lock:
-            web_app.events.clear()
-            web_app.next_event_id = 0
+            state.is_scanning = False
+        with state.events_lock:
+            state.events.clear()
+            state.next_event_id = 0
 
         # Turn the safety properties into executable invariants. If a browser
         # flow ever reaches a live backend or hardware probe, the test fails.
@@ -183,8 +185,8 @@ class DashboardBrowserTests(unittest.TestCase):
             "Browser attempted non-loopback HTTP(S) requests",
         )
         self.assertEqual(self.page_errors, [], "Browser raised JavaScript errors")
-        self.assertTrue(web_app.simulate_mode)
-        self.assertTrue(web_app.dry_run_mode)
+        self.assertTrue(web_app.get_dashboard_state().simulate_mode)
+        self.assertTrue(web_app.get_dashboard_state().dry_run_mode)
 
     @staticmethod
     def _is_loopback_hostname(hostname):
@@ -232,8 +234,8 @@ class DashboardBrowserTests(unittest.TestCase):
             score=web_app._score_target(target),
         )
         target["threat_level"] = web_app._threat_from_score(target)
-        with web_app.scan_lock:
-            web_app.targets[target["id"]] = target
+        with web_app.get_dashboard_state().scan_lock:
+            web_app.get_dashboard_state().targets[target["id"]] = target
         return target
 
     def test_boots_without_page_or_console_errors(self):
@@ -274,15 +276,17 @@ class DashboardBrowserTests(unittest.TestCase):
         expect(self.page.locator("#action-log-entries")).to_contain_text("Capture Video")
         expect(self.page.locator("#action-log-entries")).to_contain_text("[dry_run]")
 
-        self.assertEqual(len(web_app.action_log), 1)
-        self.assertEqual(web_app.action_log[0]["status"], "dry_run")
+        self.assertEqual(len(web_app.get_dashboard_state().action_log), 1)
+        self.assertEqual(
+            web_app.get_dashboard_state().action_log[0]["status"], "dry_run",
+        )
 
         self.page.locator("#btn-clear").click()
         expect(target_items).to_have_count(0)
         expect(self.page.locator("#target-count")).to_have_text("0 targets")
         expect(self.page.get_by_text("No targets found. Click Scan to begin.")).to_be_visible()
         expect(self.page.locator("#detail-empty")).to_be_visible()
-        self.assertEqual(web_app.targets, {})
+        self.assertEqual(web_app.get_dashboard_state().targets, {})
         self.assertEqual(self.console_errors, [])
 
     def test_keyboard_focus_and_target_selection(self):
@@ -295,8 +299,8 @@ class DashboardBrowserTests(unittest.TestCase):
             score=web_app._score_target(second_target),
         )
         second_target["threat_level"] = web_app._threat_from_score(second_target)
-        with web_app.scan_lock:
-            web_app.targets[second_target["id"]] = second_target
+        with web_app.get_dashboard_state().scan_lock:
+            web_app.get_dashboard_state().targets[second_target["id"]] = second_target
         self._open_dashboard()
 
         target_buttons = self.page.locator("#target-items .target-item")
@@ -372,8 +376,8 @@ class DashboardBrowserTests(unittest.TestCase):
         expect(self.page.locator(".event-toast.error")).to_contain_text(
             "Unable to start scan: simulated scan service failure"
         )
-        self.assertFalse(web_app.is_scanning)
-        self.assertEqual(web_app.targets, {})
+        self.assertFalse(web_app.get_dashboard_state().is_scanning)
+        self.assertEqual(web_app.get_dashboard_state().targets, {})
 
     def test_390px_viewport_has_no_horizontal_overflow(self):
         self._seed_simulated_target()

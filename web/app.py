@@ -17,6 +17,8 @@ For authorized CTF research only.
 from __future__ import annotations
 
 import argparse
+from copy import deepcopy
+from dataclasses import dataclass, field
 import json
 import os
 import socket
@@ -29,7 +31,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Generator
 
-from flask import Flask, jsonify, render_template, request, Response
+from flask import (
+    Blueprint,
+    Flask,
+    Response,
+    current_app,
+    has_app_context,
+    jsonify,
+    render_template,
+    request,
+)
 
 TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
@@ -37,55 +48,118 @@ sys.path.insert(0, str(TOOLS_DIR / "exploit_chains"))
 
 from exploit_chains.common import ChainLogger, AbortHandler
 
-app = Flask(__name__)
-
-# Global state
-scan_lock = threading.RLock()
-targets = {}
-action_log = []
-scanner_status = {"wifi": "idle", "ble": "idle", "sdr": "idle", "mavlink": "idle", "telemetry": "idle"}
-is_scanning = False
-simulate_mode = False
-dry_run_mode = True
-hw_status = {}
-events = []
-events_lock = threading.Lock()
-next_event_id = 0
-scan_defaults = {
-    "wifi_iface": "wlan0",
-    "ble_iface": "hci0",
-    "sdr_args": "driver=uhd",
-}
-
 MAX_EVENTS = 500
 MAX_LOG = 200
-VALID_PROTOCOLS = frozenset(scanner_status)
-DEFAULT_PROTOCOLS = tuple(scanner_status)
+DEFAULT_PROTOCOLS = ("wifi", "ble", "sdr", "mavlink", "telemetry")
+VALID_PROTOCOLS = frozenset(DEFAULT_PROTOCOLS)
+STATE_EXTENSION_KEY = "dashboard_state"
 
 
-def _push_event(event_type: str, data: dict[str, Any]) -> None:
-    global next_event_id
-    with events_lock:
-        event_id = next_event_id
-        next_event_id += 1
-        events.append({
+def _new_scanner_status() -> dict[str, str]:
+    return {name: "idle" for name in DEFAULT_PROTOCOLS}
+
+
+def _new_scan_defaults() -> dict[str, str]:
+    return {
+        "wifi_iface": "wlan0",
+        "ble_iface": "hci0",
+        "sdr_args": "driver=uhd",
+    }
+
+
+def _new_chain2_state() -> dict[str, Any]:
+    return {
+        "status": "idle",
+        "proxy_running": False,
+        "proxy_stats": {},
+        "evil_twin": None,
+        "last_injection": None,
+        "injections": [],
+    }
+
+
+@dataclass
+class DashboardState:
+    """Mutable runtime state owned by exactly one Flask application.
+
+    Scan-owned fields use ``scan_lock`` and event fields use ``events_lock``.
+    R1 establishes instance ownership; R2 will tighten locking and retention for
+    every history. Static protocol/action definitions remain module constants.
+    """
+
+    scan_lock: Any = field(default_factory=threading.RLock, repr=False)
+    targets: dict[str, dict[str, Any]] = field(default_factory=dict)
+    action_log: list[dict[str, Any]] = field(default_factory=list)
+    scanner_status: dict[str, str] = field(default_factory=_new_scanner_status)
+    is_scanning: bool = False
+    simulate_mode: bool = False
+    dry_run_mode: bool = True
+    hw_status: dict[str, Any] = field(default_factory=dict)
+    events: list[dict[str, Any]] = field(default_factory=list)
+    events_lock: Any = field(default_factory=threading.Lock, repr=False)
+    next_event_id: int = 0
+    scan_defaults: dict[str, str] = field(default_factory=_new_scan_defaults)
+    chain2_state: dict[str, Any] = field(default_factory=_new_chain2_state)
+
+    def reset_runtime(self) -> None:
+        """Reset this instance without changing its mode or scan defaults."""
+        with self.scan_lock:
+            self.targets.clear()
+            self.action_log.clear()
+            self.scanner_status = _new_scanner_status()
+            self.is_scanning = False
+            self.hw_status = {}
+            self.chain2_state = _new_chain2_state()
+        with self.events_lock:
+            self.events.clear()
+            self.next_event_id = 0
+
+
+dashboard = Blueprint("dashboard", __name__)
+
+
+def create_dashboard_state(
+        *, simulate: bool = False, dry_run: bool = True,
+        scan_defaults: dict[str, str] | None = None) -> DashboardState:
+    """Create isolated state for one dashboard application instance."""
+    state = DashboardState(simulate_mode=simulate, dry_run_mode=dry_run)
+    if scan_defaults:
+        state.scan_defaults.update(scan_defaults)
+    return state
+
+
+def get_dashboard_state(flask_app: Flask | None = None) -> DashboardState:
+    """Return state for an explicit app, the request app, or the default app."""
+    if flask_app is None:
+        flask_app = current_app._get_current_object() if has_app_context() else app
+    state = flask_app.extensions.get(STATE_EXTENSION_KEY)
+    if not isinstance(state, DashboardState):
+        raise RuntimeError("Dashboard state is not installed on this application")
+    return state
+
+
+def _push_event(
+        state: DashboardState, event_type: str, data: dict[str, Any]) -> None:
+    with state.events_lock:
+        event_id = state.next_event_id
+        state.next_event_id += 1
+        state.events.append({
             "id": event_id,
             "type": event_type,
             "data": data,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
-        if len(events) > MAX_EVENTS:
-            del events[:len(events) - MAX_EVENTS]
+        if len(state.events) > MAX_EVENTS:
+            del state.events[:len(state.events) - MAX_EVENTS]
 
 
-def _finish_scan() -> None:
+def _finish_scan(state: DashboardState) -> None:
     """Release the scan slot and resolve any stale in-progress statuses."""
-    global is_scanning
-    with scan_lock:
-        for name, state in scanner_status.items():
-            if state == "scanning":
-                scanner_status[name] = "error"
-        is_scanning = False
+    with state.scan_lock:
+        for name, scanner_state in state.scanner_status.items():
+            if scanner_state == "scanning":
+                state.scanner_status[name] = "error"
+        state.is_scanning = False
 
 
 # --- Hardware detection ---
@@ -127,8 +201,7 @@ def simulated_hardware_status() -> dict[str, Any]:
 
 
 def detect_hardware() -> dict[str, Any]:
-    """Probe for available scanner hardware. Results cached in hw_status."""
-    global hw_status
+    """Probe for available scanner hardware and return an uncached snapshot."""
     checks: dict[str, Any] = {
         "mode": "live",
         "probe_performed": True,
@@ -224,7 +297,6 @@ def detect_hardware() -> dict[str, Any]:
         "note": "UDP listener readiness only; no peer or hardware was detected",
     }
 
-    hw_status = checks
     return checks
 
 
@@ -457,19 +529,22 @@ ACTION_DEFS = {
 }
 
 
-def run_scan_simulated(protocols: list[str] | None = None) -> None:
+def run_scan_simulated(
+        state: DashboardState, protocols: list[str] | None = None) -> None:
     """Run a simulated scan for demo mode."""
-    global targets, is_scanning, scanner_status
     import random
 
     requested = set(protocols or DEFAULT_PROTOCOLS)
     try:
-        with scan_lock:
-            scanner_status = {
+        with state.scan_lock:
+            state.scanner_status = {
                 name: "scanning" if name in requested else "idle"
                 for name in DEFAULT_PROTOCOLS
             }
-        _push_event("scan_start", {"mode": "simulate", "protocols": sorted(requested)})
+        _push_event(
+            state, "scan_start",
+            {"mode": "simulate", "protocols": sorted(requested)},
+        )
 
         for scanner_name, delay in (
                 ("wifi", 1.0), ("ble", 0.6), ("sdr", 0.8),
@@ -477,10 +552,10 @@ def run_scan_simulated(protocols: list[str] | None = None) -> None:
             if scanner_name not in requested:
                 continue
             time.sleep(delay)
-            scanner_status[scanner_name] = "done"
-            _push_event("scanner_done", {"scanner": scanner_name})
+            state.scanner_status[scanner_name] = "done"
+            _push_event(state, "scanner_done", {"scanner": scanner_name})
 
-        with scan_lock:
+        with state.scan_lock:
             now = time.time()
             for t in SIMULATED_TARGETS:
                 protocol = t.get("protocol")
@@ -490,24 +565,34 @@ def run_scan_simulated(protocols: list[str] | None = None) -> None:
                     selected = protocol in requested
                 if not selected:
                     continue
-                target = dict(t)
+                target = deepcopy(t)
                 target["first_seen"] = now - random.uniform(0, 10)
                 target["last_seen"] = now
                 target["score"] = _score_target(target)
                 target["threat_level"] = _threat_from_score(target)
-                targets[target["id"]] = target
-                _push_event("target_found", {"id": target["id"], "name": target["name"], "protocol": target["protocol"]})
+                state.targets[target["id"]] = target
+                _push_event(
+                    state, "target_found",
+                    {
+                        "id": target["id"],
+                        "name": target["name"],
+                        "protocol": target["protocol"],
+                    },
+                )
 
-        scanner_status = {k: "idle" for k in scanner_status}
-        _push_event("scan_complete", {"target_count": len(targets), "mode": "simulate"})
+        state.scanner_status = _new_scanner_status()
+        _push_event(
+            state, "scan_complete",
+            {"target_count": len(state.targets), "mode": "simulate"},
+        )
     finally:
-        _finish_scan()
+        _finish_scan(state)
 
 
-def run_scan_live(protocols: list[str], config: dict[str, Any]) -> None:
+def run_scan_live(
+        state: DashboardState, protocols: list[str],
+        config: dict[str, Any]) -> None:
     """Run live scanning using the real scanner backends."""
-    global targets, is_scanning, scanner_status
-
     all_targets = []
     scan_errors = {}
 
@@ -516,7 +601,7 @@ def run_scan_live(protocols: list[str], config: dict[str, Any]) -> None:
 
         logger = ChainLogger("web-scan")
         abort = AbortHandler(logger)
-        _push_event("scan_start", {"mode": "live", "protocols": protocols})
+        _push_event(state, "scan_start", {"mode": "live", "protocols": protocols})
 
         wifi_iface = config.get("wifi_iface", "wlan0")
         ble_iface = config.get("ble_iface", "hci0")
@@ -524,83 +609,83 @@ def run_scan_live(protocols: list[str], config: dict[str, Any]) -> None:
         scan_time = config.get("scan_time", 15.0)
 
         if "wifi" in protocols:
-            scanner_status["wifi"] = "scanning"
-            _push_event("scanner_start", {"scanner": "wifi", "interface": wifi_iface})
+            state.scanner_status["wifi"] = "scanning"
+            _push_event(state, "scanner_start", {"scanner": "wifi", "interface": wifi_iface})
             try:
                 wifi_results = scan_wifi(wifi_iface, scan_time, logger, abort)
                 all_targets.extend(wifi_results)
-                _push_event("scanner_done", {"scanner": "wifi", "count": len(wifi_results)})
+                _push_event(state, "scanner_done", {"scanner": "wifi", "count": len(wifi_results)})
             except Exception as e:
                 scan_errors["wifi"] = str(e)
-                _push_event("scanner_error", {"scanner": "wifi", "error": str(e)})
-            scanner_status["wifi"] = "done" if "wifi" not in scan_errors else "error"
+                _push_event(state, "scanner_error", {"scanner": "wifi", "error": str(e)})
+            state.scanner_status["wifi"] = "done" if "wifi" not in scan_errors else "error"
 
         if "ble" in protocols:
-            scanner_status["ble"] = "scanning"
-            _push_event("scanner_start", {"scanner": "ble", "interface": ble_iface})
+            state.scanner_status["ble"] = "scanning"
+            _push_event(state, "scanner_start", {"scanner": "ble", "interface": ble_iface})
             try:
                 ble_results = scan_ble(ble_iface, scan_time, logger, abort)
                 all_targets.extend(ble_results)
-                _push_event("scanner_done", {"scanner": "ble", "count": len(ble_results)})
+                _push_event(state, "scanner_done", {"scanner": "ble", "count": len(ble_results)})
             except Exception as e:
                 scan_errors["ble"] = str(e)
-                _push_event("scanner_error", {"scanner": "ble", "error": str(e)})
-            scanner_status["ble"] = "done" if "ble" not in scan_errors else "error"
+                _push_event(state, "scanner_error", {"scanner": "ble", "error": str(e)})
+            state.scanner_status["ble"] = "done" if "ble" not in scan_errors else "error"
 
         if "sdr" in protocols:
-            scanner_status["sdr"] = "scanning"
-            _push_event("scanner_start", {"scanner": "sdr", "args": sdr_args})
+            state.scanner_status["sdr"] = "scanning"
+            _push_event(state, "scanner_start", {"scanner": "sdr", "args": sdr_args})
             try:
                 sdr_results = scan_sdr(sdr_args, scan_time, logger, abort)
                 all_targets.extend(sdr_results)
-                _push_event("scanner_done", {"scanner": "sdr", "count": len(sdr_results)})
+                _push_event(state, "scanner_done", {"scanner": "sdr", "count": len(sdr_results)})
             except Exception as e:
                 scan_errors["sdr"] = str(e)
-                _push_event("scanner_error", {"scanner": "sdr", "error": str(e)})
-            scanner_status["sdr"] = "done" if "sdr" not in scan_errors else "error"
+                _push_event(state, "scanner_error", {"scanner": "sdr", "error": str(e)})
+            state.scanner_status["sdr"] = "done" if "sdr" not in scan_errors else "error"
 
         if "mavlink" in protocols:
-            scanner_status["mavlink"] = "scanning"
-            _push_event("scanner_start", {"scanner": "mavlink"})
+            state.scanner_status["mavlink"] = "scanning"
+            _push_event(state, "scanner_start", {"scanner": "mavlink"})
             try:
                 mav_results = _scan_mavlink_udp(scan_time, logger, abort)
                 all_targets.extend(mav_results)
-                _push_event("scanner_done", {"scanner": "mavlink", "count": len(mav_results)})
+                _push_event(state, "scanner_done", {"scanner": "mavlink", "count": len(mav_results)})
             except Exception as e:
                 scan_errors["mavlink"] = str(e)
-                _push_event("scanner_error", {"scanner": "mavlink", "error": str(e)})
-            scanner_status["mavlink"] = "done" if "mavlink" not in scan_errors else "error"
+                _push_event(state, "scanner_error", {"scanner": "mavlink", "error": str(e)})
+            state.scanner_status["mavlink"] = "done" if "mavlink" not in scan_errors else "error"
 
         if "telemetry" in protocols:
-            scanner_status["telemetry"] = "scanning"
-            _push_event("scanner_start", {"scanner": "telemetry"})
+            state.scanner_status["telemetry"] = "scanning"
+            _push_event(state, "scanner_start", {"scanner": "telemetry"})
             try:
                 telem_results = _scan_passive_telemetry(sdr_args, scan_time, logger, abort)
                 all_targets.extend(telem_results)
-                _push_event("scanner_done", {"scanner": "telemetry", "count": len(telem_results)})
+                _push_event(state, "scanner_done", {"scanner": "telemetry", "count": len(telem_results)})
             except Exception as e:
                 scan_errors["telemetry"] = str(e)
-                _push_event("scanner_error", {"scanner": "telemetry", "error": str(e)})
-            scanner_status["telemetry"] = "done" if "telemetry" not in scan_errors else "error"
+                _push_event(state, "scanner_error", {"scanner": "telemetry", "error": str(e)})
+            state.scanner_status["telemetry"] = "done" if "telemetry" not in scan_errors else "error"
 
-        with scan_lock:
+        with state.scan_lock:
             now = time.time()
             for t in all_targets:
                 tid = _make_target_id(t)
                 target = _convert_recon_target(t, tid, now)
-                targets[tid] = target
-                _push_event("target_found", {"id": tid, "name": target["name"], "protocol": target["protocol"]})
+                state.targets[tid] = target
+                _push_event(state, "target_found", {"id": tid, "name": target["name"], "protocol": target["protocol"]})
 
         time.sleep(1)
-        scanner_status.update({k: "idle" for k in scanner_status})
+        state.scanner_status.update({k: "idle" for k in state.scanner_status})
 
-        _push_event("scan_complete", {
-            "target_count": len(targets),
+        _push_event(state, "scan_complete", {
+            "target_count": len(state.targets),
             "mode": "live",
             "errors": scan_errors if scan_errors else None,
         })
     finally:
-        _finish_scan()
+        _finish_scan(state)
 
 
 def _scan_mavlink_udp(timeout: float, logger: ChainLogger, abort: AbortHandler) -> list[dict[str, Any]]:
@@ -807,7 +892,9 @@ def _score_target(t: dict[str, Any]) -> int:
 
 # --- Action execution ---
 
-def execute_action_simulated(target: dict[str, Any], action_name: str) -> dict[str, Any]:
+def execute_action_simulated(
+        state: DashboardState, target: dict[str, Any],
+        action_name: str) -> dict[str, Any]:
     """Simulate executing an action (dry-run only)."""
     action_def = ACTION_DEFS.get(action_name, {})
     entry = {
@@ -820,14 +907,16 @@ def execute_action_simulated(target: dict[str, Any], action_name: str) -> dict[s
         "status": "dry_run",
         "result": f"[DRY-RUN] Would execute: {action_def.get('description', action_name)}",
     }
-    action_log.append(entry)
-    if len(action_log) > MAX_LOG:
-        del action_log[:len(action_log) - MAX_LOG]
-    _push_event("action_executed", entry)
+    state.action_log.append(entry)
+    if len(state.action_log) > MAX_LOG:
+        del state.action_log[:len(state.action_log) - MAX_LOG]
+    _push_event(state, "action_executed", entry)
     return entry
 
 
-def execute_action_live(target: dict[str, Any], action_name: str) -> dict[str, Any]:
+def execute_action_live(
+        state: DashboardState, target: dict[str, Any],
+        action_name: str) -> dict[str, Any]:
     """Execute an action using the real exploit chain tools."""
     chain = target.get("chain", "")
     details = target.get("details", {})
@@ -865,10 +954,10 @@ def execute_action_live(target: dict[str, Any], action_name: str) -> dict[str, A
         entry["status"] = "error"
         entry["result"] = f"Action failed: {e}"
 
-    action_log.append(entry)
-    if len(action_log) > MAX_LOG:
-        del action_log[:len(action_log) - MAX_LOG]
-    _push_event("action_executed", entry)
+    state.action_log.append(entry)
+    if len(state.action_log) > MAX_LOG:
+        del state.action_log[:len(state.action_log) - MAX_LOG]
+    _push_event(state, "action_executed", entry)
     return entry
 
 
@@ -1154,35 +1243,36 @@ def _exec_ble(target: dict[str, Any], action_name: str, details: dict[str, Any])
 
 # --- Flask routes ---
 
-@app.route("/")
+@dashboard.route("/")
 def index() -> str:
     return render_template("index.html")
 
 
-@app.route("/api/status")
+@dashboard.route("/api/status")
 def api_status() -> Response:
-    with scan_lock:
+    state = get_dashboard_state()
+    with state.scan_lock:
         target_list = sorted(
-            targets.values(),
+            state.targets.values(),
             key=lambda t: t.get("score", 0),
             reverse=True,
         )
-        scanning = is_scanning
-        status_snapshot = dict(scanner_status)
+        scanning = state.is_scanning
+        status_snapshot = dict(state.scanner_status)
     return jsonify({
         "scanning": scanning,
         "scanner_status": status_snapshot,
         "target_count": len(target_list),
         "targets": target_list,
-        "simulate": simulate_mode,
-        "dry_run": dry_run_mode,
-        "hardware": hw_status,
+        "simulate": state.simulate_mode,
+        "dry_run": state.dry_run_mode,
+        "hardware": state.hw_status,
     })
 
 
-@app.route("/api/scan", methods=["POST"])
+@dashboard.route("/api/scan", methods=["POST"])
 def api_scan() -> tuple[Response, int] | Response:
-    global is_scanning
+    state = get_dashboard_state()
     body = request.get_json(silent=True)
     if body is None:
         if request.content_length:
@@ -1206,44 +1296,54 @@ def api_scan() -> tuple[Response, int] | Response:
         return jsonify({"error": "scan_time must be a finite number between 0 and 300 seconds"}), 400
 
     config = {
-        "wifi_iface": body.get("wifi_iface", scan_defaults["wifi_iface"]),
-        "ble_iface": body.get("ble_iface", scan_defaults["ble_iface"]),
-        "sdr_args": body.get("sdr_args", scan_defaults["sdr_args"]),
+        "wifi_iface": body.get("wifi_iface", state.scan_defaults["wifi_iface"]),
+        "ble_iface": body.get("ble_iface", state.scan_defaults["ble_iface"]),
+        "sdr_args": body.get("sdr_args", state.scan_defaults["sdr_args"]),
         "scan_time": float(scan_time),
     }
 
-    with scan_lock:
-        if is_scanning:
+    with state.scan_lock:
+        if state.is_scanning:
             return jsonify({"error": "Scan already in progress"}), 409
-        scanner_status.update({name: "idle" for name in DEFAULT_PROTOCOLS})
-        is_scanning = True
+        state.scanner_status.update({name: "idle" for name in DEFAULT_PROTOCOLS})
+        state.is_scanning = True
 
     try:
-        if simulate_mode:
-            t = threading.Thread(target=run_scan_simulated, args=(protocols,), daemon=True)
+        if state.simulate_mode:
+            t = threading.Thread(
+                target=run_scan_simulated, args=(state, protocols), daemon=True,
+            )
         else:
-            t = threading.Thread(target=run_scan_live, args=(protocols, config), daemon=True)
+            t = threading.Thread(
+                target=run_scan_live, args=(state, protocols, config), daemon=True,
+            )
         t.start()
     except Exception:
-        _finish_scan()
+        _finish_scan(state)
         return jsonify({"error": "Unable to start scan worker"}), 500
 
-    return jsonify({"status": "scanning", "protocols": protocols, "simulate": simulate_mode})
+    return jsonify({
+        "status": "scanning",
+        "protocols": protocols,
+        "simulate": state.simulate_mode,
+    })
 
 
-@app.route("/api/targets/<path:target_id>")
+@dashboard.route("/api/targets/<path:target_id>")
 def api_target_detail(target_id: str) -> tuple[Response, int] | Response:
-    with scan_lock:
-        target = targets.get(target_id)
+    state = get_dashboard_state()
+    with state.scan_lock:
+        target = state.targets.get(target_id)
     if not target:
         return jsonify({"error": "Target not found"}), 404
     return jsonify(target)
 
 
-@app.route("/api/targets/<path:target_id>/action", methods=["POST"])
+@dashboard.route("/api/targets/<path:target_id>/action", methods=["POST"])
 def api_target_action(target_id: str) -> tuple[Response, int] | Response:
-    with scan_lock:
-        target = targets.get(target_id)
+    state = get_dashboard_state()
+    with state.scan_lock:
+        target = state.targets.get(target_id)
     if not target:
         return jsonify({"error": "Target not found"}), 404
 
@@ -1255,44 +1355,47 @@ def api_target_action(target_id: str) -> tuple[Response, int] | Response:
     if action_name not in target.get("available_actions", []):
         return jsonify({"error": f"Action '{action_name}' not available for this target"}), 400
 
-    if simulate_mode or dry_run_mode:
-        result = execute_action_simulated(target, action_name)
+    if state.simulate_mode or state.dry_run_mode:
+        result = execute_action_simulated(state, target, action_name)
     else:
-        result = execute_action_live(target, action_name)
+        result = execute_action_live(state, target, action_name)
 
     return jsonify(result)
 
 
-@app.route("/api/actions")
+@dashboard.route("/api/actions")
 def api_action_defs() -> Response:
     return jsonify(ACTION_DEFS)
 
 
-@app.route("/api/log")
+@dashboard.route("/api/log")
 def api_log() -> Response:
-    return jsonify(action_log[-50:])
+    state = get_dashboard_state()
+    return jsonify(state.action_log[-50:])
 
 
-@app.route("/api/clear", methods=["POST"])
+@dashboard.route("/api/clear", methods=["POST"])
 def api_clear() -> tuple[Response, int] | Response:
-    with scan_lock:
-        if is_scanning:
+    state = get_dashboard_state()
+    with state.scan_lock:
+        if state.is_scanning:
             return jsonify({"error": "Cannot clear targets while a scan is in progress"}), 409
-        targets.clear()
-    _push_event("targets_cleared", {})
+        state.targets.clear()
+    _push_event(state, "targets_cleared", {})
     return jsonify({"status": "cleared"})
 
 
-@app.route("/api/hardware")
+@dashboard.route("/api/hardware")
 def api_hardware() -> Response:
-    global hw_status
-    if simulate_mode:
-        hw_status = simulated_hardware_status()
-        return jsonify(hw_status)
-    return jsonify(detect_hardware())
+    state = get_dashboard_state()
+    if state.simulate_mode:
+        state.hw_status = simulated_hardware_status()
+    else:
+        state.hw_status = detect_hardware()
+    return jsonify(state.hw_status)
 
 
-@app.route("/api/events")
+@dashboard.route("/api/events")
 def api_events() -> Response:
     """Server-Sent Events stream for real-time status updates.
 
@@ -1302,15 +1405,16 @@ def api_events() -> Response:
     counter is now behind the browser's cursor, reset that stale cursor to the
     current tail so future events are delivered.
     """
+    state = get_dashboard_state()
     header_last_id = request.headers.get("Last-Event-ID", type=int)
     query_last_id = request.args.get("last_id", type=int)
     cursor_provided = (
         "last_id" in request.args or "Last-Event-ID" in request.headers
     )
 
-    with events_lock:
-        tail_id = events[-1]["id"] if events else -1
-        next_id = next_event_id
+    with state.events_lock:
+        tail_id = state.events[-1]["id"] if state.events else -1
+        next_id = state.next_event_id
 
     last_id = query_last_id if query_last_id is not None else header_last_id
     if not cursor_provided or last_id is None or last_id >= next_id:
@@ -1322,8 +1426,8 @@ def api_events() -> Response:
         # otherwise remain in EventSource.CONNECTING until the next event.
         yield ": connected\n\n"
         while True:
-            with events_lock:
-                new_events = [e for e in events if e["id"] > local_last]
+            with state.events_lock:
+                new_events = [e for e in state.events if e["id"] > local_last]
             for ev in new_events:
                 local_last = ev["id"]
                 yield f"id: {ev['id']}\nevent: {ev['type']}\ndata: {json.dumps(ev['data'])}\n\n"
@@ -1335,24 +1439,15 @@ def api_events() -> Response:
 
 # --- Chain 2: WiFi → MAVLink injection endpoints ---
 
-chain2_state = {
-    "status": "idle",
-    "proxy_running": False,
-    "proxy_stats": {},
-    "evil_twin": None,
-    "last_injection": None,
-    "injections": [],
-}
-
-
-@app.route("/api/chain2/status")
+@dashboard.route("/api/chain2/status")
 def api_chain2_status() -> Response:
-    return jsonify(chain2_state)
+    return jsonify(get_dashboard_state().chain2_state)
 
 
-@app.route("/api/chain2/simulate", methods=["POST"])
+@dashboard.route("/api/chain2/simulate", methods=["POST"])
 def api_chain2_simulate() -> tuple[Response, int] | Response:
     """Run a simulated Chain 2 attack for demo purposes."""
+    state = get_dashboard_state()
     try:
         from exploit_chains.wifi_mavlink_chain import (
             ATTACK_COMMANDS, build_command_long,
@@ -1382,7 +1477,7 @@ def api_chain2_simulate() -> tuple[Response, int] | Response:
             "packet_size": len(pkt),
         }
         results.append(entry)
-        action_log.append({
+        state.action_log.append({
             "id": entry["id"],
             "timestamp": entry["timestamp"],
             "target_id": target_id,
@@ -1393,8 +1488,8 @@ def api_chain2_simulate() -> tuple[Response, int] | Response:
             "result": f"[SIMULATED] {cmd['desc']} ({len(pkt)} bytes)",
         })
 
-    chain2_state["last_injection"] = results[-1] if results else None
-    chain2_state["injections"].extend(results)
+    state.chain2_state["last_injection"] = results[-1] if results else None
+    state.chain2_state["injections"].extend(results)
 
     return jsonify({
         "chain": "wifi_mavlink",
@@ -1403,9 +1498,10 @@ def api_chain2_simulate() -> tuple[Response, int] | Response:
     })
 
 
-@app.route("/api/chain2/inject", methods=["POST"])
+@dashboard.route("/api/chain2/inject", methods=["POST"])
 def api_chain2_inject() -> tuple[Response, int] | Response:
     """Inject a MAVLink command via Chain 2 (dry-run in simulate mode)."""
+    state = get_dashboard_state()
     if not request.json:
         return jsonify({"error": "JSON body required"}), 400
 
@@ -1434,12 +1530,12 @@ def api_chain2_inject() -> tuple[Response, int] | Response:
         "command": command,
         "description": cmd["desc"],
         "severity": cmd["severity"],
-        "status": "dry_run" if simulate_mode or dry_run_mode else "pending",
+        "status": "dry_run" if state.simulate_mode or state.dry_run_mode else "pending",
         "packet_hex": pkt.hex(),
         "packet_size": len(pkt),
     }
 
-    if not simulate_mode and not dry_run_mode and target_endpoint:
+    if not state.simulate_mode and not state.dry_run_mode and target_endpoint:
         import socket as _sock
         parts = target_endpoint.split(":")
         if len(parts) == 2:
@@ -1456,7 +1552,7 @@ def api_chain2_inject() -> tuple[Response, int] | Response:
                 entry["status"] = "error"
                 entry["error"] = str(e)
 
-    action_log.append({
+    state.action_log.append({
         "id": entry["id"],
         "timestamp": entry["timestamp"],
         "target_id": target_id,
@@ -1467,13 +1563,13 @@ def api_chain2_inject() -> tuple[Response, int] | Response:
         "result": f"[{entry['status'].upper()}] {cmd['desc']}",
     })
 
-    chain2_state["last_injection"] = entry
-    chain2_state["injections"].append(entry)
+    state.chain2_state["last_injection"] = entry
+    state.chain2_state["injections"].append(entry)
 
     return jsonify(entry)
 
 
-@app.route("/api/chain2/commands")
+@dashboard.route("/api/chain2/commands")
 def api_chain2_commands() -> tuple[Response, int] | Response:
     """List available Chain 2 attack commands."""
     try:
@@ -1483,9 +1579,19 @@ def api_chain2_commands() -> tuple[Response, int] | Response:
         return jsonify({"error": "Chain 2 module not found"}), 500
 
 
-def main() -> None:
-    global simulate_mode, dry_run_mode
+def create_app(state: DashboardState | None = None) -> Flask:
+    """Create a Flask dashboard with isolated, app-owned runtime state."""
+    flask_app = Flask(__name__)
+    flask_app.extensions[STATE_EXTENSION_KEY] = state or create_dashboard_state()
+    flask_app.register_blueprint(dashboard)
+    return flask_app
 
+
+# Import compatibility: existing WSGI users can continue importing ``app``.
+app = create_app()
+
+
+def main() -> None:
     parser = argparse.ArgumentParser(description="Drone Scanner Web UI")
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--host", default="127.0.0.1")
@@ -1502,16 +1608,17 @@ def main() -> None:
                         help="Default SoapySDR device args (default: driver=uhd)")
     args = parser.parse_args()
 
-    simulate_mode = args.simulate
-    dry_run_mode = not args.live_actions
-    scan_defaults.update({
+    state = get_dashboard_state(app)
+    state.simulate_mode = args.simulate
+    state.dry_run_mode = not args.live_actions
+    state.scan_defaults.update({
         "wifi_iface": args.wifi_iface,
         "ble_iface": args.ble_iface,
         "sdr_args": args.sdr_args,
     })
 
-    if not simulate_mode:
-        detect_hardware()
+    if not state.simulate_mode:
+        state.hw_status = detect_hardware()
 
     app.run(host=args.host, port=args.port, debug=args.debug)
 

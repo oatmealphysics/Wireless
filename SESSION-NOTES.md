@@ -4210,3 +4210,68 @@ commit and push to `origin/main`; no force push or history rewrite is used.
 **Next task:** R1 remains active. RQ1 (capture corpus and timebase
 standardization) becomes the first research candidate only after an explicit
 owner decision moves R1 out of NOW; RQ2-RQ4 follow it.
+
+---
+
+## 64. Agent ownership split and R1 state-factory handoff (Codex, 2026-10-28)
+
+**Starting revision and objective:** Work began at clean revision `bd1f649`.
+`git pull --ff-only origin main` reported that `main` was already up to date.
+The owner asked for the roadmap to be divided between Codex and Claude and for
+Codex to begin its portion.
+
+**Roadmap coordination:** `PROJECT-ROADMAP.md` now names a primary and
+independent reviewer for every maintained and research task. The serialized
+maintained order is R1 Codex, R2 Codex, R3 Claude, R4 Claude, R5 Codex, R6
+Claude, and R7 Codex. Gated research rows RQ1-RQ14 carry dormant planned
+assignments grouped by file/domain family. Those assignments do not activate a
+task or relax its hardware, privacy, evidence, RF, or serial gate. R1 remains
+the sole NOW lane.
+
+**R1 implementation:** Replaced the dashboard's mutable module globals with a
+documented `DashboardState` dataclass and Flask application factory. Each app
+stores its own state in `app.extensions`; routes resolve the active app's state,
+scan workers receive that exact state as an argument, and the SSE generator
+captures it before request context ends. The default `app` object and command
+line entry point remain compatible. Hardware detection now returns an uncached
+snapshot that only the calling app stores. Simulated target templates are
+deep-copied so nested details/lists cannot leak between instances.
+
+**Regression evidence:** Added eight app-factory tests. They prove independent
+locks and nested collections; concurrently mutate targets, events, actions,
+scan state/defaults, hardware caches, and Chain 2 histories; verify worker
+arguments belong to their originating app; exercise separate live-mode scan
+defaults; verify SSE cursor isolation; and preserve the default imported app.
+Existing API, browser, and dashboard fixtures now reset app-owned state rather
+than rebinding detached module aliases. CI runs the factory suite and the full
+web job on Ubuntu/Windows with Python 3.10 and 3.12.
+
+**Validation:**
+
+- Factory isolation suite: 8/8 PASS.
+- API route suite: 38/38 PASS.
+- Maintained dashboard suite: 52/52 PASS.
+- Loopback Playwright/Edge browser suite: 11/11 PASS.
+- Full tool suite: 648 PASS, 23 optional SITL tests skipped.
+- `python -B tools/validate-project.py`: PASS (253 files).
+- `git diff --check`: PASS (line-ending notice only).
+- Three independent read-only reviews found no remaining R1 architecture,
+  state-race, test-evidence, Python-3.10, or CI blocker after corrections.
+
+**Safety boundary:** Work was limited to local code, deterministic simulation,
+test clients, and a loopback browser server. No hardware, serial port, RF,
+firmware, private capture, credential, external target, or live action was
+accessed.
+
+**Changed files:** `.github/workflows/validate.yml`, `PROJECT-ROADMAP.md`,
+`web/app.py`, `web/tests/test_app_factory.py`,
+`web/tests/test_api_routes.py`, `web/tests/test_dashboard_browser.py`,
+`tools/tests/helpers.py`, `tools/tests/test_web_dashboard.py`, and this log.
+
+**Commit/push status:** Prepared for one normal commit and push to
+`origin/main`; no force push, rebase, branch switch, or history rewrite is used.
+
+**Handoff:** Claude should independently review R1 against its acceptance
+criteria after this commit is pushed. If that review passes, mark R1 DONE and
+promote R2 as the single NOW task. Do not begin Claude-owned R3/R4/R6 or any
+GATED research item from this entry alone.

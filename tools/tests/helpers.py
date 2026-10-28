@@ -92,11 +92,9 @@ def make_flask_client(
     dry_run: bool = True,
 ) -> Any:
     """Reset web_app state and return a Flask test client."""
-    web_app.simulate_mode = simulate
-    web_app.dry_run_mode = dry_run
-    web_app.is_scanning = False
-    web_app.targets = {}
-    web_app.action_log = []
-    web_app.scanner_status = {name: "idle" for name in web_app.DEFAULT_PROTOCOLS}
+    state = web_app.get_dashboard_state(web_app.app)
+    state.reset_runtime()
+    state.simulate_mode = simulate
+    state.dry_run_mode = dry_run
     web_app.app.testing = True
     return web_app.app.test_client()

@@ -24,11 +24,12 @@ jobs:
       - run: python -B -m unittest discover -s tools/tests -p "test_*.py"
 
   web-dashboard:
-    name: Web dashboard tests (${{ matrix.os }})
+    name: Web dashboard tests (${{ matrix.os }}, Python ${{ matrix.python }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.12']
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
@@ -37,10 +38,11 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python }}
       - run: python -m pip install --disable-pip-version-check -r web/requirements-e2e.txt
       - run: python -B -m unittest discover -s tools/tests -p "test_web_dashboard.py" -v
       - run: python -B -m unittest discover -s web/tests -p "test_api_routes.py" -v
+      - run: python -B -m unittest discover -s web/tests -p "test_app_factory.py" -v
       - run: python -B -m unittest discover -s web/tests -p "test_dashboard_browser.py" -v
         env:
           DASHBOARD_BROWSER_CHANNEL: chrome
