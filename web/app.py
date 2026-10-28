@@ -50,6 +50,7 @@ from exploit_chains.common import ChainLogger, AbortHandler
 
 MAX_EVENTS = 500
 MAX_LOG = 200
+MAX_CHAIN2_INJECTIONS = 200
 DEFAULT_PROTOCOLS = ("wifi", "ble", "sdr", "mavlink", "telemetry")
 VALID_PROTOCOLS = frozenset(DEFAULT_PROTOCOLS)
 STATE_EXTENSION_KEY = "dashboard_state"
@@ -82,12 +83,15 @@ def _new_chain2_state() -> dict[str, Any]:
 class DashboardState:
     """Mutable runtime state owned by exactly one Flask application.
 
-    Scan-owned fields use ``scan_lock`` and event fields use ``events_lock``.
-    R1 establishes instance ownership; R2 will tighten locking and retention for
-    every history. Static protocol/action definitions remain module constants.
+    ``state_lock`` guards every mutable field and every object reachable from
+    those fields. Writers hold it for the complete mutation; readers copy the
+    required snapshot while holding it, then serialize or perform blocking work
+    after releasing it. Histories are changed only through the bounded helpers
+    below. ``scan_lock`` and ``events_lock`` are compatibility aliases for the
+    same re-entrant lock. Static protocol/action definitions remain constants.
     """
 
-    scan_lock: Any = field(default_factory=threading.RLock, repr=False)
+    state_lock: Any = field(default_factory=threading.RLock, repr=False)
     targets: dict[str, dict[str, Any]] = field(default_factory=dict)
     action_log: list[dict[str, Any]] = field(default_factory=list)
     scanner_status: dict[str, str] = field(default_factory=_new_scanner_status)
@@ -96,21 +100,29 @@ class DashboardState:
     dry_run_mode: bool = True
     hw_status: dict[str, Any] = field(default_factory=dict)
     events: list[dict[str, Any]] = field(default_factory=list)
-    events_lock: Any = field(default_factory=threading.Lock, repr=False)
     next_event_id: int = 0
     scan_defaults: dict[str, str] = field(default_factory=_new_scan_defaults)
     chain2_state: dict[str, Any] = field(default_factory=_new_chain2_state)
 
+    @property
+    def scan_lock(self) -> Any:
+        """Compatibility alias for the unified state lock."""
+        return self.state_lock
+
+    @property
+    def events_lock(self) -> Any:
+        """Compatibility alias for the unified state lock."""
+        return self.state_lock
+
     def reset_runtime(self) -> None:
         """Reset this instance without changing its mode or scan defaults."""
-        with self.scan_lock:
+        with self.state_lock:
             self.targets.clear()
             self.action_log.clear()
             self.scanner_status = _new_scanner_status()
             self.is_scanning = False
             self.hw_status = {}
             self.chain2_state = _new_chain2_state()
-        with self.events_lock:
             self.events.clear()
             self.next_event_id = 0
 
@@ -124,7 +136,8 @@ def create_dashboard_state(
     """Create isolated state for one dashboard application instance."""
     state = DashboardState(simulate_mode=simulate, dry_run_mode=dry_run)
     if scan_defaults:
-        state.scan_defaults.update(scan_defaults)
+        with state.state_lock:
+            state.scan_defaults.update(scan_defaults)
     return state
 
 
@@ -140,22 +153,60 @@ def get_dashboard_state(flask_app: Flask | None = None) -> DashboardState:
 
 def _push_event(
         state: DashboardState, event_type: str, data: dict[str, Any]) -> None:
-    with state.events_lock:
+    with state.state_lock:
         event_id = state.next_event_id
         state.next_event_id += 1
         state.events.append({
             "id": event_id,
             "type": event_type,
-            "data": data,
+            "data": deepcopy(data),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
-        if len(state.events) > MAX_EVENTS:
-            del state.events[:len(state.events) - MAX_EVENTS]
+        _trim_history(state.events, MAX_EVENTS)
+
+
+def _trim_history(history: list[Any], limit: int) -> None:
+    """Keep only the newest ``limit`` entries; caller holds ``state_lock``."""
+    overflow = len(history) - limit
+    if overflow > 0:
+        del history[:overflow]
+
+
+def _record_action(state: DashboardState, entry: dict[str, Any]) -> None:
+    """Atomically append a detached action and its corresponding event."""
+    with state.state_lock:
+        state.action_log.append(deepcopy(entry))
+        _trim_history(state.action_log, MAX_LOG)
+        _push_event(state, "action_executed", entry)
+
+
+def _record_chain2_history(
+        state: DashboardState, results: list[dict[str, Any]],
+        actions: list[dict[str, Any]]) -> None:
+    """Atomically update both bounded Chain 2 integration histories."""
+    with state.state_lock:
+        state.action_log.extend(deepcopy(actions))
+        _trim_history(state.action_log, MAX_LOG)
+        state.chain2_state["injections"].extend(deepcopy(results))
+        _trim_history(
+            state.chain2_state["injections"], MAX_CHAIN2_INJECTIONS,
+        )
+        retained = state.chain2_state["injections"]
+        state.chain2_state["last_injection"] = (
+            deepcopy(retained[-1]) if retained else None
+        )
+
+
+def _set_scanner_status(
+        state: DashboardState, scanner_name: str, scanner_status: str) -> None:
+    """Set one scanner status under the unified state lock."""
+    with state.state_lock:
+        state.scanner_status[scanner_name] = scanner_status
 
 
 def _finish_scan(state: DashboardState) -> None:
     """Release the scan slot and resolve any stale in-progress statuses."""
-    with state.scan_lock:
+    with state.state_lock:
         for name, scanner_state in state.scanner_status.items():
             if scanner_state == "scanning":
                 state.scanner_status[name] = "error"
@@ -536,7 +587,7 @@ def run_scan_simulated(
 
     requested = set(protocols or DEFAULT_PROTOCOLS)
     try:
-        with state.scan_lock:
+        with state.state_lock:
             state.scanner_status = {
                 name: "scanning" if name in requested else "idle"
                 for name in DEFAULT_PROTOCOLS
@@ -552,10 +603,10 @@ def run_scan_simulated(
             if scanner_name not in requested:
                 continue
             time.sleep(delay)
-            state.scanner_status[scanner_name] = "done"
+            _set_scanner_status(state, scanner_name, "done")
             _push_event(state, "scanner_done", {"scanner": scanner_name})
 
-        with state.scan_lock:
+        with state.state_lock:
             now = time.time()
             for t in SIMULATED_TARGETS:
                 protocol = t.get("protocol")
@@ -580,10 +631,12 @@ def run_scan_simulated(
                     },
                 )
 
-        state.scanner_status = _new_scanner_status()
+        with state.state_lock:
+            state.scanner_status = _new_scanner_status()
+            target_count = len(state.targets)
         _push_event(
             state, "scan_complete",
-            {"target_count": len(state.targets), "mode": "simulate"},
+            {"target_count": target_count, "mode": "simulate"},
         )
     finally:
         _finish_scan(state)
@@ -609,7 +662,7 @@ def run_scan_live(
         scan_time = config.get("scan_time", 15.0)
 
         if "wifi" in protocols:
-            state.scanner_status["wifi"] = "scanning"
+            _set_scanner_status(state, "wifi", "scanning")
             _push_event(state, "scanner_start", {"scanner": "wifi", "interface": wifi_iface})
             try:
                 wifi_results = scan_wifi(wifi_iface, scan_time, logger, abort)
@@ -618,10 +671,12 @@ def run_scan_live(
             except Exception as e:
                 scan_errors["wifi"] = str(e)
                 _push_event(state, "scanner_error", {"scanner": "wifi", "error": str(e)})
-            state.scanner_status["wifi"] = "done" if "wifi" not in scan_errors else "error"
+            _set_scanner_status(
+                state, "wifi", "done" if "wifi" not in scan_errors else "error",
+            )
 
         if "ble" in protocols:
-            state.scanner_status["ble"] = "scanning"
+            _set_scanner_status(state, "ble", "scanning")
             _push_event(state, "scanner_start", {"scanner": "ble", "interface": ble_iface})
             try:
                 ble_results = scan_ble(ble_iface, scan_time, logger, abort)
@@ -630,10 +685,12 @@ def run_scan_live(
             except Exception as e:
                 scan_errors["ble"] = str(e)
                 _push_event(state, "scanner_error", {"scanner": "ble", "error": str(e)})
-            state.scanner_status["ble"] = "done" if "ble" not in scan_errors else "error"
+            _set_scanner_status(
+                state, "ble", "done" if "ble" not in scan_errors else "error",
+            )
 
         if "sdr" in protocols:
-            state.scanner_status["sdr"] = "scanning"
+            _set_scanner_status(state, "sdr", "scanning")
             _push_event(state, "scanner_start", {"scanner": "sdr", "args": sdr_args})
             try:
                 sdr_results = scan_sdr(sdr_args, scan_time, logger, abort)
@@ -642,10 +699,12 @@ def run_scan_live(
             except Exception as e:
                 scan_errors["sdr"] = str(e)
                 _push_event(state, "scanner_error", {"scanner": "sdr", "error": str(e)})
-            state.scanner_status["sdr"] = "done" if "sdr" not in scan_errors else "error"
+            _set_scanner_status(
+                state, "sdr", "done" if "sdr" not in scan_errors else "error",
+            )
 
         if "mavlink" in protocols:
-            state.scanner_status["mavlink"] = "scanning"
+            _set_scanner_status(state, "mavlink", "scanning")
             _push_event(state, "scanner_start", {"scanner": "mavlink"})
             try:
                 mav_results = _scan_mavlink_udp(scan_time, logger, abort)
@@ -654,10 +713,13 @@ def run_scan_live(
             except Exception as e:
                 scan_errors["mavlink"] = str(e)
                 _push_event(state, "scanner_error", {"scanner": "mavlink", "error": str(e)})
-            state.scanner_status["mavlink"] = "done" if "mavlink" not in scan_errors else "error"
+            _set_scanner_status(
+                state, "mavlink",
+                "done" if "mavlink" not in scan_errors else "error",
+            )
 
         if "telemetry" in protocols:
-            state.scanner_status["telemetry"] = "scanning"
+            _set_scanner_status(state, "telemetry", "scanning")
             _push_event(state, "scanner_start", {"scanner": "telemetry"})
             try:
                 telem_results = _scan_passive_telemetry(sdr_args, scan_time, logger, abort)
@@ -666,9 +728,12 @@ def run_scan_live(
             except Exception as e:
                 scan_errors["telemetry"] = str(e)
                 _push_event(state, "scanner_error", {"scanner": "telemetry", "error": str(e)})
-            state.scanner_status["telemetry"] = "done" if "telemetry" not in scan_errors else "error"
+            _set_scanner_status(
+                state, "telemetry",
+                "done" if "telemetry" not in scan_errors else "error",
+            )
 
-        with state.scan_lock:
+        with state.state_lock:
             now = time.time()
             for t in all_targets:
                 tid = _make_target_id(t)
@@ -677,10 +742,12 @@ def run_scan_live(
                 _push_event(state, "target_found", {"id": tid, "name": target["name"], "protocol": target["protocol"]})
 
         time.sleep(1)
-        state.scanner_status.update({k: "idle" for k in state.scanner_status})
+        with state.state_lock:
+            state.scanner_status.update({k: "idle" for k in state.scanner_status})
+            target_count = len(state.targets)
 
         _push_event(state, "scan_complete", {
-            "target_count": len(state.targets),
+            "target_count": target_count,
             "mode": "live",
             "errors": scan_errors if scan_errors else None,
         })
@@ -907,10 +974,7 @@ def execute_action_simulated(
         "status": "dry_run",
         "result": f"[DRY-RUN] Would execute: {action_def.get('description', action_name)}",
     }
-    state.action_log.append(entry)
-    if len(state.action_log) > MAX_LOG:
-        del state.action_log[:len(state.action_log) - MAX_LOG]
-    _push_event(state, "action_executed", entry)
+    _record_action(state, entry)
     return entry
 
 
@@ -954,10 +1018,7 @@ def execute_action_live(
         entry["status"] = "error"
         entry["result"] = f"Action failed: {e}"
 
-    state.action_log.append(entry)
-    if len(state.action_log) > MAX_LOG:
-        del state.action_log[:len(state.action_log) - MAX_LOG]
-    _push_event(state, "action_executed", entry)
+    _record_action(state, entry)
     return entry
 
 
@@ -1251,22 +1312,25 @@ def index() -> str:
 @dashboard.route("/api/status")
 def api_status() -> Response:
     state = get_dashboard_state()
-    with state.scan_lock:
+    with state.state_lock:
         target_list = sorted(
-            state.targets.values(),
+            deepcopy(list(state.targets.values())),
             key=lambda t: t.get("score", 0),
             reverse=True,
         )
         scanning = state.is_scanning
         status_snapshot = dict(state.scanner_status)
+        simulate = state.simulate_mode
+        dry_run = state.dry_run_mode
+        hardware = deepcopy(state.hw_status)
     return jsonify({
         "scanning": scanning,
         "scanner_status": status_snapshot,
         "target_count": len(target_list),
         "targets": target_list,
-        "simulate": state.simulate_mode,
-        "dry_run": state.dry_run_mode,
-        "hardware": state.hw_status,
+        "simulate": simulate,
+        "dry_run": dry_run,
+        "hardware": hardware,
     })
 
 
@@ -1295,21 +1359,34 @@ def api_scan() -> tuple[Response, int] | Response:
             or not 0 < scan_time <= 300):
         return jsonify({"error": "scan_time must be a finite number between 0 and 300 seconds"}), 400
 
-    config = {
-        "wifi_iface": body.get("wifi_iface", state.scan_defaults["wifi_iface"]),
-        "ble_iface": body.get("ble_iface", state.scan_defaults["ble_iface"]),
-        "sdr_args": body.get("sdr_args", state.scan_defaults["sdr_args"]),
-        "scan_time": float(scan_time),
-    }
+    with state.state_lock:
+        config = {
+            "wifi_iface": body.get(
+                "wifi_iface", state.scan_defaults["wifi_iface"],
+            ),
+            "ble_iface": body.get(
+                "ble_iface", state.scan_defaults["ble_iface"],
+            ),
+            "sdr_args": body.get(
+                "sdr_args", state.scan_defaults["sdr_args"],
+            ),
+            "scan_time": float(scan_time),
+        }
+        already_scanning = state.is_scanning
+        if not already_scanning:
+            state.scanner_status.update({
+                name: "idle" for name in DEFAULT_PROTOCOLS
+            })
+            state.is_scanning = True
+            simulate = state.simulate_mode
+        else:
+            simulate = state.simulate_mode
 
-    with state.scan_lock:
-        if state.is_scanning:
-            return jsonify({"error": "Scan already in progress"}), 409
-        state.scanner_status.update({name: "idle" for name in DEFAULT_PROTOCOLS})
-        state.is_scanning = True
+    if already_scanning:
+        return jsonify({"error": "Scan already in progress"}), 409
 
     try:
-        if state.simulate_mode:
+        if simulate:
             t = threading.Thread(
                 target=run_scan_simulated, args=(state, protocols), daemon=True,
             )
@@ -1325,15 +1402,15 @@ def api_scan() -> tuple[Response, int] | Response:
     return jsonify({
         "status": "scanning",
         "protocols": protocols,
-        "simulate": state.simulate_mode,
+        "simulate": simulate,
     })
 
 
 @dashboard.route("/api/targets/<path:target_id>")
 def api_target_detail(target_id: str) -> tuple[Response, int] | Response:
     state = get_dashboard_state()
-    with state.scan_lock:
-        target = state.targets.get(target_id)
+    with state.state_lock:
+        target = deepcopy(state.targets.get(target_id))
     if not target:
         return jsonify({"error": "Target not found"}), 404
     return jsonify(target)
@@ -1342,8 +1419,9 @@ def api_target_detail(target_id: str) -> tuple[Response, int] | Response:
 @dashboard.route("/api/targets/<path:target_id>/action", methods=["POST"])
 def api_target_action(target_id: str) -> tuple[Response, int] | Response:
     state = get_dashboard_state()
-    with state.scan_lock:
-        target = state.targets.get(target_id)
+    with state.state_lock:
+        target = deepcopy(state.targets.get(target_id))
+        use_simulation = state.simulate_mode or state.dry_run_mode
     if not target:
         return jsonify({"error": "Target not found"}), 404
 
@@ -1355,7 +1433,7 @@ def api_target_action(target_id: str) -> tuple[Response, int] | Response:
     if action_name not in target.get("available_actions", []):
         return jsonify({"error": f"Action '{action_name}' not available for this target"}), 400
 
-    if state.simulate_mode or state.dry_run_mode:
+    if use_simulation:
         result = execute_action_simulated(state, target, action_name)
     else:
         result = execute_action_live(state, target, action_name)
@@ -1371,16 +1449,22 @@ def api_action_defs() -> Response:
 @dashboard.route("/api/log")
 def api_log() -> Response:
     state = get_dashboard_state()
-    return jsonify(state.action_log[-50:])
+    with state.state_lock:
+        recent_actions = deepcopy(state.action_log[-50:])
+    return jsonify(recent_actions)
 
 
 @dashboard.route("/api/clear", methods=["POST"])
 def api_clear() -> tuple[Response, int] | Response:
     state = get_dashboard_state()
-    with state.scan_lock:
-        if state.is_scanning:
-            return jsonify({"error": "Cannot clear targets while a scan is in progress"}), 409
-        state.targets.clear()
+    with state.state_lock:
+        scanning = state.is_scanning
+        if not scanning:
+            state.targets.clear()
+    if scanning:
+        return jsonify({
+            "error": "Cannot clear targets while a scan is in progress",
+        }), 409
     _push_event(state, "targets_cleared", {})
     return jsonify({"status": "cleared"})
 
@@ -1388,11 +1472,13 @@ def api_clear() -> tuple[Response, int] | Response:
 @dashboard.route("/api/hardware")
 def api_hardware() -> Response:
     state = get_dashboard_state()
-    if state.simulate_mode:
-        state.hw_status = simulated_hardware_status()
-    else:
-        state.hw_status = detect_hardware()
-    return jsonify(state.hw_status)
+    with state.state_lock:
+        simulate = state.simulate_mode
+    hardware = simulated_hardware_status() if simulate else detect_hardware()
+    with state.state_lock:
+        state.hw_status = deepcopy(hardware)
+        snapshot = deepcopy(state.hw_status)
+    return jsonify(snapshot)
 
 
 @dashboard.route("/api/events")
@@ -1412,7 +1498,7 @@ def api_events() -> Response:
         "last_id" in request.args or "Last-Event-ID" in request.headers
     )
 
-    with state.events_lock:
+    with state.state_lock:
         tail_id = state.events[-1]["id"] if state.events else -1
         next_id = state.next_event_id
 
@@ -1426,8 +1512,11 @@ def api_events() -> Response:
         # otherwise remain in EventSource.CONNECTING until the next event.
         yield ": connected\n\n"
         while True:
-            with state.events_lock:
-                new_events = [e for e in state.events if e["id"] > local_last]
+            with state.state_lock:
+                new_events = deepcopy([
+                    event for event in state.events
+                    if event["id"] > local_last
+                ])
             for ev in new_events:
                 local_last = ev["id"]
                 yield f"id: {ev['id']}\nevent: {ev['type']}\ndata: {json.dumps(ev['data'])}\n\n"
@@ -1441,7 +1530,10 @@ def api_events() -> Response:
 
 @dashboard.route("/api/chain2/status")
 def api_chain2_status() -> Response:
-    return jsonify(get_dashboard_state().chain2_state)
+    state = get_dashboard_state()
+    with state.state_lock:
+        snapshot = deepcopy(state.chain2_state)
+    return jsonify(snapshot)
 
 
 @dashboard.route("/api/chain2/simulate", methods=["POST"])
@@ -1459,6 +1551,7 @@ def api_chain2_simulate() -> tuple[Response, int] | Response:
     commands = request.json.get("commands", ["disarm", "land"]) if request.json else ["disarm", "land"]
 
     results = []
+    actions = []
     for cmd_name in commands:
         if cmd_name not in ATTACK_COMMANDS:
             results.append({"command": cmd_name, "status": "unknown"})
@@ -1477,7 +1570,7 @@ def api_chain2_simulate() -> tuple[Response, int] | Response:
             "packet_size": len(pkt),
         }
         results.append(entry)
-        state.action_log.append({
+        actions.append({
             "id": entry["id"],
             "timestamp": entry["timestamp"],
             "target_id": target_id,
@@ -1488,8 +1581,7 @@ def api_chain2_simulate() -> tuple[Response, int] | Response:
             "result": f"[SIMULATED] {cmd['desc']} ({len(pkt)} bytes)",
         })
 
-    state.chain2_state["last_injection"] = results[-1] if results else None
-    state.chain2_state["injections"].extend(results)
+    _record_chain2_history(state, results, actions)
 
     return jsonify({
         "chain": "wifi_mavlink",
@@ -1522,6 +1614,8 @@ def api_chain2_inject() -> tuple[Response, int] | Response:
 
     cmd = ATTACK_COMMANDS[command]
     pkt = build_command_long(1, 1, cmd["cmd_id"], list(cmd["params"]))
+    with state.state_lock:
+        dry_run = state.simulate_mode or state.dry_run_mode
 
     entry = {
         "id": uuid.uuid4().hex[:8],
@@ -1530,12 +1624,12 @@ def api_chain2_inject() -> tuple[Response, int] | Response:
         "command": command,
         "description": cmd["desc"],
         "severity": cmd["severity"],
-        "status": "dry_run" if state.simulate_mode or state.dry_run_mode else "pending",
+        "status": "dry_run" if dry_run else "pending",
         "packet_hex": pkt.hex(),
         "packet_size": len(pkt),
     }
 
-    if not state.simulate_mode and not state.dry_run_mode and target_endpoint:
+    if not dry_run and target_endpoint:
         import socket as _sock
         parts = target_endpoint.split(":")
         if len(parts) == 2:
@@ -1552,7 +1646,7 @@ def api_chain2_inject() -> tuple[Response, int] | Response:
                 entry["status"] = "error"
                 entry["error"] = str(e)
 
-    state.action_log.append({
+    action = {
         "id": entry["id"],
         "timestamp": entry["timestamp"],
         "target_id": target_id,
@@ -1561,10 +1655,8 @@ def api_chain2_inject() -> tuple[Response, int] | Response:
         "label": f"Chain 2: {cmd['desc']}",
         "status": entry["status"],
         "result": f"[{entry['status'].upper()}] {cmd['desc']}",
-    })
-
-    state.chain2_state["last_injection"] = entry
-    state.chain2_state["injections"].append(entry)
+    }
+    _record_chain2_history(state, [entry], [action])
 
     return jsonify(entry)
 
@@ -1609,16 +1701,19 @@ def main() -> None:
     args = parser.parse_args()
 
     state = get_dashboard_state(app)
-    state.simulate_mode = args.simulate
-    state.dry_run_mode = not args.live_actions
-    state.scan_defaults.update({
-        "wifi_iface": args.wifi_iface,
-        "ble_iface": args.ble_iface,
-        "sdr_args": args.sdr_args,
-    })
+    with state.state_lock:
+        state.simulate_mode = args.simulate
+        state.dry_run_mode = not args.live_actions
+        state.scan_defaults.update({
+            "wifi_iface": args.wifi_iface,
+            "ble_iface": args.ble_iface,
+            "sdr_args": args.sdr_args,
+        })
 
-    if not state.simulate_mode:
-        state.hw_status = detect_hardware()
+    if not args.simulate:
+        hardware = detect_hardware()
+        with state.state_lock:
+            state.hw_status = deepcopy(hardware)
 
     app.run(host=args.host, port=args.port, debug=args.debug)
 

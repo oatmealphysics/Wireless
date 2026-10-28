@@ -34,6 +34,11 @@ wins.
   owner decision changes it: R1 Codex -> R2 Codex -> R3 Claude -> R4 Claude ->
   R5 Codex -> R6 Claude -> R7 Codex. This keeps related file families under one
   writer and preserves independent review.
+- Owner decision (2026-10-28): Claude is temporarily unavailable. Completed
+  work may advance on repository evidence plus independent read-only Codex
+  sub-agent reviews; Claude's named reviews are deferred as retrospective
+  audits. Any takeover of a Claude implementation lane must be recorded here
+  before edits begin.
 
 ## Scope and evidence boundary
 
@@ -88,13 +93,12 @@ loopback Playwright suite loads and manually refreshes the widget with
 yellow `Not checked` state in simulation, and MAVLink live status now describes
 UDP listener readiness rather than a connected peer.
 
-## NOW
-
 ### R1 — Isolate dashboard state behind an application/state factory
 
-**Owner:** Codex implementation; Claude review
+**Owner:** Codex implementation; three independent Codex read-only reviews;
+Claude retrospective review deferred
 **Depends on:** R0
-**Status:** NOW — Codex implementation complete; Claude review pending
+**Status:** DONE — accepted by owner while Claude is unavailable
 **Evidence target:** SYNTHETIC/OFFLINE-TESTED
 
 Move targets, scan state, scanner status, events, action history, hardware
@@ -122,28 +126,66 @@ worker admission/configuration, nested simulated targets, hardware/mode caches,
 Chain 2 history, events, and import compatibility. The 38-route API suite,
 52-test maintained dashboard suite, 11-test loopback browser suite, 648-test
 full tools suite (23 optional SITL skips), and project validator pass locally.
-The CI web matrix now covers Python 3.10/3.12 on Ubuntu and Windows. R1 remains
-NOW until Claude completes the planned independent review; do not promote R2
-from this implementation handoff alone.
-
-## NEXT
+The CI web matrix now covers Python 3.10/3.12 on Ubuntu and Windows. Three
+independent read-only Codex reviews found no remaining architecture, race, or
+test-evidence blocker. On 2026-10-28 the owner directed work to continue while
+Claude is unavailable, so R1 is accepted as DONE and Claude's review is retained
+as a later retrospective audit rather than a dependency for R2.
 
 ### R2 — Lock and bound every mutable history
 
-**Owner:** Codex implementation; Claude adversarial concurrency review
+**Owner:** Codex implementation; independent Codex adversarial reviews now;
+Claude retrospective concurrency review deferred
 **Depends on:** R1
+**Status:** DONE
+**Evidence target:** SYNTHETIC/OFFLINE-TESTED
 
 Use one documented ownership/locking model. Bound events, action history,
-Chain 2 injections, and any auxiliary integration histories. Add concurrency
-and rollover tests.
+Chain 2 injections, and any auxiliary integration histories owned by
+`DashboardState`. Add concurrency and rollover tests. Standalone tool log
+buffers remain separate components rather than sharing the web runtime lock.
+
+Acceptance criteria:
+
+- One per-application re-entrant lock guards every mutable dashboard field and
+  nested object; writers finish mutations under it and readers detach snapshots
+  under it before serialization or blocking work.
+- Event, action, and Chain 2 injection histories have explicit retained-entry
+  limits, and every production write goes through a bounded helper.
+- Concurrent rollover preserves monotonic event IDs, exact newest-tail
+  retention, and `last_injection == injections[-1]` whenever injections exist.
+- Route-level tests cover ordinary actions, oversized Chain 2 batches, mixed
+  parallel writers/readers, SSE replay after pruning, and snapshots detached
+  before serialization. Deterministic guarded collections cover history and
+  reset lock participation on the Ubuntu/Windows Python 3.10/3.12 matrix.
+
+Evidence (2026-10-28): one per-application `RLock` now guards every mutable
+dashboard field; the legacy scan/event lock names are aliases to that lock.
+Events retain 500 entries, while action and Chain 2 injection histories retain
+200 each through centralized helpers. Nine new tests cover exact concurrent
+event tails, SSE replay after pruning, ordinary-action rollover, oversized and
+empty Chain 2 batches, mixed concurrent writers/readers, guarded mutation and
+reset paths, nested caller-data detachment, and route snapshots detached before
+serialization. The review-discovered empty-batch invariant was fixed so a
+retained injection can never coexist with a cleared `last_injection`. Both
+independent read-only reviews report no remaining blocker; 107 maintained
+backend/state tests, 11 loopback browser tests, 648 tool tests (23 optional SITL
+skips), Python 3.10 grammar, and the 254-file validator pass locally.
+
+## NOW
 
 ### R3 — Add cross-instance and lifecycle regression coverage
 
-**Owner:** Claude tests; Codex integration review
+**Owner:** Codex temporary implementation and independent sub-agent review;
+Claude retrospective review deferred
 **Depends on:** R1 and R2
+**Status:** NOW — owner-authorized takeover while Claude is unavailable
+**Evidence target:** SYNTHETIC/OFFLINE-TESTED
 
 Prove that targets, logs, events, scans, and Chain 2 state cannot leak between
 app instances or tests. Cover partial startup failure and cleanup.
+
+## NEXT
 
 ### R4 — Refresh maintained documentation
 
@@ -191,10 +233,10 @@ In order:
 
 ## GATED research pathway queue
 
-R1 remains the single active implementation lane. Every RQ item below has
+R3 remains the single active implementation lane. Every RQ item below has
 status **GATED** and no active owner. Each row records a dormant planned primary
 and reviewer so a future handoff is unambiguous. Promotion requires an explicit
-owner decision and a roadmap change that moves R1 out of NOW, activates the
+owner decision and a roadmap change that moves R3 out of NOW, activates the
 planned assignment (or records a replacement), and records its evidence
 target. Merely appearing here does not authorize serial, RF, hardware, or
 live-device work.
@@ -257,7 +299,7 @@ and [STM32F411 errata](https://www.st.com/resource/en/errata_sheet/es0287-stm32f
 | RQ13 | **Conditional ESP patch-differential corpus** | Claude primary; Codex review | RQ6 confirms exact applicability | Reproduce fixed/affected behavior in offline source tests only for proven components and configurations: [CVE-2024-42484](https://github.com/espressif/esp-now/security/advisories/GHSA-q6f6-4qc5-vhx5), native ESP-IDF [CVE-2025-52471](https://github.com/espressif/esp-idf/security/advisories/GHSA-hqhh-cp47-fv5g), BLE provisioning [CVE-2026-25507](https://github.com/espressif/esp-idf/security/advisories/GHSA-h7r3-gmg9-xjmg) / [CVE-2026-25508](https://github.com/espressif/esp-idf/security/advisories/GHSA-9j5x-rf36-54x9), or SoftAP DHCP [CVE-2026-45160](https://github.com/espressif/esp-idf/security/advisories/GHSA-g764-gwc3-75m5). | `SYNTHETIC/OFFLINE-TESTED`: synthetic packets and local processes only; never present these as blanket ESP32 or E8 findings. |
 | RQ14 | **Adjacent-stack schema and topology health** | Claude primary; Codex review | A demonstrated owned-platform or fixture need | Add offline DSDL/transfer-ID checks for [DroneCAN](https://dronecan.github.io/Specification/6._Application_level_functions/), bounded component-metadata parsing, and firmware-envelope provenance only for ecosystems actually added to the project. | `SYNTHETIC/OFFLINE-TESTED`: keep adapters dormant until needed; no CAN or external metadata fetch by default. |
 
-If the owner explicitly promotes a research task and moves R1 out of NOW, start
+If the owner explicitly promotes a research task and moves R3 out of NOW, start
 with RQ1, then RQ2-RQ4. RQ5-RQ8 are the next target-specific evidence paths.
 RQ9-RQ14 are useful expansion paths, not reasons to delay current work.
 

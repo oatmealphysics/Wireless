@@ -4275,3 +4275,71 @@ accessed.
 criteria after this commit is pushed. If that review passes, mark R1 DONE and
 promote R2 as the single NOW task. Do not begin Claude-owned R3/R4/R6 or any
 GATED research item from this entry alone.
+
+---
+
+## 65. Unified dashboard locking and bounded histories (Codex, 2026-10-28)
+
+**Owner decision and roadmap state:** The owner reported that Claude is
+temporarily unavailable and directed Codex to continue, with Claude's reviews
+to be incorporated later. `PROJECT-ROADMAP.md` records that decision, accepts
+R1 as DONE on its repository evidence and three independent read-only reviews,
+and makes R2 the sole implementation lane for this work. After R2 validation,
+R3 is promoted to NOW with a temporary Codex takeover; Claude's R1/R2/R3 roles
+remain deferred retrospective reviews rather than being erased.
+
+**R2 implementation:** `DashboardState.state_lock` is now the single
+per-application re-entrant lock for every mutable field and nested object. The
+old `scan_lock` and `events_lock` names remain compatibility aliases to that
+same lock. Production writers complete state mutations under the lock; route
+readers deep-copy the needed snapshot under it and serialize after release;
+blocking detector, scanner, action, socket, and SSE-wait work remains outside
+the critical section.
+
+Events retain the newest 500 entries. Ordinary actions and Chain 2 injections
+retain the newest 200 entries each through centralized helpers. Chain 2 action
+and injection histories update atomically, and `last_injection` is derived from
+the retained tail. A review found that an empty `commands: []` batch could have
+cleared `last_injection` while an older injection remained; the helper and a
+route regression now preserve the invariant.
+
+**Regression evidence:** Added nine R2 tests covering concurrent event-ID
+allocation and exact rollover, SSE replay after pruning, regular-action backing
+retention and the 50-entry API window, oversized and empty Chain 2 batches,
+mixed parallel ordinary/Chain 2 writers with concurrent readers, caller-data
+detachment, and route snapshots that remain unchanged when the live nested
+state mutates before serialization. A thread-ownership-aware lock proxy and
+guarded lists deterministically reject append, extend, trim, clear, or reset
+outside the application lock; the histories are prefilled to force rollover.
+CI explicitly runs this suite in every Ubuntu/Windows and Python 3.10/3.12 web
+job.
+
+**Validation:**
+
+- R2 history suite: 9/9 PASS, including 11 consecutive review runs.
+- Maintained dashboard/API/factory/history set: 107/107 PASS.
+- Loopback Playwright/Edge browser suite: 11/11 PASS.
+- Full tool suite: 648 PASS, 23 optional SITL tests skipped.
+- Python 3.10 grammar parse: PASS for changed Python files.
+- `python -B tools/validate-project.py`: PASS (254 files).
+- `git diff --check`: PASS (line-ending notice only).
+- Two independent read-only R2 reviews report no remaining locking, deadlock,
+  rollover, snapshot, test-evidence, Windows, Python 3.10, or CI blocker after
+  the empty-batch and deterministic-test corrections.
+
+**Safety boundary:** Work used local code, deterministic simulation, Flask test
+clients, and a loopback-only browser server. It did not access hardware, serial
+ports, RF, firmware, private captures, credentials, external targets, or live
+actions.
+
+**Changed files:** `.github/workflows/validate.yml`, `PROJECT-ROADMAP.md`,
+`web/app.py`, `web/tests/test_state_histories.py`, and this evidence log.
+
+**Commit/push status:** Prepared for one normal commit and push to
+`origin/main`; no force push, rebase, branch switch, history rewrite, or broad
+staging is used.
+
+**Next task:** R3 is the sole NOW lane. Add lifecycle regressions for partial
+startup failure and cleanup, plus any cross-instance leakage case not already
+proved by the R1/R2 suites. Claude can retrospectively review the serialized
+handoffs when its capacity returns.
