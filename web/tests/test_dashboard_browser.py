@@ -169,6 +169,17 @@ class DashboardBrowserTests(unittest.TestCase):
         self.context.route("**/*", self._route_request)
         self.page = self.context.new_page()
         self.addCleanup(self.page.close)
+        self.page.add_init_script(
+            """
+            window.__dashboardCspViolations = [];
+            document.addEventListener('securitypolicyviolation', event => {
+              window.__dashboardCspViolations.push({
+                directive: event.effectiveDirective,
+                blockedURI: event.blockedURI,
+              });
+            });
+            """
+        )
         self.page.on("pageerror", lambda error: self.page_errors.append(str(error)))
         self.page.on(
             "console",
@@ -184,6 +195,11 @@ class DashboardBrowserTests(unittest.TestCase):
             "Browser attempted non-loopback HTTP(S) requests",
         )
         self.assertEqual(self.page_errors, [], "Browser raised JavaScript errors")
+        self.assertEqual(
+            self.page.evaluate("window.__dashboardCspViolations || []"),
+            [],
+            "Browser reported Content Security Policy violations",
+        )
         self.assertTrue(web_app.get_dashboard_state().simulate_mode)
         self.assertTrue(web_app.get_dashboard_state().dry_run_mode)
 
@@ -222,6 +238,10 @@ class DashboardBrowserTests(unittest.TestCase):
         response = self.page.goto(self.base_url, wait_until="domcontentloaded")
         self.assertIsNotNone(response)
         self.assertTrue(response.ok, f"Dashboard returned HTTP {response.status}")
+        self.assertEqual(
+            response.headers.get("content-security-policy"),
+            web_app.CONTENT_SECURITY_POLICY,
+        )
         expect(self.page.locator("#mode-badge")).to_have_text("SIMULATE MODE")
 
     def _seed_simulated_target(self):
@@ -243,6 +263,15 @@ class DashboardBrowserTests(unittest.TestCase):
         expect(self.page).to_have_title("Drone Scanner")
         expect(self.page.locator("#btn-scan")).to_be_enabled()
         expect(self.page.locator("#target-count")).to_have_text("0 targets")
+        loaded_assets = self.page.evaluate(
+            """() => performance.getEntriesByType('resource')
+                .map(entry => new URL(entry.name).pathname)
+                .filter(path => path.startsWith('/static/'))"""
+        )
+        self.assertEqual(
+            set(loaded_assets),
+            {"/static/dashboard.v1.css", "/static/dashboard.v1.js"},
+        )
         self.assertEqual(self.page_errors, [])
         self.assertEqual(self.console_errors, [])
 

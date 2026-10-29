@@ -79,6 +79,22 @@ python3 web/app.py --wifi-iface wlan0 --ble-iface hci0 --sdr-args "driver=uhd"
 
 ## Dashboard behavior
 
+### Static assets and browser policy
+
+The HTML shell loads the versioned same-origin assets
+`/static/dashboard.v1.css` and `/static/dashboard.v1.js`. They are cacheable for
+one year, so a content change must also bump the filename and the two template
+references. The template and generated UI fragments do not depend on inline
+scripts, style blocks, `style=` attributes, or inline event handlers.
+
+Every app response carries a strict Content Security Policy. Its default is
+`'none'`; scripts, styles, fonts, images, fetches, and the EventSource connection
+are limited to the same origin, while inline script/style attributes, framing,
+plugins, and base-URL changes are denied. Companion headers disable MIME
+sniffing and framing, keep referrers private, and isolate cross-origin resources.
+The policy is a browser hardening boundary, not an authorization mechanism for
+live backends or actions.
+
 ### Scans and targets
 
 Only one scan may run per app instance. Starting another scan, or clearing
@@ -203,7 +219,9 @@ The browser suite forces simulation and dry-run modes, fails if a live scan,
 live action, or hardware probe is called, serves the app on an ephemeral
 loopback port, and aborts and reports dashboard-page HTTP(S) requests to
 non-loopback hosts. That is an application-flow guarantee, not a claim that the
-browser process or operating system has no other network activity.
+browser process or operating system has no other network activity. It also
+asserts the exact Content Security Policy, observes browser CSP violations,
+confirms both versioned assets loaded, and retains the 390 px viewport gate.
 
 GitHub Actions runs the validator/tool suite and every dashboard suite on
 Ubuntu and Windows with Python 3.10 and 3.12. See

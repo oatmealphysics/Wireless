@@ -54,6 +54,21 @@ MAX_CHAIN2_INJECTIONS = 200
 DEFAULT_PROTOCOLS = ("wifi", "ble", "sdr", "mavlink", "telemetry")
 VALID_PROTOCOLS = frozenset(DEFAULT_PROTOCOLS)
 STATE_EXTENSION_KEY = "dashboard_state"
+STATIC_CACHE_SECONDS = 31_536_000
+CONTENT_SECURITY_POLICY = (
+    "default-src 'none'; "
+    "base-uri 'none'; "
+    "connect-src 'self'; "
+    "font-src 'self'; "
+    "form-action 'self'; "
+    "frame-ancestors 'none'; "
+    "img-src 'self'; "
+    "object-src 'none'; "
+    "script-src 'self'; "
+    "script-src-attr 'none'; "
+    "style-src 'self'; "
+    "style-src-attr 'none'"
+)
 
 
 def _new_scanner_status() -> dict[str, str]:
@@ -160,6 +175,17 @@ class DashboardState:
 
 
 dashboard = Blueprint("dashboard", __name__)
+
+
+def _apply_security_headers(response: Response) -> Response:
+    """Apply the dashboard's same-origin browser security boundary."""
+    response.headers["Content-Security-Policy"] = CONTENT_SECURITY_POLICY
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    return response
 
 
 def create_dashboard_state(
@@ -1894,10 +1920,12 @@ def create_app(state: DashboardState | None = None) -> Flask:
         raise TypeError("state must be a DashboardState instance or None")
 
     flask_app = Flask(__name__)
+    flask_app.config["SEND_FILE_MAX_AGE_DEFAULT"] = STATIC_CACHE_SECONDS
     owner_token = object()
     state._claim_app(owner_token)
     try:
         flask_app.extensions[STATE_EXTENSION_KEY] = state
+        flask_app.after_request(_apply_security_headers)
         flask_app.register_blueprint(dashboard)
     except BaseException:
         flask_app.extensions.pop(STATE_EXTENSION_KEY, None)

@@ -369,6 +369,68 @@ class TestIndexRoute(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("text/html", resp.content_type)
 
+    def test_index_references_only_versioned_static_assets(self) -> None:
+        resp = self.client.get("/")
+        html = resp.get_data(as_text=True)
+        self.assertIn('href="/static/dashboard.v1.css"', html)
+        self.assertIn('src="/static/dashboard.v1.js"', html)
+        self.assertNotIn("<style", html.lower())
+        self.assertNotRegex(html, r"<script(?![^>]+\bsrc=)")
+        self.assertNotRegex(html, r"\sstyle\s*=")
+        self.assertNotRegex(html, r"\son[a-z]+\s*=")
+
+    def test_versioned_assets_load_with_long_lived_cache_headers(self) -> None:
+        expected = {
+            "/static/dashboard.v1.css": "text/css",
+            "/static/dashboard.v1.js": "javascript",
+        }
+        for path, content_type in expected.items():
+            with self.subTest(path=path):
+                resp = self.client.get(path)
+                try:
+                    self.assertEqual(resp.status_code, 200)
+                    self.assertIn(content_type, resp.content_type)
+                    self.assertIn("public", resp.headers["Cache-Control"])
+                    self.assertIn(
+                        f"max-age={web_app.STATIC_CACHE_SECONDS}",
+                        resp.headers["Cache-Control"],
+                    )
+                finally:
+                    resp.close()
+
+    def test_static_assets_have_no_inline_style_dependencies(self) -> None:
+        resp = self.client.get("/static/dashboard.v1.js")
+        try:
+            script = resp.get_data(as_text=True)
+        finally:
+            resp.close()
+        self.assertNotRegex(script, r"\sstyle\s*=")
+        self.assertNotRegex(script, r"\.style(?:\.|\[)")
+
+    def test_exact_strict_content_security_policy_on_html_and_api(self) -> None:
+        for path in ("/", "/api/status", "/static/dashboard.v1.js"):
+            with self.subTest(path=path):
+                resp = self.client.get(path)
+                try:
+                    self.assertEqual(
+                        resp.headers.get("Content-Security-Policy"),
+                        web_app.CONTENT_SECURITY_POLICY,
+                    )
+                    policy = resp.headers["Content-Security-Policy"]
+                    self.assertNotIn("unsafe-inline", policy)
+                    self.assertNotIn("unsafe-eval", policy)
+                    self.assertNotIn("*", policy)
+                finally:
+                    resp.close()
+
+    def test_companion_security_headers(self) -> None:
+        resp = self.client.get("/")
+        self.assertEqual(resp.headers["Cross-Origin-Opener-Policy"], "same-origin")
+        self.assertEqual(resp.headers["Cross-Origin-Resource-Policy"], "same-origin")
+        self.assertEqual(resp.headers["Referrer-Policy"], "no-referrer")
+        self.assertEqual(resp.headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(resp.headers["X-Frame-Options"], "DENY")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -642,13 +642,19 @@ class TestDryRunDefault(unittest.TestCase):
 
 
 class TestFrontendXSSMitigations(unittest.TestCase):
-    """Verify the HTML template contains XSS mitigations."""
+    """Verify the template and versioned assets retain frontend safeguards."""
 
     @classmethod
     def setUpClass(cls):
         template_path = os.path.join(WEB_DIR, "templates", "index.html")
-        with open(template_path) as f:
+        script_path = os.path.join(WEB_DIR, "static", "dashboard.v1.js")
+        stylesheet_path = os.path.join(WEB_DIR, "static", "dashboard.v1.css")
+        with open(template_path, encoding="utf-8") as f:
             cls.html = f.read()
+        with open(script_path, encoding="utf-8") as f:
+            cls.javascript = f.read()
+        with open(stylesheet_path, encoding="utf-8") as f:
+            cls.css = f.read()
 
     def test_no_inline_onclick_handlers(self):
         """No inline onclick= attributes in the template."""
@@ -660,71 +666,83 @@ class TestFrontendXSSMitigations(unittest.TestCase):
 
     def test_eschtml_escapes_single_quotes(self):
         """escHtml covers both text and quoted attribute delimiters."""
-        self.assertIn("&#39;", self.html)
-        self.assertIn("&quot;", self.html)
-        self.assertIn("function escAttr", self.html)
+        self.assertIn("&#39;", self.javascript)
+        self.assertIn("&quot;", self.javascript)
+        self.assertIn("function escAttr", self.javascript)
 
     def test_safe_css_class_function_exists(self):
         """safeCssClass function strips non-alphanumeric chars."""
-        self.assertIn("safeCssClass", self.html)
-        self.assertIn("[^a-zA-Z0-9_-]", self.html)
+        self.assertIn("safeCssClass", self.javascript)
+        self.assertIn("[^a-zA-Z0-9_-]", self.javascript)
 
     def test_threat_level_uses_safe_css(self):
         """Threat level class interpolation uses safeCssClass."""
-        self.assertIn("safeCssClass(t.threat_level || 'LOW')", self.html)
+        self.assertIn("safeCssClass(t.threat_level || 'LOW')", self.javascript)
 
     def test_action_category_badges_present(self):
         """Action cards show category badges."""
-        self.assertIn("action-category", self.html)
-        self.assertIn("cat-simulated", self.html)
-        self.assertIn("cat-passive", self.html)
-        self.assertIn("cat-active", self.html)
+        self.assertIn("action-category", self.javascript)
+        self.assertIn("cat-simulated", self.css)
+        self.assertIn("cat-passive", self.css)
+        self.assertIn("cat-active", self.css)
 
     def test_data_attributes_for_event_delegation(self):
         """Target items use data attributes instead of inline handlers."""
-        self.assertIn("data-target-id", self.html)
-        self.assertIn("data-action-name", self.html)
-        self.assertIn("data-action-target", self.html)
+        self.assertIn("data-target-id", self.javascript)
+        self.assertIn("data-action-name", self.javascript)
+        self.assertIn("data-action-target", self.javascript)
 
     def test_interactive_cards_are_buttons(self):
-        self.assertIn('<button type="button" class="target-item', self.html)
-        self.assertIn('<button type="button" class="action-card', self.html)
+        self.assertIn('<button type="button" class="target-item', self.javascript)
+        self.assertIn('<button type="button" class="action-card', self.javascript)
 
     def test_scan_requests_use_checked_json_helper(self):
-        self.assertIn("async function fetchJson", self.html)
-        self.assertIn("if (!response.ok)", self.html)
-        self.assertNotIn("setInterval(refreshStatus", self.html)
-        self.assertIn("data === null || data.scanning", self.html)
+        self.assertIn("async function fetchJson", self.javascript)
+        self.assertIn("if (!response.ok)", self.javascript)
+        self.assertNotIn("setInterval(refreshStatus", self.javascript)
+        self.assertIn("data === null || data.scanning", self.javascript)
 
     def test_dynamic_numbers_are_normalized(self):
-        self.assertIn("Number.isFinite(rawScore)", self.html)
-        self.assertIn("Number.isFinite(value)", self.html)
-        self.assertIn("dbm == null || dbm === ''", self.html)
-        self.assertIn("t.signal == null || t.signal === ''", self.html)
+        self.assertIn("Number.isFinite(rawScore)", self.javascript)
+        self.assertIn("Number.isFinite(value)", self.javascript)
+        self.assertIn("dbm == null || dbm === ''", self.javascript)
+        self.assertIn("t.signal == null || t.signal === ''", self.javascript)
 
     def test_live_regions_and_reduced_motion_present(self):
         self.assertIn('role="log" aria-live="polite"', self.html)
         self.assertIn('aria-busy="true"', self.html)
-        self.assertIn('id="action-result" role="status" aria-live="polite"', self.html)
-        self.assertIn("prefers-reduced-motion", self.html)
+        self.assertIn(
+            'id="action-result" role="status" aria-live="polite"',
+            self.javascript,
+        )
+        self.assertIn("prefers-reduced-motion", self.css)
 
     def test_cross_tab_events_are_coalesced_and_refresh_logs(self):
-        self.assertIn("function queueStatusRefresh", self.html)
-        self.assertIn("'scan_start'", self.html)
-        self.assertIn("'targets_cleared'", self.html)
-        self.assertIn("refreshActionLog(selectedTargetId)", self.html)
+        self.assertIn("function queueStatusRefresh", self.javascript)
+        self.assertIn("'scan_start'", self.javascript)
+        self.assertIn("'targets_cleared'", self.javascript)
+        self.assertIn("refreshActionLog(selectedTargetId)", self.javascript)
 
     def test_target_keyboard_navigation_and_focus_restoration(self):
-        self.assertIn("handleTargetListKeydown", self.html)
-        self.assertIn("'ArrowDown'", self.html)
-        self.assertIn('aria-current="${selected ?', self.html)
-        self.assertIn("focusFallback?.focus({preventScroll: true})", self.html)
-        self.assertIn("document.getElementById('btn-scan')?.focus", self.html)
+        self.assertIn("handleTargetListKeydown", self.javascript)
+        self.assertIn("'ArrowDown'", self.javascript)
+        self.assertIn('aria-current="${selected ?', self.javascript)
+        self.assertIn("focusFallback?.focus({preventScroll: true})", self.javascript)
+        self.assertIn("document.getElementById('btn-scan')?.focus", self.javascript)
 
     def test_layout_uses_dynamic_viewport_and_wrapping(self):
-        self.assertIn("height: 100dvh", self.html)
-        self.assertIn("flex-wrap: wrap", self.html)
-        self.assertIn("grid-template-columns: minmax(90px, 35%)", self.html)
+        self.assertIn("height: 100dvh", self.css)
+        self.assertIn("flex-wrap: wrap", self.css)
+        self.assertIn("grid-template-columns: minmax(90px, 35%)", self.css)
+
+    def test_versioned_assets_replace_inline_code_and_styles(self):
+        self.assertIn("dashboard.v1.css", self.html)
+        self.assertIn("dashboard.v1.js", self.html)
+        self.assertNotIn("<style", self.html.lower())
+        self.assertIsNone(re.search(r"<script(?![^>]+\bsrc=)", self.html))
+        self.assertIsNone(re.search(r"\sstyle\s*=", self.html))
+        self.assertIsNone(re.search(r"\sstyle\s*=", self.javascript))
+        self.assertIsNone(re.search(r"\.style(?:\.|\[)", self.javascript))
 
 
 if __name__ == "__main__":
