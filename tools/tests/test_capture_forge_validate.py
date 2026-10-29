@@ -1,6 +1,8 @@
-"""Tests for elrs-capture-forge-validate.py end-to-end validation tool."""
+"""Tests for the offline ELRS capture frame/CRC consistency checker."""
 
+from contextlib import redirect_stderr, redirect_stdout
 import hashlib
+import io
 import json
 import os
 import sys
@@ -20,6 +22,7 @@ extract_sync_uid_suffix = _VALIDATE["extract_sync_uid_suffix"]
 rainbow_lookup = _VALIDATE["rainbow_lookup"]
 validate_forge_pipeline = _VALIDATE["validate_forge_pipeline"]
 decode_all_with_bytes = _VALIDATE["decode_all_with_bytes"]
+main = _VALIDATE["main"]
 
 _LI = runpy.run_path(str(TOOLS / "elrs-li-offline.py"))
 read_rows = _LI["read_rows"]
@@ -90,10 +93,16 @@ class ForgeValidationTests(unittest.TestCase):
 
         report = validate_forge_pipeline(uid, frames)
         self.assertEqual(report["verdict"], "PASS")
-        self.assertEqual(report["sync_forge_match"], 5)
-        self.assertEqual(report["sync_forge_mismatch"], 0)
+        self.assertEqual(report["sync_crc_recompute_match"], 5)
+        self.assertEqual(report["sync_crc_recompute_mismatch"], 0)
         self.assertEqual(report["rc_crc_recompute_match"], 10)
         self.assertEqual(report["rc_crc_recompute_mismatch"], 0)
+        self.assertEqual(report["fhss_indices_observed"], [0])
+        self.assertEqual(report["derived_channel_predictions"][0]["fhss_index"], 0)
+        self.assertNotIn("fhss_index_validated", report)
+        self.assertNotIn("sync_forge_match", report)
+        self.assertIn("no observed RF-channel comparison",
+                      report["evidence_limitations"])
 
 
 class RainbowLookupTests(unittest.TestCase):
@@ -145,10 +154,22 @@ class IntegrationWithCapturesTests(unittest.TestCase):
         self.assertGreater(len(decoded), 0)
         report = validate_forge_pipeline(uid, decoded)
         self.assertEqual(report["verdict"], "PASS")
-        self.assertGreater(report["sync_forge_match"], 0)
+        self.assertGreater(report["sync_crc_recompute_match"], 0)
         self.assertGreater(report["rc_crc_recompute_match"], 0)
-        self.assertEqual(report["sync_forge_mismatch"], 0)
+        self.assertEqual(report["sync_crc_recompute_mismatch"], 0)
         self.assertEqual(report["rc_crc_recompute_mismatch"], 0)
+
+    def test_cli_rejects_non_six_byte_uid_file(self):
+        ranked = self.repo / self.RANKED_FILES[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            uid_file = Path(tmp) / "uid.hex"
+            uid_file.write_text("0011223344", encoding="ascii")
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                rc = main([str(ranked), "--uid-file", str(uid_file)])
+        self.assertEqual(rc, 2)
+        self.assertIn("exactly six UID bytes", stderr.getvalue())
 
 
 if __name__ == "__main__":

@@ -39,6 +39,11 @@ wins.
   sub-agent reviews; Claude's named reviews are deferred as retrospective
   audits. Any takeover of a Claude implementation lane must be recorded here
   before edits begin.
+- Owner decision (2026-10-29): Claude capacity is available again. R4 remains
+  with Codex through its already-started handoff to avoid a mid-diff writer
+  transfer; Claude's read-only review role resumes after that pushed handoff.
+  R5 retains Codex implementation with Claude browser review, and R6 retains
+  Claude implementation after R5.
 
 ## Scope and evidence boundary
 
@@ -212,14 +217,12 @@ remaining lifecycle, cleanup, CI, Windows, or evidence blocker. Browser E2E
 remains an explicit Ubuntu/Windows CI gate and was not rerun locally in this
 pass because the disposable WSL environment has no Playwright browser.
 
-## NOW
-
 ### R4 — Refresh maintained documentation
 
-**Owner:** Codex temporary documentation implementation and independent
-sub-agent review; Claude retrospective review deferred
+**Owner:** Codex implementation; three independent Codex read-only reviews;
+Claude retrospective review available after the pushed handoff
 **Depends on:** R0
-**Status:** NOW — owner-authorized takeover while Claude is unavailable
+**Status:** DONE
 **Evidence target:** SOURCE-DERIVED plus SYNTHETIC/OFFLINE-TESTED commands
 
 Bring `web/README.md` and `tools/README.md` in line with actual behavior. Add
@@ -238,16 +241,47 @@ Acceptance criteria:
 - Local links and named files pass the project validator; an independent review
   finds no stale path, mode, or evidence claim in the maintained READMEs.
 
-## NEXT
+Evidence (2026-10-29): the root, web, and tools guides now match the current
+CLI modes, scanner sequencing, local side effects, action behavior, lifecycle,
+CI matrix, and cross-platform interpreter convention. The maintained passive
+path documents the 62-candidate/54-CRC-valid corpus result and its evidence
+limits. The capture consistency checker now uses neutral CRC/observation JSON
+keys, labels its output pairing-sensitive, rejects non-six-byte UID files, and
+has an 11-test focused regression file. The exact passive command reproduced
+54 byte matches, zero mismatches, and eight unresolved candidates. The
+255-file validator, 127 dashboard tests, and 649 tool tests pass locally (23
+optional integration skips). Three independent final reviews found no stale
+path, mode, side-effect, privacy, or evidence blocker. Browser E2E remains the
+four-cell CI gate and was not rerun locally because the WSL environment lacks
+Playwright/Chrome.
+
+## NOW
 
 ### R5 — Extract dashboard assets and add a strict CSP
 
 **Owner:** Codex implementation; Claude browser review
 **Depends on:** R1–R3
+**Status:** NOW
+**Evidence target:** SYNTHETIC/OFFLINE-TESTED
 
 Move inline CSS and JavaScript to versioned static files, remove inline event
 and style dependencies, then enforce a self-only Content Security Policy. Keep
 the full loopback browser suite green.
+
+Acceptance criteria:
+
+- The rendered template contains no inline script blocks, style blocks,
+  `style=` attributes, or inline event handlers; behavior and layout come from
+  same-origin versioned static assets.
+- Dashboard responses carry an explicit CSP with no `unsafe-inline`,
+  `unsafe-eval`, external script/style origin, or blanket wildcard.
+- Route tests verify asset loading, cache/version references, and the exact CSP;
+  the loopback browser suite covers the complete scan/action/log/clear flow and
+  390 px layout under that policy.
+- The validator, maintained dashboard suites, and full tool suite remain green
+  on the Ubuntu/Windows Python 3.10/3.12 matrix.
+
+## NEXT
 
 ### R6 — Finish selected UX reliability gaps
 
@@ -277,10 +311,10 @@ In order:
 
 ## GATED research pathway queue
 
-R4 remains the single active implementation lane. Every RQ item below has
+R5 remains the single active implementation lane. Every RQ item below has
 status **GATED** and no active owner. Each row records a dormant planned primary
 and reviewer so a future handoff is unambiguous. Promotion requires an explicit
-owner decision and a roadmap change that moves R4 out of NOW, activates the
+owner decision and a roadmap change that moves R5 out of NOW, activates the
 planned assignment (or records a replacement), and records its evidence
 target. Merely appearing here does not authorize serial, RF, hardware, or
 live-device work.
@@ -343,7 +377,7 @@ and [STM32F411 errata](https://www.st.com/resource/en/errata_sheet/es0287-stm32f
 | RQ13 | **Conditional ESP patch-differential corpus** | Claude primary; Codex review | RQ6 confirms exact applicability | Reproduce fixed/affected behavior in offline source tests only for proven components and configurations: [CVE-2024-42484](https://github.com/espressif/esp-now/security/advisories/GHSA-q6f6-4qc5-vhx5), native ESP-IDF [CVE-2025-52471](https://github.com/espressif/esp-idf/security/advisories/GHSA-hqhh-cp47-fv5g), BLE provisioning [CVE-2026-25507](https://github.com/espressif/esp-idf/security/advisories/GHSA-h7r3-gmg9-xjmg) / [CVE-2026-25508](https://github.com/espressif/esp-idf/security/advisories/GHSA-9j5x-rf36-54x9), or SoftAP DHCP [CVE-2026-45160](https://github.com/espressif/esp-idf/security/advisories/GHSA-g764-gwc3-75m5). | `SYNTHETIC/OFFLINE-TESTED`: synthetic packets and local processes only; never present these as blanket ESP32 or E8 findings. |
 | RQ14 | **Adjacent-stack schema and topology health** | Claude primary; Codex review | A demonstrated owned-platform or fixture need | Add offline DSDL/transfer-ID checks for [DroneCAN](https://dronecan.github.io/Specification/6._Application_level_functions/), bounded component-metadata parsing, and firmware-envelope provenance only for ecosystems actually added to the project. | `SYNTHETIC/OFFLINE-TESTED`: keep adapters dormant until needed; no CAN or external metadata fetch by default. |
 
-If the owner explicitly promotes a research task and moves R4 out of NOW, start
+If the owner explicitly promotes a research task and moves R5 out of NOW, start
 with RQ1, then RQ2-RQ4. RQ5-RQ8 are the next target-specific evidence paths.
 RQ9-RQ14 are useful expansion paths, not reasons to delay current work.
 
@@ -403,9 +437,9 @@ making dependencies explicit.
 | 2c | Mypy CI | CHANGED | Part of R7; make it meaningful before making it blocking. |
 | 3a | Project packaging | DEFERRED | Mixed research scripts are not one clean package; revisit web-only packaging after R1. |
 | 3b | Development requirements | CHANGED | Do not install BLE/SDR stacks in unrelated offline CI; pin narrow tooling where used. |
-| 4a | Web UI guide | PARTIAL | Substantial guide landed; refresh exact flags, architecture, simulation semantics, and examples in R4. |
+| 4a | Web UI guide | DONE | R4 now documents exact flags, modes, dependencies, side effects, architecture, API semantics, lifecycle, tests, and browser-isolation limits. |
 | 4b | Main README setup/contributing | DONE | Practical setup, tests, structure, and safety checklist landed. |
-| 4c | Tools catalog | PARTIAL | Catalog landed but misses recent passive tools and contains stale evidence claims; R4. |
+| 4c | Tools catalog | DONE | R4 adds the maintained passive path, corrects test paths and evidence limits, and separates offline, receive-only, active-query, and state-changing behavior. |
 | 5a | Type `web/app.py` | PARTIAL | Function hints mostly landed; state design and concrete types follow R1/R7. |
 | 5b | Type `common.py` | DONE | Function annotations landed; strict checking joins R7. |
 | 5c | Ruff autoformat | REJECTED AS WRITTEN | Use incremental maintained-module checks; no blanket format pass. |
@@ -420,7 +454,8 @@ making dependencies explicit.
 - Flask route tests and loopback-only browser E2E coverage.
 - Responsive dashboard behavior, focus recovery, log drawer, and hardware widget.
 - Probe-free deterministic hardware status in simulation, with live detector delegation preserved.
-- Root, web, and tool documentation foundations.
+- Root, web, and tool documentation aligned with current modes, tests, side
+  effects, passive evidence, and CI behavior.
 - Capture-proven passive SX1280 SF7/4-8-LI decoder and fail-closed pipeline.
 - Private-output confinement, provenance, duplicate-evidence controls, and
   dependency-free passive decoder tests.

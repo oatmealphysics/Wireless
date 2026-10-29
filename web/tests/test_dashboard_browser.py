@@ -57,7 +57,7 @@ class _QuietRequestHandler(WSGIRequestHandler):
 
 
 class DashboardBrowserTests(unittest.TestCase):
-    """Exercise the dashboard as a browser while remaining fully offline."""
+    """Exercise offline application flows in a guarded browser context."""
 
     @classmethod
     def setUpClass(cls):

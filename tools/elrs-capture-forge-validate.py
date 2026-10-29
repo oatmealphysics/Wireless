@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""End-to-end validation: captured frames → UID extraction → forge → CRC cross-check.
+"""Offline v3 frame/CRC consistency check for ranked capture candidates.
 
 Takes ranked PHY JSONL files (from elrs-phy-scan.py), decodes packet bytes,
 extracts UID fragments from SYNC frames, looks up the binding phrase via the
-rainbow table, derives full attack parameters, forges new SYNC and RC packets,
-and verifies the forged CRCs match the same v3 algorithm used on captured frames.
+rainbow table, selects UID material, rebuilds SYNC packets, and checks the same
+v3 CRC algorithm against decoded SYNC and RC candidates.
 
-This validates the complete Chain 1 software path with real RF data, without
-transmitting. A forge-vs-capture CRC agreement proves the UID derivation, FHSS
-seed, CRC initializer, and packet framing are all correct for this target.
+A PASS means that the selected UID/packet model is CRC-consistent with the
+decoded candidates. It does not prove missing UID bytes, measured RF-channel
+hopping, transmitter identity, RF interoperability, receiver acceptance, or
+operational capability. No transmission occurs.
 
-Packet bytes and UID are written only to ignored work/ paths. The stdout report
-contains no pairing-sensitive values unless --verbose is given.
+This tool writes no files. Its normal stderr includes the observed UID suffix,
+and JSON output includes UID-derived CRC/FHSS values; treat all retained output
+as pairing-sensitive and redirect it only below ignored ``work/`` paths.
 
 Usage:
     python3 tools/elrs-capture-forge-validate.py \
@@ -20,7 +22,7 @@ Usage:
 
     python3 tools/elrs-capture-forge-validate.py \
         captures/*ranked*.jsonl captures/*full-phy*.jsonl \
-        --rainbow tools/elrs-rainbow-table.json --verbose
+        --rainbow tools/elrs-rainbow-table.json --json --verbose
 
 Python 3.10+, standard library only.
 For authorized CTF research only.
@@ -156,7 +158,7 @@ def decode_all_with_bytes(rows: list[dict], uid: bytes | None) -> list[dict]:
 
 def validate_forge_pipeline(uid: bytes, decoded_frames: list[dict],
                             verbose: bool = False) -> dict:
-    """Cross-validate forged packets against real captured frames."""
+    """Compare rebuilt-packet and recomputed CRC values with decoded frames."""
     crc_init = v3_uid_crc_init(uid)
     fhss_seed = v3_uid_seed(uid)
     fhss_seq = v3_build_sequence(uid)
@@ -170,11 +172,11 @@ def validate_forge_pipeline(uid: bytes, decoded_frames: list[dict],
         "total_decoded_frames": len(decoded_frames),
         "sync_frames": 0,
         "rc_frames": 0,
-        "sync_forge_match": 0,
-        "sync_forge_mismatch": 0,
+        "sync_crc_recompute_match": 0,
+        "sync_crc_recompute_mismatch": 0,
         "rc_crc_recompute_match": 0,
         "rc_crc_recompute_mismatch": 0,
-        "fhss_index_validated": set(),
+        "fhss_indices_observed": set(),
         "nonce_values_seen": set(),
     }
 
@@ -188,10 +190,10 @@ def validate_forge_pipeline(uid: bytes, decoded_frames: list[dict],
             report["sync_frames"] += 1
             sync = v3_decode_sync(pkt)
             report["nonce_values_seen"].add(sync.nonce)
-            report["fhss_index_validated"].add(sync.fhss_index)
+            report["fhss_indices_observed"].add(sync.fhss_index)
 
-            # Forge a SYNC with the same parameters
-            forged = v3_build_sync(
+            # Rebuild a SYNC with the same decoded parameters.
+            rebuilt = v3_build_sync(
                 uid,
                 fhss_index=sync.fhss_index,
                 nonce=sync.nonce,
@@ -200,15 +202,16 @@ def validate_forge_pipeline(uid: bytes, decoded_frames: list[dict],
                 new_tlm_ratio=sync.new_tlm_ratio,
             )
 
-            # Compare CRC: the forged packet should match the captured one
+            # Compare only the CRC values; this is not an RF-channel or
+            # receiver-acceptance check.
             captured_crc = ((pkt[0] >> 2) << 8) | pkt[7]
-            forged_crc = ((forged[0] >> 2) << 8) | forged[7]
+            rebuilt_crc = ((rebuilt[0] >> 2) << 8) | rebuilt[7]
 
-            match = captured_crc == forged_crc
+            match = captured_crc == rebuilt_crc
             if match:
-                report["sync_forge_match"] += 1
+                report["sync_crc_recompute_match"] += 1
             else:
-                report["sync_forge_mismatch"] += 1
+                report["sync_crc_recompute_mismatch"] += 1
 
             if verbose:
                 details.append({
@@ -216,7 +219,7 @@ def validate_forge_pipeline(uid: bytes, decoded_frames: list[dict],
                     "nonce": sync.nonce,
                     "fhss_index": sync.fhss_index,
                     "captured_crc": f"0x{captured_crc:04X}",
-                    "forged_crc": f"0x{forged_crc:04X}",
+                    "rebuilt_crc": f"0x{rebuilt_crc:04X}",
                     "match": match,
                     "uid3_match": sync.uid_matches(uid),
                 })
@@ -241,29 +244,37 @@ def validate_forge_pipeline(uid: bytes, decoded_frames: list[dict],
                 })
 
     # Convert sets to sorted lists for JSON
-    report["fhss_index_validated"] = sorted(report["fhss_index_validated"])
+    report["fhss_indices_observed"] = sorted(report["fhss_indices_observed"])
     report["nonce_values_seen"] = sorted(report["nonce_values_seen"])
 
-    # Validate FHSS sequence consistency
+    # Derive expected channels from decoded indices. This does not compare
+    # against an observed RF frequency.
     fhss_checks = []
-    for idx in report["fhss_index_validated"]:
+    for idx in report["fhss_indices_observed"]:
         if idx < len(fhss_seq):
             expected_ch = fhss_seq[idx]
             fhss_checks.append({"fhss_index": idx, "expected_channel": expected_ch})
-    report["fhss_sequence_spot_checks"] = fhss_checks
+    report["derived_channel_predictions"] = fhss_checks
 
     # Overall verdict
     total_sync = report["sync_frames"]
     total_rc = report["rc_frames"]
-    sync_ok = report["sync_forge_match"]
+    sync_ok = report["sync_crc_recompute_match"]
     rc_ok = report["rc_crc_recompute_match"]
 
     report["verdict"] = "PASS" if (
         total_sync > 0 and sync_ok == total_sync and
         total_rc > 0 and rc_ok == total_rc
     ) else "FAIL" if (
-        report["sync_forge_mismatch"] > 0 or report["rc_crc_recompute_mismatch"] > 0
+        report["sync_crc_recompute_mismatch"] > 0 or
+        report["rc_crc_recompute_mismatch"] > 0
     ) else "INSUFFICIENT_DATA"
+
+    report["evidence_limitations"] = [
+        "CRC/frame consistency only",
+        "no observed RF-channel comparison",
+        "no RF interoperability or receiver-acceptance test",
+    ]
 
     if verbose:
         report["frame_details"] = details
@@ -286,13 +297,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--phrase",
                         help="Known binding phrase (bypasses rainbow lookup)")
     parser.add_argument("--verbose", action="store_true",
-                        help="Include per-frame details and UID-derived values in output")
+                        help="Include per-frame details in --json and print a matched phrase to stderr")
     parser.add_argument("--json", action="store_true",
-                        help="Output full report as JSON")
+                        help="Output pairing-sensitive full report as JSON; redirect under work/")
     args = parser.parse_args(argv)
 
     try:
-        print("=== ELRS Capture-to-Forge Validation ===", file=sys.stderr)
+        print("=== ELRS Offline Frame/CRC Consistency Check ===", file=sys.stderr)
         print(f"Reading {len(args.inputs)} ranked JSONL files...", file=sys.stderr)
 
         rows = read_rows(args.inputs)
@@ -300,13 +311,21 @@ def main(argv: list[str] | None = None) -> int:
 
         # Step 1: Extract UID suffix from SYNC frames
         uid = None
+        uid_source = "unknown"
+        uid_complete = False
 
         if args.uid_file:
             uid_hex = args.uid_file.read_text("ascii").strip()
             uid = bytes.fromhex(uid_hex)
+            if len(uid) != 6:
+                raise ValueError("--uid-file must contain exactly six UID bytes")
+            uid_source = "uid_file"
+            uid_complete = True
             print(f"  UID loaded from file ({len(uid)} bytes)", file=sys.stderr)
         elif args.phrase:
             uid = phrase_to_uid(args.phrase)
+            uid_source = "binding_phrase"
+            uid_complete = True
             print(f"  UID derived from phrase", file=sys.stderr)
         else:
             suffix = extract_sync_uid_suffix(rows)
@@ -323,6 +342,8 @@ def main(argv: list[str] | None = None) -> int:
             if matches:
                 phrase = matches[0]["phrase"]
                 uid = phrase_to_uid(phrase)
+                uid_source = "rainbow_match"
+                uid_complete = True
                 print(f"  Rainbow match: binding phrase found ({len(matches)} match(es))",
                       file=sys.stderr)
                 if args.verbose:
@@ -334,14 +355,17 @@ def main(argv: list[str] | None = None) -> int:
                 print("  Falling back to partial validation (SYNC self-CRC only)",
                       file=sys.stderr)
                 uid = bytes((0, 0, 0, uid3, uid4, uid5))
+                uid_source = "partial_sync_suffix"
 
         # Step 3: Decode all frames with packet bytes
         decoded = decode_all_with_bytes(rows, uid)
         print(f"  {len(decoded)} CRC-valid frames decoded with bytes", file=sys.stderr)
 
-        # Step 4: Validate forge pipeline
-        print("Validating forge pipeline...", file=sys.stderr)
+        # Step 4: Check the selected UID and v3 frame/CRC model
+        print("Checking v3 frame/CRC consistency...", file=sys.stderr)
         report = validate_forge_pipeline(uid, decoded, verbose=args.verbose)
+        report["uid_source"] = uid_source
+        report["uid_complete"] = uid_complete
 
         # Output
         if args.json:
@@ -351,17 +375,19 @@ def main(argv: list[str] | None = None) -> int:
             marker = {"PASS": "+", "FAIL": "!", "INSUFFICIENT_DATA": "?"}[v]
             print(f"\n[{marker}] Verdict: {v}")
             print(f"    SYNC frames: {report['sync_frames']} "
-                  f"(forge match: {report['sync_forge_match']}, "
-                  f"mismatch: {report['sync_forge_mismatch']})")
+                  f"(CRC recompute match: {report['sync_crc_recompute_match']}, "
+                  f"mismatch: {report['sync_crc_recompute_mismatch']})")
             print(f"    RC frames:   {report['rc_frames']} "
                   f"(CRC recompute match: {report['rc_crc_recompute_match']}, "
                   f"mismatch: {report['rc_crc_recompute_mismatch']})")
-            print(f"    FHSS indices validated: {report['fhss_index_validated']}")
+            print(f"    FHSS indices observed in SYNC fields: "
+                  f"{report['fhss_indices_observed']}")
             print(f"    Nonce values seen: {report['nonce_values_seen']}")
             if report["verdict"] == "PASS":
-                print("\n    The forge pipeline produces CRC-valid packets that match")
-                print("    real captured frames. UID derivation, FHSS seed, CRC init,")
-                print("    and v3 packet framing are all validated against live RF data.")
+                print("\n    The selected UID and v3 packet model produce CRC values")
+                print("    consistent with the decoded candidate frames. This does not")
+                print("    validate missing UID bytes, observed RF channels, radio")
+                print("    interoperability, or receiver acceptance.")
             elif report["verdict"] == "FAIL":
                 print("\n    MISMATCH DETECTED — investigate CRC or UID derivation errors.")
 

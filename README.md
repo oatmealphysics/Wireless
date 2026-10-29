@@ -14,6 +14,9 @@ append-only evidence log.
 - **Git**
 - **Linux** recommended for full scanner hardware support; Windows and macOS work for offline analysis and SITL testing
 
+Command examples use `python3` on Linux/macOS. Inside an activated Windows
+virtual environment, use `python` for the same module or script.
+
 ### Optional hardware dependencies (for live scanning)
 
 | Component | Package / Tool | Used by |
@@ -64,8 +67,8 @@ pip install pyserial
 # Simulation mode (no hardware)
 python3 web/app.py --simulate
 
-# Live mode with hardware
-python3 web/app.py --wifi-iface wlan0mon --sdr-args "driver=uhd"
+# Live mode with hardware (the current nmcli backend uses its default interface)
+python3 web/app.py --sdr-args "driver=uhd"
 ```
 
 See [web/README.md](web/README.md) for the full Web UI guide.
@@ -105,16 +108,20 @@ python3 -B -m unittest discover -s tools/tests -p "test_*.py" -v
 python3 -m pip install -r web/requirements-e2e.txt
 python3 -B -m unittest discover -s tools/tests -p "test_web_dashboard.py" -v
 
-# Web dashboard route tests
+# Web dashboard route, factory, lifecycle, and state-history tests
 python3 -B -m unittest discover -s web/tests -p "test_api_routes.py" -v
+python3 -B -m unittest discover -s web/tests -p "test_app_factory.py" -v
+python3 -B -m unittest discover -s web/tests -p "test_app_lifecycle.py" -v
+python3 -B -m unittest discover -s web/tests -p "test_state_histories.py" -v
 
 # Web dashboard browser tests (Playwright + Chrome)
 python3 -B -m unittest discover -s web/tests -p "test_dashboard_browser.py" -v
 ```
 
-CI runs the offline validator/tool suite on Ubuntu and Windows with Python 3.10
-and 3.12. Dashboard backend, route, and browser checks run on both operating
-systems with Python 3.12. See [`.github/workflows/validate.yml`](.github/workflows/validate.yml).
+CI runs the offline validator/tool suite and all dashboard backend, route,
+lifecycle, state-history, and browser checks on Ubuntu and Windows with Python
+3.10 and 3.12. See
+[`.github/workflows/validate.yml`](.github/workflows/validate.yml).
 
 ## Project Structure
 
@@ -123,7 +130,7 @@ research-project/
 ├── web/                    # Browser-based dashboard (Flask)
 │   ├── app.py              # Main application
 │   ├── templates/          # HTML templates
-│   ├── tests/              # Browser-level Playwright tests
+│   ├── tests/              # Route, factory, lifecycle, state, and browser tests
 │   └── README.md           # Web UI quick-start guide
 ├── tools/                  # Security research tools
 │   ├── exploit_chains/     # Automated multi-stage attack scripts
@@ -155,13 +162,13 @@ research-project/
 
 - **Python 3.10+** — use type hints where they aid readability.
 - **No third-party dependencies for core tool logic** — the WiFi and MAVLink chains run on stdlib only. SDR, BLE, serial, and video tools declare their dependencies in docstrings.
-- **Safe defaults** — every tool with transmit/write capability must default to dry-run or read-only. The `--arm` flag pattern is required for any state-changing operation.
-- **Structured output** — tools produce line-oriented or JSON output to stdout for piping. Use stderr for status messages and warnings.
-- **Private data isolation** — UIDs, captures, decoded frames, and device-specific configs belong under the ignored `work/` directory. Never commit binding phrases, device identifiers, or raw capture data.
+- **Safe defaults for new work** — new or materially changed transmit/write paths must default to dry-run or read-only and use an explicit, documented execution gate. Existing tools do not share one universal flag; see `tools/README.md`.
+- **Machine-readable output where promised** — preserve a tool's documented JSON/line-oriented mode and keep status messages on stderr. Do not assume every legacy tool has structured stdout.
+- **Private data isolation** — private UIDs, captures, decoded frames, and device-specific configs belong under ignored `work/`. A raw capture enters the tracked Git-LFS corpus only after an explicit publication decision plus provenance/hash documentation; otherwise do not commit it.
 
 ### Adding a new tool
 
-1. Add the tool to `tools/` with a descriptive docstring covering usage, dependencies, and the `--arm` requirement if applicable.
+1. Add the tool to `tools/` with a descriptive docstring covering usage, dependencies, execution category, and its explicit state-changing gate when applicable.
 2. Default to dry-run/read-only behavior.
 3. Add unit tests in `tools/tests/` covering the dry-run path and safety interlocks.
 4. Update `tools/README.md` with a one-line description in the appropriate section.
@@ -171,7 +178,7 @@ research-project/
 
 Before merging a tool that can transmit, inject, write, or change device state, verify:
 
-- [ ] Safe default and explicit `--arm` / `--execute` flag
+- [ ] Safe default and an explicit, documented execution gate
 - [ ] Target and version checks
 - [ ] Hard bounds on effects (payload count, duration, RF power)
 - [ ] Log redaction (no credentials or private identifiers in output)

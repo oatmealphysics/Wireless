@@ -4543,3 +4543,86 @@ to `origin/main`. No force push, branch switch, or history rewrite.
 - Bench validation of forged-packet acceptance (GATED: requires SDR, battery,
   explicit approval, props-off plan).
 - R4 documentation refresh continues as the active NOW lane (Codex ownership).
+
+---
+
+## 68. Maintained documentation and evidence-language refresh (Codex, 2026-10-29)
+
+**Starting revision and objective:** Work started from clean revision
+`c017d8508612b3524324d7e7443100237f13cfab`. R4 reconciled the maintained
+root, web, and tools guides with the current implementation, executable test
+paths, passive-corpus evidence, and offline/passive/active behavior boundaries.
+The owner reported that Claude capacity is available again; the already-started
+Codex implementation remained serialized through this handoff, and Claude's
+read-only browser/review role is restored for R5.
+
+**Documentation and behavior audit:** `web/README.md` now documents the fixed
+simulation catalog, live-probe semantics, one-worker/sequential scanner model,
+adapter-specific `scan_time` behavior, actual local dependencies and side
+effects, dry-run/live-action combinations, local Parrot and MAVLink behavior,
+Chain 2's API-only status and five-copy send path, complete API/event/lifecycle
+semantics, bounded histories, all maintained tests, and the exact browser
+isolation guarantee. `tools/README.md` replaces false repository-wide `--arm`
+and structured-output promises with explicit execution categories; adds the
+maintained passive pipeline and independent SX1280 decoder; records the
+62-candidate/54-valid/16-SYNC/38-RC/8-unresolved result; and distinguishes RF
+receive-only behavior from serial, BLE, UDP, WiFi, NetworkManager, and other
+active effects. The root guide now matches the four-cell CI matrix and the
+intentional provenance-controlled Git-LFS capture policy.
+
+**Evidence-language correction:** `elrs-capture-forge-validate.py` is now
+presented as an offline frame/CRC consistency checker rather than complete
+Chain 1 or FHSS validation. Its human and JSON output use neutral
+`sync_crc_recompute_*`, `fhss_indices_observed`, `rebuilt_crc`, and
+`derived_channel_predictions` names, state the evidence limitations, identify
+UID provenance/completeness, describe retained output as pairing-sensitive,
+and reject UID files that are not exactly six bytes. The focused test file now
+locks the neutral schema, limitations, and invalid-UID behavior.
+
+**Validation:**
+
+- Exact documented passive command: 62 candidates, 54 CRC-valid frames,
+  54 independent byte matches, zero mismatches/false positives, eight
+  unresolved, `CAPTURE-VALIDATED` CLI result mapped to roadmap
+  `PASSIVE-CAPTURE-VALIDATED`.
+- Capture consistency tests: 11/11 PASS.
+- Passive pipeline plus independent decoder tests: 78/78 PASS before the
+  capture-consistency additions; combined focused set is 89 tests.
+- Maintained dashboard/API/factory/lifecycle/history set: 127/127 PASS with
+  Flask installed; an earlier dependency-free attempt skipped 112 Flask tests
+  and was not counted as validation.
+- Full tool suite: 649 PASS, 23 optional integration tests skipped.
+- `python3 -B tools/validate-project.py`: PASS (255 files).
+- Python 3.10 grammar parse: PASS for all three changed Python files.
+- `git diff --check`: PASS with the existing line-ending notice only.
+- Three independent final read-only reviews found no remaining web behavior,
+  tool-mode, privacy, schema, path, command, or evidence blocker.
+- Browser E2E was not rerun locally because the WSL environment lacks
+  Playwright/Chrome; it remains an explicit Ubuntu/Windows Python 3.10/3.12 CI
+  gate.
+
+**Environment note:** WSL startup initially required the approved unsandboxed
+path. Its system Python lacked Flask, so Ubuntu's packaged `python3-flask` was
+installed before rerunning the real 127-test backend set. No repository
+dependency or lock file changed.
+
+**Safety boundary:** Work used local source, tracked fixtures/captures,
+temporary files, Flask test clients, deterministic simulation, and read-only
+review. It did not access hardware, serial ports, RF, firmware, credentials,
+external targets, or live actions. The generated ignored passive-pipeline
+report was removed after its aggregate result was recorded.
+
+**Changed files:** `README.md`, `PROJECT-ROADMAP.md`, `tools/README.md`,
+`tools/elrs-capture-forge-validate.py`,
+`tools/tests/test_capture_forge_validate.py`, `web/README.md`,
+`web/tests/test_dashboard_browser.py`, and this evidence log.
+
+**Commit/push status:** Prepared for one normal exact-path commit and push to
+`origin/main`; no force push, rebase, branch switch, history rewrite, broad
+staging, hardware action, or external publication is used.
+
+**Next task:** R5 is the sole NOW lane. Extract inline dashboard CSS/JavaScript
+to versioned same-origin static assets, remove remaining inline style/event
+dependencies, add a strict CSP without unsafe inline/eval allowances, and keep
+the route plus loopback browser suites green. Claude is assigned the independent
+browser review after the pushed implementation handoff.
