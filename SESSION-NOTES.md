@@ -4420,3 +4420,126 @@ action, or broad staging is used.
 reconcile `web/README.md` and `tools/README.md` with executable commands,
 current passive-decoder evidence, and explicit offline/passive/active behavior
 boundaries, then obtain an independent documentation review.
+
+---
+
+## 67. TinyHawk MSP characterization and attack-model analysis (Claude, 2026-10-27 + 2026-10-29)
+
+**Starting revision and objective:** Work began from `7820a7a` on the Lenovo
+NUC13 desktop. The objective was read-only MSP characterization of the
+TinyHawk III Plus on COM5 (USB VCP, VID 0483:5740, STM32 CDC) to complete the
+CRSF/MSP pathway mapping and produce an attack-scenario model for the CTF.
+This is research work outside the R0–R7 maintained-software backlog; it
+contributes to the GATED RQ3/RQ4 evidence base but does not activate those
+tasks. The session stalled on 2026-10-27 at a usage limit, then resumed on
+2026-10-29 after the limit reset.
+
+**Safety boundary:** All device interaction was read-only MSP queries over the
+existing USB VCP connection. No writes, no CLI mode, no motor commands, no
+arming, no RF transmission, no firmware changes, no bootloader entry. Props
+were removed per standing procedure. The E8 on COM4 was not touched.
+
+**Actions and evidence:**
+
+1. **MSP identity probe** (Oct 27): Queried MSP commands 1–4, 10, 160, 101,
+   36 on COM5. Confirmed: API 1.45, BTFL 4.4.2, board S411 (STM32F411),
+   unified target EMAX_TINYHAWKF4SX1280, manufacturer EMAX, craft name
+   "TH III Plus".
+
+2. **MSP deep dump** (Oct 27): Read 28 MSP commands covering RX config,
+   failsafe, serial ports, features, status, RC, motors, attitude, RC tuning.
+   Encountered transient USB serial errors after 14 commands; recovered with
+   port close/reopen retry logic. Key findings: `serialrx_provider=9` (CRSF),
+   failsafe delay 0.5s.
+
+3. **Aux safety snapshot** (Oct 27): Read mode ranges, adjustment ranges, RC
+   map, and 3 consecutive RC samples. Decoded 5 active mode ranges and the
+   TAER channel mapping.
+
+4. **UID cross-validation** (Oct 27): Extracted UID from E8 vendor-read binary,
+   confirmed UID[3:5] = 0x11:18:5b matches SYNC-extracted values from passive
+   captures. Validated FHSS seed derivation and CRC init for both OTA v3 and v4.
+
+5. **Attack profile generation** (Oct 27): Generated complete attack parameter
+   set from UID: FHSS sequence, CRC init, sync channel, test SYNC packet.
+
+6. **Extended MSP probe** (Oct 29, resumed session): Queried 33 MSP commands
+   (32 responded). New findings:
+   - **UART2 runs TBS SmartAudio (0x0800), not CRSF.** The CRSF link uses SPI
+     bus 3 directly (`rx_spi_protocol=19`). This means the attack pathway is
+     OTA → SX1280 SPI → ELRS stack in BF → CRSF → MSP handler, with no UART
+     intermediary.
+   - **RX config bytes 35–37 contain 0x11:18:5b** — UID[3:5] exposed through a
+     third independent MSP command path (after vendor read and SYNC extraction).
+   - PID values: ROLL P111/I198/D102, PITCH P116/I208/D116, YAW P111/I198/D0
+     (stock EMAX TinyHawk III Plus tune).
+   - Arming config: auto_disarm_delay=0, no angle limit. Battery config all
+     zeros (USB-only, no battery connected).
+   - MSP_MIXER_CONFIG (cmd 66) returned no response — possibly not in the BF
+     4.4.2 MSP v1 command set.
+
+7. **Nonce/timing analysis** (Oct 29): Analyzed all 16 SYNC frames from two
+   captures. Confirmed 150 Hz packet rate by cross-validating nonce deltas
+   against time deltas (e.g., nonce 64→66 in 0.013s = exactly 2 packets at
+   150 Hz; nonce 3→64 over 2.113s = 317 packets, 317 mod 256 = 61). FHSS
+   cycle is 240 hops at 1.6s, with sync channel (index 41, `freq_count/2+1`
+   confirming ELRS ≤3.x formula) visited every 80 hops (0.533s).
+
+8. **Mode range attack modeling** (Oct 29): Mapped all 5 active mode ranges
+   to concrete µs values and OTA encoding:
+   - **ARM:** AUX1 (ch4) at 1700–2100µs (steps 32–48). Currently disarmed at
+     1000µs. Throttle must be <1050µs for initial arm.
+   - **ANGLE:** AUX2 (ch5) at 900–1300µs. **HORIZON:** AUX2 at 1300–1700µs.
+     Currently in ACRO (ch5=2000µs, above both ranges).
+   - **Turtle mode:** AUX3 (ch6) at 1700–2100µs. Currently off at 1000µs.
+   - **Anti Gravity:** AUX4 (ch7) at 1700–2100µs. Currently on at 2000µs.
+   - In OTA v3 hybrid switch mode, AUX1 updates when `nonce % 8 == 1`
+     (every 53ms at 150 Hz).
+
+   Modeled four attack scenarios: force-arm, force-disarm, turtle-mode
+   activation, and MSP-over-ELRS command injection.
+
+**What worked:** All read-only MSP commands returned valid data on COM5. The
+nonce analysis produced exact timing confirmation. The mode range decoding
+matched the expected EMAX TinyHawk III Plus stock configuration.
+
+**What remained inconclusive:** MSP_MIXER_CONFIG (cmd 66) did not respond;
+motor values were garbage (USB-only power, no battery). The failsafe response
+was only 3 bytes where BF 4.4.2 should return more — possibly a response
+format difference or the FC omitting fields without battery.
+
+**Private data (under ignored `work/tinyhawk-identity/`):**
+- `msp-identity-2026-10-27.txt` — MSP identity output
+- `msp-deep-dump-2026-10-27.json` — 28-command config dump with raw responses
+- `aux-safety-2026-10-27.json` — mode ranges, RC map, RC samples
+- `uid-derivation-validation-2026-10-27.json` — FHSS/CRC validation summary
+- `attack-profile-2026-10-27.json` — complete attack parameter set
+- `uid.hex` — UID hex string
+- `msp-extended-probe-2026-10-27.json` — 33-command extended probe (saved Oct 29)
+- `nonce-timing-analysis-2026-10-29.json` — nonce/FHSS timing analysis
+- `mode-range-attack-model-2026-10-29.json` — attack scenario model
+
+**Changed files:** `SESSION-NOTES.md` and private data under `work/`.
+
+**Validation:** All MSP probes ran successfully against COM5. No writes were
+issued. Private data is under ignored `work/` per AGENTS.md rule 7.
+
+**Commit/push status:** This log entry is prepared for a normal commit and push
+to `origin/main`. No force push, branch switch, or history rewrite.
+
+**Relevance to GATED research pathways:**
+- **RQ3 (CRSF conformance):** The serial port topology (SPI CRSF, no UART)
+  establishes the internal data path for future CRSF differential testing.
+- **RQ4 (MSP read-only contract):** The extended probe results provide ground
+  truth for which MSP commands respond on this specific BF 4.4.2 build, which
+  informs the allowlist for any future SITL comparison.
+- **Attack scenarios:** The mode range model and nonce timing analysis are the
+  source-derived + MSP-confirmed basis for any future OTA injection test, which
+  remains GATED pending explicit approval and SDR hardware.
+
+**Next steps (all GATED or deferred):**
+- Betaflight 4.4.2 source analysis for MSP-over-ELRS packet handling (offline,
+  from pinned source tarball — requires RQ4 promotion).
+- Bench validation of forged-packet acceptance (GATED: requires SDR, battery,
+  explicit approval, props-off plan).
+- R4 documentation refresh continues as the active NOW lane (Codex ownership).
