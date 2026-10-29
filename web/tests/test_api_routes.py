@@ -25,6 +25,7 @@ web_app = get_web_app()
 class TestStatusEndpoint(unittest.TestCase):
     def setUp(self) -> None:
         self.client = make_flask_client(web_app)
+        self.state = web_app.get_dashboard_state(self.client.application)
 
     def test_status_returns_200(self) -> None:
         resp = self.client.get("/api/status")
@@ -42,22 +43,22 @@ class TestStatusEndpoint(unittest.TestCase):
         self.assertIn("hardware", data)
 
     def test_status_reflects_mode_flags(self) -> None:
-        web_app.get_dashboard_state().simulate_mode = True
-        web_app.get_dashboard_state().dry_run_mode = False
+        self.state.simulate_mode = True
+        self.state.dry_run_mode = False
         data = self.client.get("/api/status").get_json()
         self.assertTrue(data["simulate"])
         self.assertFalse(data["dry_run"])
 
     def test_status_includes_injected_targets(self) -> None:
-        web_app.get_dashboard_state().targets["wifi:t1"] = make_target(target_id="wifi:t1")
+        self.state.targets["wifi:t1"] = make_target(target_id="wifi:t1")
         data = self.client.get("/api/status").get_json()
         self.assertEqual(data["target_count"], 1)
         self.assertEqual(len(data["targets"]), 1)
         self.assertEqual(data["targets"][0]["id"], "wifi:t1")
 
     def test_targets_sorted_by_score_descending(self) -> None:
-        web_app.get_dashboard_state().targets["a"] = make_target(target_id="a", score=30, name="low")
-        web_app.get_dashboard_state().targets["b"] = make_target(target_id="b", score=90, name="high")
+        self.state.targets["a"] = make_target(target_id="a", score=30, name="low")
+        self.state.targets["b"] = make_target(target_id="b", score=90, name="high")
         data = self.client.get("/api/status").get_json()
         self.assertEqual(data["targets"][0]["name"], "high")
         self.assertEqual(data["targets"][1]["name"], "low")
@@ -67,6 +68,7 @@ class TestStatusEndpoint(unittest.TestCase):
 class TestScanEndpoint(unittest.TestCase):
     def setUp(self) -> None:
         self.client = make_flask_client(web_app)
+        self.state = web_app.get_dashboard_state(self.client.application)
 
     def test_scan_starts_successfully(self) -> None:
         with patch.object(web_app.threading, "Thread") as thread_cls:
@@ -75,10 +77,10 @@ class TestScanEndpoint(unittest.TestCase):
         data = resp.get_json()
         self.assertEqual(data["status"], "scanning")
         thread_cls.return_value.start.assert_called_once()
-        web_app.get_dashboard_state().is_scanning = False
+        web_app._finish_scan(self.state, self.state.active_scan_generation)
 
     def test_scan_rejects_concurrent(self) -> None:
-        web_app.get_dashboard_state().is_scanning = True
+        self.state.is_scanning = True
         resp = self.client.post("/api/scan", json={})
         self.assertEqual(resp.status_code, 409)
 
@@ -86,7 +88,7 @@ class TestScanEndpoint(unittest.TestCase):
         with patch.object(web_app.threading, "Thread"):
             resp = self.client.post("/api/scan", content_type="application/json")
         self.assertEqual(resp.status_code, 200)
-        web_app.get_dashboard_state().is_scanning = False
+        web_app._finish_scan(self.state, self.state.active_scan_generation)
 
     def test_scan_rejects_non_object_body(self) -> None:
         resp = self.client.post("/api/scan", json=["wifi"])
@@ -111,14 +113,15 @@ class TestScanEndpoint(unittest.TestCase):
             resp = self.client.post("/api/scan", json={"protocols": ["wifi", "wifi", "ble"]})
         data = resp.get_json()
         self.assertEqual(data["protocols"], ["wifi", "ble"])
-        web_app.get_dashboard_state().is_scanning = False
+        web_app._finish_scan(self.state, self.state.active_scan_generation)
 
 
 @needs_flask
 class TestTargetDetailEndpoint(unittest.TestCase):
     def setUp(self) -> None:
         self.client = make_flask_client(web_app)
-        web_app.get_dashboard_state().targets["wifi:t1"] = make_target(target_id="wifi:t1")
+        self.state = web_app.get_dashboard_state(self.client.application)
+        self.state.targets["wifi:t1"] = make_target(target_id="wifi:t1")
 
     def test_existing_target_returns_200(self) -> None:
         resp = self.client.get("/api/targets/wifi:t1")
@@ -138,7 +141,8 @@ class TestTargetDetailEndpoint(unittest.TestCase):
 class TestTargetActionEndpoint(unittest.TestCase):
     def setUp(self) -> None:
         self.client = make_flask_client(web_app)
-        web_app.get_dashboard_state().targets["wifi:t1"] = make_target(
+        self.state = web_app.get_dashboard_state(self.client.application)
+        self.state.targets["wifi:t1"] = make_target(
             target_id="wifi:t1",
             actions=["land", "streamon"],
         )
@@ -180,14 +184,15 @@ class TestTargetActionEndpoint(unittest.TestCase):
             "/api/targets/wifi:t1/action",
             json={"action": "land"},
         )
-        self.assertTrue(web_app.get_dashboard_state().action_log)
-        self.assertEqual(web_app.get_dashboard_state().action_log[-1]["action"], "land")
+        self.assertTrue(self.state.action_log)
+        self.assertEqual(self.state.action_log[-1]["action"], "land")
 
 
 @needs_flask
 class TestActionDefsEndpoint(unittest.TestCase):
     def setUp(self) -> None:
         self.client = make_flask_client(web_app)
+        self.state = web_app.get_dashboard_state(self.client.application)
 
     def test_returns_all_action_defs(self) -> None:
         resp = self.client.get("/api/actions")
@@ -206,6 +211,7 @@ class TestActionDefsEndpoint(unittest.TestCase):
 class TestLogEndpoint(unittest.TestCase):
     def setUp(self) -> None:
         self.client = make_flask_client(web_app)
+        self.state = web_app.get_dashboard_state(self.client.application)
 
     def test_log_returns_empty_list(self) -> None:
         resp = self.client.get("/api/log")
@@ -213,7 +219,7 @@ class TestLogEndpoint(unittest.TestCase):
         self.assertEqual(resp.get_json(), [])
 
     def test_log_returns_recent_actions(self) -> None:
-        web_app.get_dashboard_state().targets["wifi:t1"] = make_target(target_id="wifi:t1")
+        self.state.targets["wifi:t1"] = make_target(target_id="wifi:t1")
         self.client.post("/api/targets/wifi:t1/action", json={"action": "land"})
         resp = self.client.get("/api/log")
         entries = resp.get_json()
@@ -222,7 +228,7 @@ class TestLogEndpoint(unittest.TestCase):
 
     def test_log_capped_at_50(self) -> None:
         for i in range(60):
-            web_app.get_dashboard_state().action_log.append({"id": str(i), "action": f"a{i}"})
+            self.state.action_log.append({"id": str(i), "action": f"a{i}"})
         resp = self.client.get("/api/log")
         self.assertEqual(len(resp.get_json()), 50)
 
@@ -231,16 +237,17 @@ class TestLogEndpoint(unittest.TestCase):
 class TestClearEndpoint(unittest.TestCase):
     def setUp(self) -> None:
         self.client = make_flask_client(web_app)
+        self.state = web_app.get_dashboard_state(self.client.application)
 
     def test_clear_removes_targets(self) -> None:
-        web_app.get_dashboard_state().targets["wifi:t1"] = make_target(target_id="wifi:t1")
+        self.state.targets["wifi:t1"] = make_target(target_id="wifi:t1")
         resp = self.client.post("/api/clear")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.get_json()["status"], "cleared")
-        self.assertEqual(len(web_app.get_dashboard_state().targets), 0)
+        self.assertEqual(len(self.state.targets), 0)
 
     def test_clear_rejected_during_scan(self) -> None:
-        web_app.get_dashboard_state().is_scanning = True
+        self.state.is_scanning = True
         resp = self.client.post("/api/clear")
         self.assertEqual(resp.status_code, 409)
 
@@ -249,6 +256,7 @@ class TestClearEndpoint(unittest.TestCase):
 class TestHardwareEndpoint(unittest.TestCase):
     def setUp(self) -> None:
         self.client = make_flask_client(web_app)
+        self.state = web_app.get_dashboard_state(self.client.application)
 
     def test_simulation_hardware_never_probes_host(self) -> None:
         with patch.object(
@@ -266,10 +274,7 @@ class TestHardwareEndpoint(unittest.TestCase):
             self.assertEqual(data[category]["status"], "not_checked")
 
     def test_live_hardware_route_uses_detector(self) -> None:
-        web_app.get_dashboard_state().simulate_mode = False
-        self.addCleanup(
-            setattr, web_app.get_dashboard_state(), "simulate_mode", True,
-        )
+        self.state.simulate_mode = False
         detected = {
             "mode": "live",
             "probe_performed": True,
@@ -286,7 +291,8 @@ class TestHardwareEndpoint(unittest.TestCase):
 class TestChain2Endpoints(unittest.TestCase):
     def setUp(self) -> None:
         self.client = make_flask_client(web_app)
-        web_app.get_dashboard_state().chain2_state = {
+        self.state = web_app.get_dashboard_state(self.client.application)
+        self.state.chain2_state = {
             "status": "idle",
             "proxy_running": False,
             "proxy_stats": {},
@@ -356,6 +362,7 @@ class TestChain2Endpoints(unittest.TestCase):
 class TestIndexRoute(unittest.TestCase):
     def setUp(self) -> None:
         self.client = make_flask_client(web_app)
+        self.state = web_app.get_dashboard_state(self.client.application)
 
     def test_index_returns_html(self) -> None:
         resp = self.client.get("/")

@@ -80,7 +80,8 @@ class TestApplicationStateFactory(unittest.TestCase):
                     "/api/chain2/simulate",
                     json={"target_id": label, "commands": ["land"]},
                 )
-            state.hw_status["instance"] = label
+            with state.state_lock:
+                state.hw_status["instance"] = label
             return action.status_code, hardware.status_code, chain2.status_code
 
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -137,8 +138,10 @@ class TestApplicationStateFactory(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertIs(calls[0].kwargs["args"][0], state_a)
         self.assertIs(calls[1].kwargs["args"][0], state_b)
-        self.assertEqual(calls[0].kwargs["args"][1], ["wifi"])
-        self.assertEqual(calls[1].kwargs["args"][1], ["ble"])
+        self.assertIs(calls[0].kwargs["args"][2], web_app.run_scan_simulated)
+        self.assertIs(calls[1].kwargs["args"][2], web_app.run_scan_simulated)
+        self.assertEqual(calls[0].kwargs["args"][3], (["wifi"],))
+        self.assertEqual(calls[1].kwargs["args"][3], (["ble"],))
 
     def test_live_scan_uses_only_its_instance_defaults(self) -> None:
         state_a = web_app.create_dashboard_state(
@@ -168,12 +171,16 @@ class TestApplicationStateFactory(unittest.TestCase):
         self.assertEqual(response_b.status_code, 200)
         calls = thread_cls.call_args_list
         self.assertEqual(len(calls), 2)
-        args_a = calls[0].kwargs["args"]
-        args_b = calls[1].kwargs["args"]
-        self.assertIs(args_a[0], state_a)
-        self.assertIs(args_b[0], state_b)
+        worker_a = calls[0].kwargs["args"]
+        worker_b = calls[1].kwargs["args"]
+        self.assertIs(worker_a[0], state_a)
+        self.assertIs(worker_b[0], state_b)
+        self.assertIs(worker_a[2], web_app.run_scan_live)
+        self.assertIs(worker_b[2], web_app.run_scan_live)
+        args_a = worker_a[3]
+        args_b = worker_b[3]
         self.assertEqual(
-            args_a[2],
+            args_a[1],
             {
                 "wifi_iface": "wifi-a",
                 "ble_iface": "ble-a",
@@ -182,7 +189,7 @@ class TestApplicationStateFactory(unittest.TestCase):
             },
         )
         self.assertEqual(
-            args_b[2],
+            args_b[1],
             {
                 "wifi_iface": "wifi-b",
                 "ble_iface": "ble-b",
@@ -223,8 +230,6 @@ class TestApplicationStateFactory(unittest.TestCase):
     def test_parallel_workers_and_nested_targets_are_isolated(self) -> None:
         _, state_a = self.make_instance()
         _, state_b = self.make_instance()
-        state_a.is_scanning = True
-        state_b.is_scanning = True
 
         with patch.object(web_app.time, "sleep", return_value=None):
             with ThreadPoolExecutor(max_workers=2) as pool:

@@ -1,6 +1,6 @@
 # Project Roadmap
 
-Last reviewed: 2026-10-28
+Last reviewed: 2026-10-29
 
 This file is the sole source of truth for current project priorities, status,
 ownership, acceptance criteria, and next-task selection. It consolidates and
@@ -172,29 +172,73 @@ independent read-only reviews report no remaining blocker; 107 maintained
 backend/state tests, 11 loopback browser tests, 648 tool tests (23 optional SITL
 skips), Python 3.10 grammar, and the 254-file validator pass locally.
 
-## NOW
-
 ### R3 — Add cross-instance and lifecycle regression coverage
 
 **Owner:** Codex temporary implementation and independent sub-agent review;
 Claude retrospective review deferred
 **Depends on:** R1 and R2
-**Status:** NOW — owner-authorized takeover while Claude is unavailable
+**Status:** DONE — accepted on repository evidence and three independent reviews
 **Evidence target:** SYNTHETIC/OFFLINE-TESTED
 
 Prove that targets, logs, events, scans, and Chain 2 state cannot leak between
 app instances or tests. Cover partial startup failure and cleanup.
 
-## NEXT
+Acceptance criteria:
+
+- Every API-owned and direct compatibility scan has one tracked generation and
+  worker owner; reset refuses active work, stale generations cannot mutate or
+  release newer work, and all success/failure paths release their slot.
+- Partial application registration, thread construction/start, worker
+  bootstrap, malformed direct input, socket setup/bind, and SDR read failures
+  leave the originating instance retryable without changing a peer instance.
+- Runtime reset clears every mutable dashboard collection/status while
+  preserving configuration and a monotonic event cursor for already-open SSE
+  streams.
+- Route fixtures use fresh application state. Background web scans do not
+  install process signal handlers or accumulate logger handlers.
+
+Evidence (2026-10-29): scan generations and worker identities are reserved
+under the per-application lock and finalized by a route-owned wrapper. Direct
+simulated/live entry points claim the same lifecycle. Quiescent reset rejects
+active workers; event IDs remain monotonic across resets; application claims
+roll back after partial factory failure; socket/SDR cleanup is exception-safe;
+and web background abort handling avoids main-thread-only signals. Nineteen new
+lifecycle regressions cover direct/API overlap, stale generations, partial
+startup, cleanup/retry, fresh fixtures, concurrent logger creation, resource
+failures, and independent SSE streams. The 127 maintained dashboard tests,
+648 tool tests (23 optional skips), Python 3.10 grammar check, and 255-file
+validator pass locally. Three independent final read-only reviews report no
+remaining lifecycle, cleanup, CI, Windows, or evidence blocker. Browser E2E
+remains an explicit Ubuntu/Windows CI gate and was not rerun locally in this
+pass because the disposable WSL environment has no Playwright browser.
+
+## NOW
 
 ### R4 — Refresh maintained documentation
 
-**Owner:** Claude documentation; Codex evidence review
+**Owner:** Codex temporary documentation implementation and independent
+sub-agent review; Claude retrospective review deferred
 **Depends on:** R0
+**Status:** NOW — owner-authorized takeover while Claude is unavailable
+**Evidence target:** SOURCE-DERIVED plus SYNTHETIC/OFFLINE-TESTED commands
 
 Bring `web/README.md` and `tools/README.md` in line with actual behavior. Add
 the passive pipeline and decoder, fix test paths, distinguish active reads from
 passive observation, and remove operational claims not supported by evidence.
+
+Acceptance criteria:
+
+- Documented setup, launch, validation, and focused-test commands match the
+  maintained files and execute from the stated working directory.
+- Passive capture/decoder components and evidence labels match tracked code and
+  corpus results; source agreement and CRC validity are not described as
+  receiver acceptance or operational capability.
+- Hardware, serial, socket, RF, and network-active behavior is clearly
+  separated from offline parsing, simulation, and loopback-only tests.
+- Local links and named files pass the project validator; an independent review
+  finds no stale path, mode, or evidence claim in the maintained READMEs.
+
+## NEXT
 
 ### R5 — Extract dashboard assets and add a strict CSP
 
@@ -233,10 +277,10 @@ In order:
 
 ## GATED research pathway queue
 
-R3 remains the single active implementation lane. Every RQ item below has
+R4 remains the single active implementation lane. Every RQ item below has
 status **GATED** and no active owner. Each row records a dormant planned primary
 and reviewer so a future handoff is unambiguous. Promotion requires an explicit
-owner decision and a roadmap change that moves R3 out of NOW, activates the
+owner decision and a roadmap change that moves R4 out of NOW, activates the
 planned assignment (or records a replacement), and records its evidence
 target. Merely appearing here does not authorize serial, RF, hardware, or
 live-device work.
@@ -299,7 +343,7 @@ and [STM32F411 errata](https://www.st.com/resource/en/errata_sheet/es0287-stm32f
 | RQ13 | **Conditional ESP patch-differential corpus** | Claude primary; Codex review | RQ6 confirms exact applicability | Reproduce fixed/affected behavior in offline source tests only for proven components and configurations: [CVE-2024-42484](https://github.com/espressif/esp-now/security/advisories/GHSA-q6f6-4qc5-vhx5), native ESP-IDF [CVE-2025-52471](https://github.com/espressif/esp-idf/security/advisories/GHSA-hqhh-cp47-fv5g), BLE provisioning [CVE-2026-25507](https://github.com/espressif/esp-idf/security/advisories/GHSA-h7r3-gmg9-xjmg) / [CVE-2026-25508](https://github.com/espressif/esp-idf/security/advisories/GHSA-9j5x-rf36-54x9), or SoftAP DHCP [CVE-2026-45160](https://github.com/espressif/esp-idf/security/advisories/GHSA-g764-gwc3-75m5). | `SYNTHETIC/OFFLINE-TESTED`: synthetic packets and local processes only; never present these as blanket ESP32 or E8 findings. |
 | RQ14 | **Adjacent-stack schema and topology health** | Claude primary; Codex review | A demonstrated owned-platform or fixture need | Add offline DSDL/transfer-ID checks for [DroneCAN](https://dronecan.github.io/Specification/6._Application_level_functions/), bounded component-metadata parsing, and firmware-envelope provenance only for ecosystems actually added to the project. | `SYNTHETIC/OFFLINE-TESTED`: keep adapters dormant until needed; no CAN or external metadata fetch by default. |
 
-If the owner explicitly promotes a research task and moves R3 out of NOW, start
+If the owner explicitly promotes a research task and moves R4 out of NOW, start
 with RQ1, then RQ2-RQ4. RQ5-RQ8 are the next target-specific evidence paths.
 RQ9-RQ14 are useful expansion paths, not reasons to delay current work.
 

@@ -96,6 +96,9 @@ class DashboardState:
     action_log: list[dict[str, Any]] = field(default_factory=list)
     scanner_status: dict[str, str] = field(default_factory=_new_scanner_status)
     is_scanning: bool = False
+    scan_generation: int = 0
+    active_scan_generation: int | None = None
+    active_scan_thread: Any = field(default=None, repr=False, compare=False)
     simulate_mode: bool = False
     dry_run_mode: bool = True
     hw_status: dict[str, Any] = field(default_factory=dict)
@@ -103,6 +106,9 @@ class DashboardState:
     next_event_id: int = 0
     scan_defaults: dict[str, str] = field(default_factory=_new_scan_defaults)
     chain2_state: dict[str, Any] = field(default_factory=_new_chain2_state)
+    _app_owner_token: object | None = field(
+        default=None, init=False, repr=False, compare=False,
+    )
 
     @property
     def scan_lock(self) -> Any:
@@ -115,8 +121,20 @@ class DashboardState:
         return self.state_lock
 
     def reset_runtime(self) -> None:
-        """Reset this instance without changing its mode or scan defaults."""
+        """Reset a quiescent instance without changing persistent settings.
+
+        ``next_event_id`` intentionally remains monotonic for the lifetime of
+        the application. An already-open SSE stream retains its last cursor,
+        so rewinding this counter could suppress otherwise-new events after a
+        reset.
+        """
         with self.state_lock:
+            if self.is_scanning or self.active_scan_thread is not None:
+                raise RuntimeError(
+                    "Cannot reset dashboard state while a scan worker is active",
+                )
+            self.scan_generation += 1
+            self.active_scan_generation = None
             self.targets.clear()
             self.action_log.clear()
             self.scanner_status = _new_scanner_status()
@@ -124,7 +142,21 @@ class DashboardState:
             self.hw_status = {}
             self.chain2_state = _new_chain2_state()
             self.events.clear()
-            self.next_event_id = 0
+
+    def _claim_app(self, owner_token: object) -> None:
+        """Bind this state to one application for its complete lifetime."""
+        with self.state_lock:
+            if self._app_owner_token is not None:
+                raise RuntimeError(
+                    "Dashboard state is already installed on an application",
+                )
+            self._app_owner_token = owner_token
+
+    def _release_app(self, owner_token: object) -> None:
+        """Roll back an incomplete application-factory installation."""
+        with self.state_lock:
+            if self._app_owner_token is owner_token:
+                self._app_owner_token = None
 
 
 dashboard = Blueprint("dashboard", __name__)
@@ -198,19 +230,81 @@ def _record_chain2_history(
 
 
 def _set_scanner_status(
-        state: DashboardState, scanner_name: str, scanner_status: str) -> None:
-    """Set one scanner status under the unified state lock."""
+        state: DashboardState, scanner_name: str, scanner_status: str,
+        scan_generation: int | None = None) -> bool:
+    """Set one scanner status only for the currently owned scan lifecycle."""
     with state.state_lock:
+        if not _scan_is_current_locked(state, scan_generation):
+            return False
         state.scanner_status[scanner_name] = scanner_status
+        return True
 
 
-def _finish_scan(state: DashboardState) -> None:
-    """Release the scan slot and resolve any stale in-progress statuses."""
+def _scan_is_current_locked(
+        state: DashboardState, scan_generation: int | None) -> bool:
+    """Return whether a caller owns the current lifecycle; caller holds lock."""
+    if scan_generation is None:
+        return False
+    return state.active_scan_generation == scan_generation
+
+
+def _claim_direct_scan(state: DashboardState) -> int:
+    """Register a synchronous compatibility scan as an owned lifecycle."""
     with state.state_lock:
+        if (
+                state.is_scanning
+                or state.active_scan_generation is not None
+                or state.active_scan_thread is not None):
+            raise RuntimeError("Scan already in progress")
+        state.scan_generation += 1
+        scan_generation = state.scan_generation
+        state.active_scan_generation = scan_generation
+        state.active_scan_thread = threading.current_thread()
+        state.is_scanning = True
+        return scan_generation
+
+
+def _push_scan_event(
+        state: DashboardState, scan_generation: int | None,
+        event_type: str, data: dict[str, Any]) -> bool:
+    """Append a scan event only while its lifecycle still owns the state."""
+    with state.state_lock:
+        if not _scan_is_current_locked(state, scan_generation):
+            return False
+        _push_event(state, event_type, data)
+        return True
+
+
+def _finish_scan(
+        state: DashboardState, scan_generation: int | None = None) -> bool:
+    """Release only the scan slot owned by ``scan_generation``."""
+    with state.state_lock:
+        if not _scan_is_current_locked(state, scan_generation):
+            return False
         for name, scanner_state in state.scanner_status.items():
             if scanner_state == "scanning":
                 state.scanner_status[name] = "error"
         state.is_scanning = False
+        state.active_scan_generation = None
+        state.active_scan_thread = None
+        return True
+
+
+def _run_scan_worker(
+        state: DashboardState, scan_generation: int,
+        worker: Any, worker_args: tuple[Any, ...]) -> None:
+    """Own worker cleanup even if dispatch fails before worker bootstrap."""
+    try:
+        worker(state, *worker_args, scan_generation=scan_generation)
+    except Exception as exc:
+        _push_scan_event(
+            state,
+            scan_generation,
+            "scan_failed",
+            {"error": str(exc) or type(exc).__name__},
+        )
+    finally:
+        _finish_scan(state, scan_generation)
 
 
 # --- Hardware detection ---
@@ -331,15 +425,18 @@ def detect_hardware() -> dict[str, Any]:
     # MAVLink UDP (check common ports for traffic)
     mavlink_ports = []
     for port in [14550, 14555, 5760]:
+        sock = None
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             sock.settimeout(0.5)
             sock.bind(("0.0.0.0", port))
-            sock.close()
             mavlink_ports.append(port)
         except OSError:
             pass
+        finally:
+            if sock is not None:
+                sock.close()
     listener_ready = bool(mavlink_ports)
     checks["mavlink"] = {
         "available": listener_ready,
@@ -581,19 +678,25 @@ ACTION_DEFS = {
 
 
 def run_scan_simulated(
-        state: DashboardState, protocols: list[str] | None = None) -> None:
+        state: DashboardState, protocols: list[str] | None = None,
+        *, scan_generation: int | None = None) -> None:
     """Run a simulated scan for demo mode."""
     import random
 
-    requested = set(protocols or DEFAULT_PROTOCOLS)
+    direct_owner = scan_generation is None
+    if direct_owner:
+        scan_generation = _claim_direct_scan(state)
     try:
+        requested = set(protocols or DEFAULT_PROTOCOLS)
         with state.state_lock:
+            if not _scan_is_current_locked(state, scan_generation):
+                return
             state.scanner_status = {
                 name: "scanning" if name in requested else "idle"
                 for name in DEFAULT_PROTOCOLS
             }
-        _push_event(
-            state, "scan_start",
+        _push_scan_event(
+            state, scan_generation, "scan_start",
             {"mode": "simulate", "protocols": sorted(requested)},
         )
 
@@ -603,10 +706,17 @@ def run_scan_simulated(
             if scanner_name not in requested:
                 continue
             time.sleep(delay)
-            _set_scanner_status(state, scanner_name, "done")
-            _push_event(state, "scanner_done", {"scanner": scanner_name})
+            if not _set_scanner_status(
+                    state, scanner_name, "done", scan_generation):
+                return
+            _push_scan_event(
+                state, scan_generation, "scanner_done",
+                {"scanner": scanner_name},
+            )
 
         with state.state_lock:
+            if not _scan_is_current_locked(state, scan_generation):
+                return
             now = time.time()
             for t in SIMULATED_TARGETS:
                 protocol = t.get("protocol")
@@ -622,8 +732,8 @@ def run_scan_simulated(
                 target["score"] = _score_target(target)
                 target["threat_level"] = _threat_from_score(target)
                 state.targets[target["id"]] = target
-                _push_event(
-                    state, "target_found",
+                _push_scan_event(
+                    state, scan_generation, "target_found",
                     {
                         "id": target["id"],
                         "name": target["name"],
@@ -632,29 +742,38 @@ def run_scan_simulated(
                 )
 
         with state.state_lock:
+            if not _scan_is_current_locked(state, scan_generation):
+                return
             state.scanner_status = _new_scanner_status()
             target_count = len(state.targets)
-        _push_event(
-            state, "scan_complete",
+        _push_scan_event(
+            state, scan_generation, "scan_complete",
             {"target_count": target_count, "mode": "simulate"},
         )
     finally:
-        _finish_scan(state)
+        if direct_owner:
+            _finish_scan(state, scan_generation)
 
 
 def run_scan_live(
         state: DashboardState, protocols: list[str],
-        config: dict[str, Any]) -> None:
+        config: dict[str, Any], *,
+        scan_generation: int | None = None) -> None:
     """Run live scanning using the real scanner backends."""
-    all_targets = []
-    scan_errors = {}
-
+    direct_owner = scan_generation is None
+    if direct_owner:
+        scan_generation = _claim_direct_scan(state)
     try:
+        all_targets = []
+        scan_errors = {}
         from exploit_chains.multi_recon import scan_wifi, scan_ble, scan_sdr
 
         logger = ChainLogger("web-scan")
-        abort = AbortHandler(logger)
-        _push_event(state, "scan_start", {"mode": "live", "protocols": protocols})
+        abort = AbortHandler(logger, install_signal_handlers=False)
+        if not _push_scan_event(
+                state, scan_generation, "scan_start",
+                {"mode": "live", "protocols": protocols}):
+            return
 
         wifi_iface = config.get("wifi_iface", "wlan0")
         ble_iface = config.get("ble_iface", "hci0")
@@ -662,97 +781,163 @@ def run_scan_live(
         scan_time = config.get("scan_time", 15.0)
 
         if "wifi" in protocols:
-            _set_scanner_status(state, "wifi", "scanning")
-            _push_event(state, "scanner_start", {"scanner": "wifi", "interface": wifi_iface})
+            if not _set_scanner_status(
+                    state, "wifi", "scanning", scan_generation):
+                return
+            _push_scan_event(
+                state, scan_generation, "scanner_start",
+                {"scanner": "wifi", "interface": wifi_iface},
+            )
             try:
                 wifi_results = scan_wifi(wifi_iface, scan_time, logger, abort)
                 all_targets.extend(wifi_results)
-                _push_event(state, "scanner_done", {"scanner": "wifi", "count": len(wifi_results)})
+                _push_scan_event(
+                    state, scan_generation, "scanner_done",
+                    {"scanner": "wifi", "count": len(wifi_results)},
+                )
             except Exception as e:
                 scan_errors["wifi"] = str(e)
-                _push_event(state, "scanner_error", {"scanner": "wifi", "error": str(e)})
+                _push_scan_event(
+                    state, scan_generation, "scanner_error",
+                    {"scanner": "wifi", "error": str(e)},
+                )
             _set_scanner_status(
                 state, "wifi", "done" if "wifi" not in scan_errors else "error",
+                scan_generation,
             )
 
         if "ble" in protocols:
-            _set_scanner_status(state, "ble", "scanning")
-            _push_event(state, "scanner_start", {"scanner": "ble", "interface": ble_iface})
+            if not _set_scanner_status(
+                    state, "ble", "scanning", scan_generation):
+                return
+            _push_scan_event(
+                state, scan_generation, "scanner_start",
+                {"scanner": "ble", "interface": ble_iface},
+            )
             try:
                 ble_results = scan_ble(ble_iface, scan_time, logger, abort)
                 all_targets.extend(ble_results)
-                _push_event(state, "scanner_done", {"scanner": "ble", "count": len(ble_results)})
+                _push_scan_event(
+                    state, scan_generation, "scanner_done",
+                    {"scanner": "ble", "count": len(ble_results)},
+                )
             except Exception as e:
                 scan_errors["ble"] = str(e)
-                _push_event(state, "scanner_error", {"scanner": "ble", "error": str(e)})
+                _push_scan_event(
+                    state, scan_generation, "scanner_error",
+                    {"scanner": "ble", "error": str(e)},
+                )
             _set_scanner_status(
                 state, "ble", "done" if "ble" not in scan_errors else "error",
+                scan_generation,
             )
 
         if "sdr" in protocols:
-            _set_scanner_status(state, "sdr", "scanning")
-            _push_event(state, "scanner_start", {"scanner": "sdr", "args": sdr_args})
+            if not _set_scanner_status(
+                    state, "sdr", "scanning", scan_generation):
+                return
+            _push_scan_event(
+                state, scan_generation, "scanner_start",
+                {"scanner": "sdr", "args": sdr_args},
+            )
             try:
                 sdr_results = scan_sdr(sdr_args, scan_time, logger, abort)
                 all_targets.extend(sdr_results)
-                _push_event(state, "scanner_done", {"scanner": "sdr", "count": len(sdr_results)})
+                _push_scan_event(
+                    state, scan_generation, "scanner_done",
+                    {"scanner": "sdr", "count": len(sdr_results)},
+                )
             except Exception as e:
                 scan_errors["sdr"] = str(e)
-                _push_event(state, "scanner_error", {"scanner": "sdr", "error": str(e)})
+                _push_scan_event(
+                    state, scan_generation, "scanner_error",
+                    {"scanner": "sdr", "error": str(e)},
+                )
             _set_scanner_status(
                 state, "sdr", "done" if "sdr" not in scan_errors else "error",
+                scan_generation,
             )
 
         if "mavlink" in protocols:
-            _set_scanner_status(state, "mavlink", "scanning")
-            _push_event(state, "scanner_start", {"scanner": "mavlink"})
+            if not _set_scanner_status(
+                    state, "mavlink", "scanning", scan_generation):
+                return
+            _push_scan_event(
+                state, scan_generation, "scanner_start", {"scanner": "mavlink"},
+            )
             try:
                 mav_results = _scan_mavlink_udp(scan_time, logger, abort)
                 all_targets.extend(mav_results)
-                _push_event(state, "scanner_done", {"scanner": "mavlink", "count": len(mav_results)})
+                _push_scan_event(
+                    state, scan_generation, "scanner_done",
+                    {"scanner": "mavlink", "count": len(mav_results)},
+                )
             except Exception as e:
                 scan_errors["mavlink"] = str(e)
-                _push_event(state, "scanner_error", {"scanner": "mavlink", "error": str(e)})
+                _push_scan_event(
+                    state, scan_generation, "scanner_error",
+                    {"scanner": "mavlink", "error": str(e)},
+                )
             _set_scanner_status(
                 state, "mavlink",
                 "done" if "mavlink" not in scan_errors else "error",
+                scan_generation,
             )
 
         if "telemetry" in protocols:
-            _set_scanner_status(state, "telemetry", "scanning")
-            _push_event(state, "scanner_start", {"scanner": "telemetry"})
+            if not _set_scanner_status(
+                    state, "telemetry", "scanning", scan_generation):
+                return
+            _push_scan_event(
+                state, scan_generation, "scanner_start", {"scanner": "telemetry"},
+            )
             try:
                 telem_results = _scan_passive_telemetry(sdr_args, scan_time, logger, abort)
                 all_targets.extend(telem_results)
-                _push_event(state, "scanner_done", {"scanner": "telemetry", "count": len(telem_results)})
+                _push_scan_event(
+                    state, scan_generation, "scanner_done",
+                    {"scanner": "telemetry", "count": len(telem_results)},
+                )
             except Exception as e:
                 scan_errors["telemetry"] = str(e)
-                _push_event(state, "scanner_error", {"scanner": "telemetry", "error": str(e)})
+                _push_scan_event(
+                    state, scan_generation, "scanner_error",
+                    {"scanner": "telemetry", "error": str(e)},
+                )
             _set_scanner_status(
                 state, "telemetry",
                 "done" if "telemetry" not in scan_errors else "error",
+                scan_generation,
             )
 
         with state.state_lock:
+            if not _scan_is_current_locked(state, scan_generation):
+                return
             now = time.time()
             for t in all_targets:
                 tid = _make_target_id(t)
                 target = _convert_recon_target(t, tid, now)
                 state.targets[tid] = target
-                _push_event(state, "target_found", {"id": tid, "name": target["name"], "protocol": target["protocol"]})
+                _push_scan_event(
+                    state, scan_generation, "target_found",
+                    {"id": tid, "name": target["name"], "protocol": target["protocol"]},
+                )
 
         time.sleep(1)
         with state.state_lock:
+            if not _scan_is_current_locked(state, scan_generation):
+                return
             state.scanner_status.update({k: "idle" for k in state.scanner_status})
             target_count = len(state.targets)
 
-        _push_event(state, "scan_complete", {
+        _push_scan_event(state, scan_generation, "scan_complete", {
             "target_count": target_count,
             "mode": "live",
             "errors": scan_errors if scan_errors else None,
         })
     finally:
-        _finish_scan(state)
+        if direct_owner:
+            _finish_scan(state, scan_generation)
 
 
 def _scan_mavlink_udp(timeout: float, logger: ChainLogger, abort: AbortHandler) -> list[dict[str, Any]]:
@@ -763,9 +948,9 @@ def _scan_mavlink_udp(timeout: float, logger: ChainLogger, abort: AbortHandler) 
     for port in [14550, 14555, 14560, 5760, 5762, 5763]:
         abort.check()
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.settimeout(min(timeout / 3, 3.0))
         try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.settimeout(min(timeout / 3, 3.0))
             sock.bind(("0.0.0.0", port))
             data, addr = sock.recvfrom(4096)
             pkt = parse_mavlink_packet(data)
@@ -810,32 +995,46 @@ def _scan_passive_telemetry(sdr_args: str, timeout: float, logger: ChainLogger, 
         logger.warn("TELEMETRY", f"SDR open failed: {e}")
         return results
 
-    sample_rate = 2.5e6
-    sdr.setSampleRate(SoapySDR.SOAPY_SDR_RX, 0, sample_rate)
-    sdr.setGain(SoapySDR.SOAPY_SDR_RX, 0, 40)
-
-    rx_stream = sdr.setupStream(SoapySDR.SOAPY_SDR_RX, SoapySDR.SOAPY_SDR_CF32)
-    sdr.activateStream(rx_stream)
-
-    buf = np.zeros(4096, dtype=np.complex64)
     channel_hits = {}
-    end_time = time.time() + min(timeout, 10)
+    rx_stream = None
+    stream_active = False
+    try:
+        sample_rate = 2.5e6
+        sdr.setSampleRate(SoapySDR.SOAPY_SDR_RX, 0, sample_rate)
+        sdr.setGain(SoapySDR.SOAPY_SDR_RX, 0, 40)
 
-    while time.time() < end_time:
-        abort.check()
-        for freq_mhz in range(2400, 2481, 4):
-            if time.time() > end_time:
-                break
-            sdr.setFrequency(SoapySDR.SOAPY_SDR_RX, 0, freq_mhz * 1e6)
-            time.sleep(0.003)
-            sr = sdr.readStream(rx_stream, [buf], len(buf), timeoutUs=50000)
-            if sr.ret > 0:
-                power = float(np.mean(np.abs(buf[:sr.ret]) ** 2))
-                if power > 0.001:
-                    channel_hits[freq_mhz] = channel_hits.get(freq_mhz, 0) + 1
+        rx_stream = sdr.setupStream(
+            SoapySDR.SOAPY_SDR_RX, SoapySDR.SOAPY_SDR_CF32,
+        )
+        sdr.activateStream(rx_stream)
+        stream_active = True
 
-    sdr.deactivateStream(rx_stream)
-    sdr.closeStream(rx_stream)
+        buf = np.zeros(4096, dtype=np.complex64)
+        end_time = time.time() + min(timeout, 10)
+
+        while time.time() < end_time:
+            abort.check()
+            for freq_mhz in range(2400, 2481, 4):
+                if time.time() > end_time:
+                    break
+                sdr.setFrequency(SoapySDR.SOAPY_SDR_RX, 0, freq_mhz * 1e6)
+                time.sleep(0.003)
+                sr = sdr.readStream(
+                    rx_stream, [buf], len(buf), timeoutUs=50000,
+                )
+                if sr.ret > 0:
+                    power = float(np.mean(np.abs(buf[:sr.ret]) ** 2))
+                    if power > 0.001:
+                        channel_hits[freq_mhz] = (
+                            channel_hits.get(freq_mhz, 0) + 1
+                        )
+    finally:
+        if rx_stream is not None:
+            try:
+                if stream_active:
+                    sdr.deactivateStream(rx_stream)
+            finally:
+                sdr.closeStream(rx_stream)
 
     active_channels = [f for f, c in channel_hits.items() if c >= 2]
     if len(active_channels) >= 5:
@@ -1117,7 +1316,7 @@ def _exec_mavlink(target: dict[str, Any], action_name: str, details: dict[str, A
 
     if action_name == "sniff":
         logger = ChainLogger("web-mavlink-sniff")
-        abort = AbortHandler(logger)
+        abort = AbortHandler(logger, install_signal_handlers=False)
         result = sniff_mavlink(target_str, 5.0, logger, abort)
         return {
             "status": "executed",
@@ -1239,7 +1438,7 @@ def _exec_elrs(target: dict[str, Any], action_name: str, details: dict[str, Any]
 
             sdr_args = details.get("sdr_args", "driver=uhd")
             logger = ChainLogger("web-elrs-deep-scan")
-            abort = AbortHandler(logger)
+            abort = AbortHandler(logger, install_signal_handlers=False)
             detections = scan_for_elrs(sdr_args, 15.0, logger, abort)
 
             if detections:
@@ -1377,9 +1576,13 @@ def api_scan() -> tuple[Response, int] | Response:
             state.scanner_status.update({
                 name: "idle" for name in DEFAULT_PROTOCOLS
             })
+            state.scan_generation += 1
+            scan_generation = state.scan_generation
+            state.active_scan_generation = scan_generation
             state.is_scanning = True
             simulate = state.simulate_mode
         else:
+            scan_generation = state.active_scan_generation
             simulate = state.simulate_mode
 
     if already_scanning:
@@ -1388,15 +1591,27 @@ def api_scan() -> tuple[Response, int] | Response:
     try:
         if simulate:
             t = threading.Thread(
-                target=run_scan_simulated, args=(state, protocols), daemon=True,
+                target=_run_scan_worker,
+                args=(
+                    state, scan_generation, run_scan_simulated, (protocols,),
+                ),
+                daemon=True,
             )
         else:
             t = threading.Thread(
-                target=run_scan_live, args=(state, protocols, config), daemon=True,
+                target=_run_scan_worker,
+                args=(
+                    state, scan_generation, run_scan_live, (protocols, config),
+                ),
+                daemon=True,
             )
+        with state.state_lock:
+            if state.active_scan_generation != scan_generation:
+                return jsonify({"error": "Scan lifecycle was cancelled"}), 409
+            state.active_scan_thread = t
         t.start()
     except Exception:
-        _finish_scan(state)
+        _finish_scan(state, scan_generation)
         return jsonify({"error": "Unable to start scan worker"}), 500
 
     return jsonify({
@@ -1673,9 +1888,21 @@ def api_chain2_commands() -> tuple[Response, int] | Response:
 
 def create_app(state: DashboardState | None = None) -> Flask:
     """Create a Flask dashboard with isolated, app-owned runtime state."""
+    if state is None:
+        state = create_dashboard_state()
+    elif not isinstance(state, DashboardState):
+        raise TypeError("state must be a DashboardState instance or None")
+
     flask_app = Flask(__name__)
-    flask_app.extensions[STATE_EXTENSION_KEY] = state or create_dashboard_state()
-    flask_app.register_blueprint(dashboard)
+    owner_token = object()
+    state._claim_app(owner_token)
+    try:
+        flask_app.extensions[STATE_EXTENSION_KEY] = state
+        flask_app.register_blueprint(dashboard)
+    except BaseException:
+        flask_app.extensions.pop(STATE_EXTENSION_KEY, None)
+        state._release_app(owner_token)
+        raise
     return flask_app
 
 

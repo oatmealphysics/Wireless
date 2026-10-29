@@ -37,14 +37,23 @@ def _state():
     return web_app.get_dashboard_state(web_app.app)
 
 
+def _reset_default_state():
+    """Restore the singleton only for tests that exercise import compatibility."""
+    state = _state()
+    state.reset_runtime()
+    with state.state_lock:
+        state.simulate_mode = True
+        state.dry_run_mode = True
+        state.scan_defaults = web_app._new_scan_defaults()
+    return state
+
+
 @needs_flask
 class TestHostileSSIDs(unittest.TestCase):
     """Verify that hostile target names/SSIDs cannot inject script."""
 
     def setUp(self):
-        _state().reset_runtime()
-        _state().simulate_mode = True
-        _state().dry_run_mode = True
+        _reset_default_state()
         web_app.app.testing = True
         self.client = web_app.app.test_client()
 
@@ -132,9 +141,7 @@ class TestActionValidation(unittest.TestCase):
     """Verify action validation and dry-run gating."""
 
     def setUp(self):
-        _state().reset_runtime()
-        _state().simulate_mode = True
-        _state().dry_run_mode = True
+        _reset_default_state()
         web_app.app.testing = True
         self.client = web_app.app.test_client()
 
@@ -211,6 +218,9 @@ class TestActionValidation(unittest.TestCase):
 class TestActionCategories(unittest.TestCase):
     """Verify action definitions include category field."""
 
+    def setUp(self):
+        _reset_default_state()
+
     def test_all_actions_have_category(self):
         for name, defn in web_app.ACTION_DEFS.items():
             self.assertIn("category", defn, f"Action '{name}' missing category")
@@ -244,19 +254,10 @@ class TestScannerFailureCleanup(unittest.TestCase):
     """Verify that scanner exceptions reset is_scanning."""
 
     def setUp(self):
-        _state().reset_runtime()
-        _state().simulate_mode = True
-        _state().dry_run_mode = True
-        _state().is_scanning = False
-        _state().scanner_status = {
-            "wifi": "idle", "ble": "idle", "sdr": "idle",
-            "mavlink": "idle", "telemetry": "idle",
-        }
+        _reset_default_state()
 
     def test_simulated_scan_resets_on_exception(self):
         """is_scanning resets even if run_scan_simulated raises."""
-        _state().is_scanning = True
-
         with patch.object(web_app, "_push_event"):
             with patch("time.sleep", side_effect=RuntimeError("test")):
                 with self.assertRaises(RuntimeError):
@@ -269,8 +270,6 @@ class TestScannerFailureCleanup(unittest.TestCase):
 
     def test_live_scan_resets_on_exception(self):
         """is_scanning resets even if run_scan_live raises."""
-        _state().is_scanning = True
-
         with patch("time.sleep"):
             with patch.object(web_app, "_push_event", side_effect=RuntimeError("test")):
                 with self.assertRaises(RuntimeError):
@@ -282,12 +281,18 @@ class TestScannerFailureCleanup(unittest.TestCase):
 
     def test_scan_api_rejects_concurrent(self):
         """Cannot start scan while one is running."""
-        _state().is_scanning = True
         web_app.app.testing = True
         client = web_app.app.test_client()
-
-        resp = client.post("/api/scan", json={}, content_type="application/json")
-        self.assertEqual(resp.status_code, 409)
+        with patch.object(web_app.threading, "Thread"):
+            first = client.post(
+                "/api/scan", json={}, content_type="application/json",
+            )
+            second = client.post(
+                "/api/scan", json={}, content_type="application/json",
+            )
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 409)
+        web_app._finish_scan(_state(), _state().active_scan_generation)
 
     def test_worker_start_failure_releases_scan_slot(self):
         _state().is_scanning = False
@@ -298,19 +303,24 @@ class TestScannerFailureCleanup(unittest.TestCase):
             resp = client.post("/api/scan", json={}, content_type="application/json")
 
         self.assertEqual(resp.status_code, 500)
-        self.assertFalse(_state().is_scanning)
+        with _state().state_lock:
+            self.assertFalse(_state().is_scanning)
+            self.assertIsNone(_state().active_scan_generation)
+            self.assertIsNone(_state().active_scan_thread)
+
+        with patch.object(web_app.threading, "Thread") as thread_cls:
+            retry = client.post(
+                "/api/scan", json={}, content_type="application/json",
+            )
+        self.assertEqual(retry.status_code, 200)
+        thread_cls.return_value.start.assert_called_once_with()
+        web_app._finish_scan(_state(), _state().active_scan_generation)
 
 
 @needs_flask
 class TestScanRequestValidation(unittest.TestCase):
     def setUp(self):
-        _state().reset_runtime()
-        _state().simulate_mode = True
-        _state().dry_run_mode = True
-        _state().is_scanning = False
-        _state().scanner_status = {
-            name: "idle" for name in web_app.DEFAULT_PROTOCOLS
-        }
+        _reset_default_state()
         web_app.app.testing = True
         self.client = web_app.app.test_client()
 
@@ -346,7 +356,7 @@ class TestScanRequestValidation(unittest.TestCase):
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 409)
         thread_cls.assert_called_once()
-        _state().is_scanning = False
+        web_app._finish_scan(_state(), _state().active_scan_generation)
 
     def test_live_worker_receives_requested_config(self):
         _state().simulate_mode = False
@@ -363,24 +373,32 @@ class TestScanRequestValidation(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             worker_args = thread_cls.call_args.kwargs["args"]
             self.assertIs(worker_args[0], _state())
-            self.assertEqual(worker_args[1], ["wifi"])
-            self.assertEqual(worker_args[2]["wifi_iface"], "test-wifi")
-            self.assertEqual(worker_args[2]["ble_iface"], "test-ble")
-            self.assertEqual(worker_args[2]["sdr_args"], "driver=test")
-            self.assertEqual(worker_args[2]["scan_time"], 2.0)
+            self.assertIs(worker_args[2], web_app.run_scan_live)
+            scan_args = worker_args[3]
+            self.assertEqual(scan_args[0], ["wifi"])
+            self.assertEqual(scan_args[1]["wifi_iface"], "test-wifi")
+            self.assertEqual(scan_args[1]["ble_iface"], "test-ble")
+            self.assertEqual(scan_args[1]["sdr_args"], "driver=test")
+            self.assertEqual(scan_args[1]["scan_time"], 2.0)
         finally:
-            _state().is_scanning = False
+            web_app._finish_scan(_state(), _state().active_scan_generation)
             _state().simulate_mode = True
 
     def test_clear_rejected_during_scan(self):
-        _state().is_scanning = True
-        resp = self.client.post("/api/clear")
+        with patch.object(web_app.threading, "Thread"):
+            started = self.client.post("/api/scan", json={})
+            resp = self.client.post("/api/clear")
+        self.assertEqual(started.status_code, 200)
         self.assertEqual(resp.status_code, 409)
+        web_app._finish_scan(_state(), _state().active_scan_generation)
 
 
 @needs_flask
 class TestScoreAndThreatLabels(unittest.TestCase):
     """Verify threat labels derive from calculated score."""
+
+    def setUp(self):
+        _reset_default_state()
 
     def test_score_to_threat_mapping(self):
         cases = [
@@ -400,7 +418,6 @@ class TestScoreAndThreatLabels(unittest.TestCase):
     def test_simulated_targets_get_derived_threat(self):
         """After simulated scan, threat_level matches score, not hardcoded value."""
         _state().simulate_mode = True
-        _state().is_scanning = True
         _state().targets = {}
 
         with patch("time.sleep"):
@@ -416,7 +433,6 @@ class TestScoreAndThreatLabels(unittest.TestCase):
             )
 
     def test_simulated_scan_respects_requested_protocols(self):
-        _state().is_scanning = True
         _state().targets = {}
         with patch("time.sleep"):
             web_app.run_scan_simulated(_state(), ["wifi"])
@@ -461,11 +477,10 @@ class TestScoreAndThreatLabels(unittest.TestCase):
 @needs_flask
 class TestEventRetention(unittest.TestCase):
     def setUp(self):
-        with _state().events_lock:
-            _state().events = []
-            _state().next_event_id = 0
+        _reset_default_state()
         web_app.app.testing = True
         self.client = web_app.app.test_client()
+        self.first_event_id = _state().next_event_id
 
     def test_event_ids_remain_monotonic_after_pruning(self):
         for index in range(web_app.MAX_EVENTS + 3):
@@ -474,7 +489,9 @@ class TestEventRetention(unittest.TestCase):
         ids = [event["id"] for event in _state().events]
         self.assertEqual(len(ids), web_app.MAX_EVENTS)
         self.assertEqual(ids, sorted(set(ids)))
-        self.assertEqual(ids[-1], web_app.MAX_EVENTS + 2)
+        self.assertEqual(
+            ids[-1], self.first_event_id + web_app.MAX_EVENTS + 2,
+        )
 
         previous = ids[-1]
         web_app._push_event(_state(), "test", {"index": "next"})
@@ -501,7 +518,8 @@ class TestEventRetention(unittest.TestCase):
             web_app._push_event(_state(), "test", {"index": index})
 
         with web_app.app.test_request_context(
-                "/api/events", headers={"Last-Event-ID": "0"}):
+                "/api/events",
+                headers={"Last-Event-ID": str(self.first_event_id)}):
             response = web_app.api_events()
             try:
                 stream = iter(response.response)
@@ -510,14 +528,15 @@ class TestEventRetention(unittest.TestCase):
             finally:
                 response.close()
 
-        self.assertIn("id: 1", chunk)
+        self.assertIn(f"id: {self.first_event_id + 1}", chunk)
         self.assertIn('"index": 1', chunk)
         self.assertNotIn('"index": 0', chunk)
 
     def test_cursor_ahead_after_restart_resets_to_tail(self):
         web_app._push_event(_state(), "before_restart", {})
+        stale_cursor = _state().next_event_id + web_app.MAX_EVENTS
         with web_app.app.test_request_context(
-                "/api/events", headers={"Last-Event-ID": "999"}):
+                "/api/events", headers={"Last-Event-ID": str(stale_cursor)}):
             response = web_app.api_events()
             try:
                 web_app._push_event(_state(), "after_restart", {"ok": True})
@@ -555,10 +574,12 @@ class TestLocalhostBinding(unittest.TestCase):
 class TestDryRunDefault(unittest.TestCase):
     """Verify dry-run is the default mode."""
 
+    def setUp(self):
+        _reset_default_state()
+
     def test_dry_run_mode_default_true(self):
         """The default application state starts in dry-run mode."""
-        import importlib
-        self.assertTrue(_state().dry_run_mode)
+        self.assertTrue(web_app.create_dashboard_state().dry_run_mode)
 
     def test_status_api_reports_dry_run(self):
         _state().dry_run_mode = True

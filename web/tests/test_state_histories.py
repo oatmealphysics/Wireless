@@ -244,10 +244,12 @@ class TestDashboardHistoryOwnership(unittest.TestCase):
             response = flask_app.test_client().get(
                 "/api/events?last_id=-1", buffered=False,
             )
-            stream = iter(response.response)
-            self.assertEqual(next(stream).decode(), ": connected\n\n")
-            chunks = [next(stream).decode() for _ in range(5)]
-            response.close()
+            try:
+                stream = iter(response.response)
+                self.assertEqual(next(stream).decode(), ": connected\n\n")
+                chunks = [next(stream).decode() for _ in range(5)]
+            finally:
+                response.close()
 
         ids = [
             int(chunk.split("\n", 1)[0].removeprefix("id: "))
@@ -255,6 +257,28 @@ class TestDashboardHistoryOwnership(unittest.TestCase):
         ]
         self.assertEqual(ids, [3, 4, 5, 6, 7])
         self.assertTrue(all("event: rollover" in chunk for chunk in chunks))
+
+    def test_open_sse_stream_continues_after_runtime_reset(self) -> None:
+        flask_app, state = self.make_instance()
+        web_app._push_event(state, "before_reset", {"phase": "before"})
+        response = flask_app.test_client().get(
+            "/api/events?last_id=-1", buffered=False,
+        )
+        try:
+            stream = iter(response.response)
+            self.assertEqual(next(stream).decode(), ": connected\n\n")
+            before = next(stream).decode()
+
+            state.reset_runtime()
+            web_app._push_event(state, "after_reset", {"phase": "after"})
+            after = next(stream).decode()
+        finally:
+            response.close()
+
+        self.assertIn("id: 0", before)
+        self.assertIn("event: before_reset", before)
+        self.assertIn("id: 1", after)
+        self.assertIn("event: after_reset", after)
 
     def test_regular_action_retention_and_api_window(self) -> None:
         flask_app, state = self.make_instance()

@@ -4343,3 +4343,80 @@ staging is used.
 startup failure and cleanup, plus any cross-instance leakage case not already
 proved by the R1/R2 suites. Claude can retrospectively review the serialized
 handoffs when its capacity returns.
+
+---
+
+## 66. Dashboard lifecycle isolation and failure cleanup (Codex, 2026-10-29)
+
+**Owner decision and starting revision:** Work continued from clean revision
+`373e65c`. The owner directed Codex to keep advancing ordinary software work
+while Claude remains unavailable and reiterated that this lane is application
+engineering rather than hardware or live-device work. R3 was therefore
+completed under the temporary takeover already recorded in the roadmap, with
+three independent read-only sub-agent reviews. R4 is now the sole NOW lane;
+Claude's retrospective review remains deferred rather than removed.
+
+**Lifecycle implementation:** `DashboardState` now tracks one scan generation
+and worker identity per application. API admission reserves that lifecycle
+under the application lock before thread construction, a route-owned wrapper
+records bootstrap failures and always finalizes, and stale generations cannot
+write into or release a newer scan. Direct simulated/live compatibility calls
+claim the same lifecycle. Runtime reset is allowed only while quiescent,
+clears every mutable runtime collection/status, preserves mode/default
+configuration, and keeps event IDs monotonic so an already-open SSE stream
+continues after reset.
+
+**Factory and resource cleanup:** A state object can belong to exactly one
+successfully created Flask app, while partial blueprint registration rolls its
+claim back for retry. Background web scans opt out of main-thread-only signal
+installation. `ChainLogger` creates at most one marked handler per logger even
+under concurrent construction. Hardware-probe and MAVLink sockets close after
+setup or bind failures, passive SDR streams deactivate and close after read
+failure, and the browser fixture closes a partially started loopback server.
+Route-test helpers now create fresh state instead of reusing the imported
+singleton.
+
+**Regression evidence:** Nineteen lifecycle tests cover factory ownership and
+rollback, fresh fixtures, complete instance-local reset, API/direct worker
+overlap, stale generations, malformed direct input, constructor/start/bootstrap
+failure and retry, real background simulated/live completion, concurrent logger
+creation, socket and SDR cleanup, and independent SSE streams. Existing route,
+factory, history, dashboard, and browser fixtures were updated to use the same
+quiescent cleanup contract. CI explicitly runs the lifecycle file on Ubuntu
+and Windows with Python 3.10 and 3.12.
+
+**Validation:**
+
+- Maintained dashboard/API/factory/lifecycle/history set: 127/127 PASS.
+- Lifecycle suite: 19/19 PASS locally; the independent test review also ran
+  the preceding 18-test version 30 consecutive times without failure before
+  the final deterministic malformed-input regression was added.
+- Full tool suite: 648 PASS, 23 optional integration tests skipped.
+- `python -B tools/validate-project.py`: PASS (255 files).
+- Python 3.10 grammar parse: PASS for all nine changed Python files.
+- `git diff --check`: PASS (line-ending notices only).
+- Three independent final reviews found no remaining lifecycle, stale-worker,
+  deadlock, cleanup, test-evidence, Windows, Python 3.10, or CI blocker.
+- Browser E2E was not rerun in the disposable WSL environment because no
+  Playwright browser is installed; it remains an explicit four-cell CI gate.
+
+**Safety boundary:** This work used local source, deterministic simulation,
+Flask test clients, mocked resources, and temporary offline Python packages.
+It did not access hardware, serial ports, RF, firmware, private captures,
+credentials, external targets, or live actions.
+
+**Changed files:** `.github/workflows/validate.yml`, `PROJECT-ROADMAP.md`,
+`tools/exploit_chains/common.py`, `tools/tests/helpers.py`,
+`tools/tests/test_web_dashboard.py`, `web/app.py`,
+`web/tests/test_api_routes.py`, `web/tests/test_app_factory.py`,
+`web/tests/test_app_lifecycle.py`, `web/tests/test_dashboard_browser.py`,
+`web/tests/test_state_histories.py`, and this log.
+
+**Commit/push status:** Prepared for one normal commit and push to
+`origin/main`; no force push, rebase, branch switch, history rewrite, hardware
+action, or broad staging is used.
+
+**Next task:** R4 is the sole NOW lane under the same temporary Codex takeover:
+reconcile `web/README.md` and `tools/README.md` with executable commands,
+current passive-decoder evidence, and explicit offline/passive/active behavior
+boundaries, then obtain an independent documentation review.

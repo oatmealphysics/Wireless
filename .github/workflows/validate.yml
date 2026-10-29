@@ -43,6 +43,7 @@ jobs:
       - run: python -B -m unittest discover -s tools/tests -p "test_web_dashboard.py" -v
       - run: python -B -m unittest discover -s web/tests -p "test_api_routes.py" -v
       - run: python -B -m unittest discover -s web/tests -p "test_app_factory.py" -v
+      - run: python -B -m unittest discover -s web/tests -p "test_app_lifecycle.py" -v
       - run: python -B -m unittest discover -s web/tests -p "test_state_histories.py" -v
       - run: python -B -m unittest discover -s web/tests -p "test_dashboard_browser.py" -v
         env:

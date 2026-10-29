@@ -74,14 +74,16 @@ class DashboardBrowserTests(unittest.TestCase):
             request_handler=_QuietRequestHandler,
         )
         cls.base_url = f"http://127.0.0.1:{cls.httpd.server_port}"
-        cls.server_thread = threading.Thread(
-            target=cls.httpd.serve_forever,
-            name="dashboard-browser-test-server",
-            daemon=True,
-        )
-        cls.server_thread.start()
-
+        cls.server_thread = None
+        cls.server_started = False
         try:
+            cls.server_thread = threading.Thread(
+                target=cls.httpd.serve_forever,
+                name="dashboard-browser-test-server",
+                daemon=True,
+            )
+            cls.server_thread.start()
+            cls.server_started = True
             cls.playwright = sync_playwright().start()
             cls.browser = cls.playwright.chromium.launch(
                 channel=BROWSER_CHANNEL,
@@ -94,9 +96,11 @@ class DashboardBrowserTests(unittest.TestCase):
                 ],
             )
         except Exception:
-            cls.httpd.shutdown()
+            if cls.server_started:
+                cls.httpd.shutdown()
             cls.httpd.server_close()
-            cls.server_thread.join(timeout=5)
+            if cls.server_started:
+                cls.server_thread.join(timeout=5)
             playwright = getattr(cls, "playwright", None)
             if playwright is not None:
                 playwright.stop()
@@ -115,24 +119,19 @@ class DashboardBrowserTests(unittest.TestCase):
                 cls.server_thread.join(timeout=5)
 
     def setUp(self):
+        state = web_app.get_dashboard_state()
         self.assertFalse(
-            web_app.get_dashboard_state().is_scanning,
+            state.is_scanning,
             "A scan worker leaked from the previous browser test",
         )
-        state = web_app.get_dashboard_state()
-        state.simulate_mode = True
-        state.dry_run_mode = True
-        with state.scan_lock:
-            state.targets.clear()
-            state.action_log.clear()
-            state.scanner_status.clear()
-            state.scanner_status.update(
-                {name: "idle" for name in web_app.DEFAULT_PROTOCOLS}
-            )
-            state.is_scanning = False
-        with state.events_lock:
-            state.events.clear()
-            state.next_event_id = 0
+        self.assertIsNone(
+            state.active_scan_thread,
+            "A scan thread handle leaked from the previous browser test",
+        )
+        state.reset_runtime()
+        with state.state_lock:
+            state.simulate_mode = True
+            state.dry_run_mode = True
 
         # Turn the safety properties into executable invariants. If a browser
         # flow ever reaches a live backend or hardware probe, the test fails.

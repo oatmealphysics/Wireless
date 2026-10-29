@@ -91,10 +91,11 @@ def make_flask_client(
     simulate: bool = True,
     dry_run: bool = True,
 ) -> Any:
-    """Reset web_app state and return a Flask test client."""
-    state = web_app.get_dashboard_state(web_app.app)
-    state.reset_runtime()
-    state.simulate_mode = simulate
-    state.dry_run_mode = dry_run
-    web_app.app.testing = True
-    return web_app.app.test_client()
+    """Return a test client backed by a fresh application and state."""
+    state = web_app.create_dashboard_state(
+        simulate=simulate,
+        dry_run=dry_run,
+    )
+    flask_app = web_app.create_app(state)
+    flask_app.testing = True
+    return flask_app.test_client()
