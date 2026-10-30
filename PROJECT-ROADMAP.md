@@ -1,6 +1,6 @@
 # Project Roadmap
 
-Last reviewed: 2026-10-29
+Last reviewed: 2026-10-30
 
 This file is the sole source of truth for current project priorities, status,
 ownership, acceptance criteria, and next-task selection. It consolidates and
@@ -44,6 +44,12 @@ wins.
   transfer; Claude's read-only review role resumes after that pushed handoff.
   R5 retains Codex implementation with Claude browser review, and R6 retains
   Claude implementation after R5.
+- Owner decision (2026-10-29): finish the in-flight R5 implementation, then
+  perform a source-backed defensive research expansion across drone hardware,
+  firmware, and protocols. R5 is accepted on its local automated and Chromium
+  evidence; the named Claude review becomes retrospective. The research pass
+  is documentation and prioritization only: it does not activate an RQ row or
+  authorize device, bus, serial, RF, bootloader, or firmware interaction.
 
 ## Scope and evidence boundary
 
@@ -255,13 +261,12 @@ path, mode, side-effect, privacy, or evidence blocker. Browser E2E remains the
 four-cell CI gate and was not rerun locally because the WSL environment lacks
 Playwright/Chrome.
 
-## NOW
-
 ### R5 — Extract dashboard assets and add a strict CSP
 
-**Owner:** Codex implementation; Claude browser review
+**Owner:** Codex implementation and local Chromium verification; Claude
+retrospective browser review
 **Depends on:** R1–R3
-**Status:** NOW
+**Status:** DONE — hosted CI execution is administratively blocked, not failed
 **Evidence target:** SYNTHETIC/OFFLINE-TESTED
 
 Move inline CSS and JavaScript to versioned static files, remove inline event
@@ -279,14 +284,37 @@ Acceptance criteria:
   the loopback browser suite covers the complete scan/action/log/clear flow and
   390 px layout under that policy.
 - The validator, maintained dashboard suites, and full tool suite remain green
-  on the Ubuntu/Windows Python 3.10/3.12 matrix.
+  locally; the four-cell Ubuntu/Windows Python 3.10/3.12 workflow remains the
+  hosted gate when the account can start jobs.
 
-## NEXT
+Evidence (2026-10-29): `index.html` now references versioned same-origin CSS and
+JavaScript, with no app-authored inline script/style blocks, style attributes,
+event handlers, or JavaScript style mutation. HTML, API, and static responses
+carry the exact strict CSP plus companion security headers; static assets have
+a one-year cache policy. The 43-route API suite, 53 frontend contract tests,
+8 factory tests, 19 lifecycle tests, 10 history tests, 650-tool full suite
+(23 optional skips), and 257-file validator pass locally. A loopback Chromium
+run loaded both assets with no console or CSP violations, completed the
+scan/open/dry-run-action/clear flow, and proved the 390 px viewport plus
+internally scrollable detail panel.
+
+GitHub Actions run `40950236841` did not execute a single workflow step. All
+eight check runs were rejected before startup with the account-level annotation
+that recent payments failed or the spending limit must be increased. Those red
+checks are an external billing/plan condition, not test failures; no roadmap
+item may describe that run as green until GitHub actually executes it.
+
+The companion research pass is recorded in
+[`research/defensive-attack-surface-expansion-2026-10-29.md`](research/defensive-attack-surface-expansion-2026-10-29.md).
+It adds evidence-gated pathways without activating any research implementation.
+
+## NOW
 
 ### R6 — Finish selected UX reliability gaps
 
 **Owner:** Claude implementation after the R5 handoff; Codex browser/integration review
 **Depends on:** R5 for theme work
+**Status:** NOW
 
 In order:
 
@@ -296,6 +324,8 @@ In order:
    retaining native `EventSource` reconnect and `Last-Event-ID` recovery. Do
    not add a competing manual reconnect loop without a failing test.
 3. Add a dark/light theme after asset extraction.
+
+## NEXT
 
 ### R7 — Incremental quality gates
 
@@ -311,17 +341,20 @@ In order:
 
 ## GATED research pathway queue
 
-R5 remains the single active implementation lane. Every RQ item below has
+R6 remains the single active implementation lane. Every RQ item below has
 status **GATED** and no active owner. Each row records a dormant planned primary
 and reviewer so a future handoff is unambiguous. Promotion requires an explicit
-owner decision and a roadmap change that moves R5 out of NOW, activates the
+owner decision and a roadmap change that moves R6 out of NOW, activates the
 planned assignment (or records a replacement), and records its evidence
 target. Merely appearing here does not authorize serial, RF, hardware, or
 live-device work.
 
 The queue was derived from the owner-provided one-screen summary, repository
-evidence, and a primary-source research pass. The linked Claude artifact
-required sign-in and was not treated as read evidence.
+evidence, and two primary-source research passes. The second pass is preserved
+in
+[`research/defensive-attack-surface-expansion-2026-10-29.md`](research/defensive-attack-surface-expansion-2026-10-29.md).
+The linked Claude artifact required sign-in and was not treated as read
+evidence.
 
 Every promoted pathway must pin source tags or commits, hash its inputs, state
 its privacy treatment, name its evidence class, and define the next promotion
@@ -367,19 +400,29 @@ and [STM32F411 errata](https://www.st.com/resource/en/errata_sheet/es0287-stm32f
 | RQ3 | **CRSF streaming conformance and differential parser testing** | Claude primary; Codex review | Exact ExpressLRS/Betaflight/EdgeTX tags selected at promotion | Compare the commit-pinned [TBS CRSF specification](https://github.com/tbs-fpv/tbs-crsf-spec/blob/a73f7dc5386e5b8744aa4a23b3af5354ee0d4c92/crsf.md) and implementations for length bounds, truncation/noise resynchronization, optional fields, extended routing, CRC, and baud negotiation. Retain minimized offline regression corpora. | `SYNTHETIC/OFFLINE-TESTED`: deterministic sanitizer/property tests pass. A parser defect is not promoted to OTA reachability or aircraft effect. |
 | RQ4 | **Betaflight 4.4.2 / MSP API 1.45 read-only contract and SITL oracle** | Claude primary; Codex review | Pinned 4.4.2 source; RQ3 for CRSF cases | Generate a direction- and length-aware schema from the pinned [4.4.2 MSP definitions](https://github.com/betaflight/betaflight/blob/4.4.2/src/main/msp/msp_protocol.h). The probe may encode only allowlisted read/query IDs with their exact required request payloads; it has no setter, CLI, reset, bootloader, passthrough, EEPROM, calibration, or motor-command encoder path. Use [SITL](https://betaflight.com/docs/development/SITL) for negotiation, malformed-frame, RXLOSS, and version-specific failsafe tests. | `SYNTHETIC/OFFLINE-TESTED` first. Any COM5 comparison requires explicit approval, props removed, allowlist enforcement, and no configuration write. |
 | RQ5 | **Blackbox/RF/CRSF timeline fusion and health analytics** | Codex primary; Claude review | RQ1, RQ3, RQ4, and existing/synthetic logs | Align passive packet gaps and link statistics with [Blackbox](https://betaflight.com/docs/wiki/guides/current/Black-Box-logging-and-usage) state, RXLOSS/failsafe transitions, DShot telemetry errors, RPM imbalance, and reset markers. | `SYNTHETIC/OFFLINE-TESTED`, then `PASSIVE-CAPTURE-VALIDATED`: report clock offset, drift, dropout, and alignment residuals. Correlation is not called causation; fresh device-log retrieval remains gated. |
-| RQ6 | **Firmware provenance, SBOM, and feature reachability** | Claude primary; Codex review | Candidate source tree or firmware artifact | Produce parse-only manifests for chip/board, firmware/framework version, Git identity, build options, hashes, dependencies, and transports. Record component presence, affected-version match, feature enablement, and reachability as separate confirmed/absent/unknown fields. | `SOURCE-DERIVED`: no advisory is marked applicable without all required evidence; missing reachability evidence is `unknown`, not `not applicable`. Never flash or sign. This gate controls every ESP CVE lane. |
-| RQ7 | **STM32F411 errata-to-source conformance** | Claude primary; Codex review | Pinned Betaflight 4.4.2 and ST documents | Map SPI/SX1280, USB OTG, DMA, timer, timeout, reset, and watchdog call sites to [ES0287](https://www.st.com/resource/en/errata_sheet/es0287-stm32f411xcxe-device-errata-stmicroelectronics.pdf); add mocks for the exact documented failure conditions. | `SOURCE-DERIVED` and `SYNTHETIC/OFFLINE-TESTED`; do not infer a device observation, general fault susceptibility, or physical-glitch result. |
-| RQ8 | **Software safety fault-model mutation** | Codex primary; Claude review | RQ4 state model | Simulate skipped checks, corrupted branch outcomes, timeout failures, resets, and watchdog events around safety-critical state transitions without modeling a physical injection apparatus. | `SYNTHETIC/OFFLINE-TESTED` only. Results are not labeled silicon errata, device evidence, or voltage-glitch susceptibility. |
+| RQ6 | **Firmware provenance, SBOM, feature reachability, and rebuild variance** | Claude primary; Codex review | Candidate source tree or firmware artifact | Produce parse-only manifests for chip/board, framework/Git identity, build options, artifact envelopes, hashes, dependencies, transports, build receipts, and dependency locks. Add Betaflight cloud-build, ArduPilot APJ/manifest, PX4 package, and ESP-IDF lock/SBOM adapters; attribute clean-build differences rather than silently normalizing them. | `SOURCE-DERIVED`: component presence, affected version, feature enablement, and reachability remain separate confirmed/absent/unknown fields. Equality is not source trust and inequality is not compromise. Never flash or sign. This gate controls every ESP CVE lane. |
+| RQ7 | **Revision-aware MCU errata and memory-boundary conformance** | Claude primary; Codex review | Pinned Betaflight 4.4.2, exact MCU/revision evidence, and vendor documents | Start with F411 SPI/SX1280, USB OTG, DMA, timer, timeout, reset, and watchdog call sites mapped to [ES0287](https://www.st.com/resource/en/errata_sheet/es0287-stm32f411xcxe-device-errata-stmicroelectronics.pdf); add exact failure mocks. Later F7/H7 work requires its own revision-specific errata plus DMA/cache/MPU buffer ownership checks. | `SOURCE-DERIVED` and `SYNTHETIC/OFFLINE-TESTED`; board/MCU IDs are inventory, not attestation. Do not generalize across silicon families or infer a physical-glitch result. |
+| RQ8 | **Software safety fault-model mutation** | Codex primary; Claude review | RQ4 state model | Simulate skipped checks, corrupted branch outcomes, timeout failures, reset causes, BOR policy, watchdog coverage, and actuator-output safe states without modeling a physical injection apparatus. | `SYNTHETIC/OFFLINE-TESTED` only. Results are not labeled silicon errata, device evidence, brownout behavior, or voltage-glitch susceptibility. |
 | RQ9 | **OpenDroneID multi-transport/dialect parser corpus** | Claude primary; Codex review | Official sample pcaps and pinned reference source | Cross-check BLE/Wi-Fi transport framing, message fields, units, versions, duplicates, and redaction through the [OpenDroneID C reference](https://github.com/opendroneid/opendroneid-core-c) and [Wireshark dissector](https://github.com/opendroneid/wireshark-dissector). | `SYNTHETIC/OFFLINE-TESTED` against official fixtures. Parsing an Authentication message is not signature or identity trust; redact IDs/coordinates and gate live ambient capture separately. |
 | RQ10 | **DRIP authentication and trust-state verifier** | Claude primary; Codex review | RQ9 plus pinned RFC test vectors, keys/trust roots, and registry/DNS snapshots | Verify syntax, signatures, freshness/replay, Manifest/Wrapper binding, and registry-chain state using [RFC 9374](https://www.rfc-editor.org/rfc/rfc9374.html) and [RFC 9575](https://www.rfc-editor.org/rfc/rfc9575.html). Report separate syntactically valid, signature-valid, identity-trusted, unsigned/unverifiable, stale, conflicting, and invalid states. | `SYNTHETIC/OFFLINE-TESTED`: every verdict identifies its test vector, key/trust-root snapshot, and unavailable dependency. Unsigned is not mislabeled spoofed; no live registry query by default. |
-| RQ11 | **MAVLink generated-contract and gap audit** | Codex primary; Claude review | Existing repository MAVLink signing/replay tools; a maintained module scope approved at promotion | Generate missing message ID/length/field/`CRC_EXTRA` contracts from official dialect XML, then close uncovered routing, ACK-state, and log-redaction gaps using synthetic fixtures. Follow the official [signing](https://mavlink.io/en/guide/message_signing.html) and [routing](https://mavlink.io/en/guide/routing.html) rules. | `SYNTHETIC/OFFLINE-TESTED`: do not duplicate already-covered signing/replay tests; use no real key material, `SETUP_SIGNING` payload, or external link. Lower relevance to the current Betaflight target. |
+| RQ11 | **MAVLink generated-contract and state-machine gap audit** | Codex primary; Claude review | Existing repository MAVLink signing/replay tools; a maintained module scope approved at promotion | Generate message ID/length/field/`CRC_EXTRA` contracts from official XML, then test parameter encoding/cache invariants, packed parameters over FTP, session/retry/path bounds, command ACK/progress/cancel state, route identity/reboot behavior, signed-frame immutability, and bounded component metadata using synthetic fixtures. | `SYNTHETIC/OFFLINE-TESTED`: no real key material, `SETUP_SIGNING` payload, external metadata fetch, or actuator command. A protocol mismatch remains an offline software finding. Lower relevance to the current Betaflight target. |
 | RQ12 | **CFO and waveform residuals as capture QA** | Codex primary; Claude review | RQ1 | Extract CFO, SFO/chirp-slope residuals, baseline bins, and decoder confidence from existing private IQ to detect capture drift and calibration problems. | `PASSIVE-CAPTURE-VALIDATED` only as capture QA. A device-fingerprinting claim requires a predeclared, held-out multi-device/multi-session design spanning relevant temperatures, locations, and calibrated receivers; studies show [CFO drift](https://arxiv.org/abs/2101.01668) and strong [channel/configuration/receiver sensitivity](https://ieeexplore.ieee.org/document/9580899). |
 | RQ13 | **Conditional ESP patch-differential corpus** | Claude primary; Codex review | RQ6 confirms exact applicability | Reproduce fixed/affected behavior in offline source tests only for proven components and configurations: [CVE-2024-42484](https://github.com/espressif/esp-now/security/advisories/GHSA-q6f6-4qc5-vhx5), native ESP-IDF [CVE-2025-52471](https://github.com/espressif/esp-idf/security/advisories/GHSA-hqhh-cp47-fv5g), BLE provisioning [CVE-2026-25507](https://github.com/espressif/esp-idf/security/advisories/GHSA-h7r3-gmg9-xjmg) / [CVE-2026-25508](https://github.com/espressif/esp-idf/security/advisories/GHSA-9j5x-rf36-54x9), or SoftAP DHCP [CVE-2026-45160](https://github.com/espressif/esp-idf/security/advisories/GHSA-g764-gwc3-75m5). | `SYNTHETIC/OFFLINE-TESTED`: synthetic packets and local processes only; never present these as blanket ESP32 or E8 findings. |
-| RQ14 | **Adjacent-stack schema and topology health** | Claude primary; Codex review | A demonstrated owned-platform or fixture need | Add offline DSDL/transfer-ID checks for [DroneCAN](https://dronecan.github.io/Specification/6._Application_level_functions/), bounded component-metadata parsing, and firmware-envelope provenance only for ecosystems actually added to the project. | `SYNTHETIC/OFFLINE-TESTED`: keep adapters dormant until needed; no CAN or external metadata fetch by default. |
+| RQ14 | **DroneCAN-v0, Cyphal-v1, and adjacent topology health** | Claude primary; Codex review | A demonstrated owned-platform or fixture need | Keep [DroneCAN/UAVCAN v0](https://dronecan.github.io/Specification/6._Application_level_functions/) separate from [Cyphal v1](https://specification.opencyphal.org/Cyphal_Specification.pdf). Test versioned DSDL/extent/signatures, port manifests, transfer-ID ordering/deduplication, multi-frame/redundant-interface behavior, heartbeat/offline state, allocation/identity continuity, registers/commands, and file/update-service policy. | `SYNTHETIC/OFFLINE-TESTED`: CRCs, transfer IDs, node IDs, unique IDs, and image checksums are not authentication. Keep adapters dormant; no CAN traffic or external fetch. |
+| RQ15 | **Betaflight preset, configuration, and build attestation** | Claude primary; Codex review | Exact firmware/target, artifact/build receipt, pinned preset index, and sanitized starting configuration | Bind cloud-build target/features/log/hash to the artifact; resolve and hash preset include graphs; interpret configuration under the exact version schema; emit a deterministic before/after semantic diff with no command or serial transport. | `SOURCE-DERIVED` and `SYNTHETIC/OFFLINE-TESTED`: reject wrong-version parameters, unknown commands, include cycles, hidden resource/protocol changes, and cross-version restores. Repository/build hashes are not signatures and the result is not a flight-safety claim. |
+| RQ16 | **Verified boot, update target binding, and rollback-policy oracle** | Claude primary; Codex review | RQ6 plus exact MCU/board, boot path, image envelope, key identity, signed ranges, version policy, and recovery path | Parse PX4/ArduPilot/ESP/DFU profiles as separate finite-state machines; build a boot/update trust graph; test tampered, wrong-target, old-version, test-key, truncated, partially covered, and interrupted-update fixtures. Include peripheral update trust without equating APDescriptor checksums with signatures. | `SOURCE-DERIVED` and `SYNTHETIC/OFFLINE-TESTED`: report authorization, coverage, target compatibility, downgrade resistance, and recovery separately. No device enumeration, boot transition, flash/sign operation, eFuse/option-byte access, or debug attachment. |
+| RQ17 | **DShot/ESC command-state and telemetry conformance** | Codex primary; Claude review | Proven DShot configuration and exact ESC firmware family/version | Pin FC/ESC sources; model checksums, pulse timing, command repetition, stopped-motor/cooldown rules, bidirectional GCR/EDT decoding, error rates, stale state, and telemetry plausibility with pure local frames. | `SOURCE-DERIVED` then `SYNTHETIC/OFFLINE-TESTED`: no GPIO, motor, serial, or RF output. Establishes an intra-aircraft contract, not remote reachability. |
+| RQ18 | **PX4 uXRCE-DDS exposure and offboard-control lease oracle** | Claude primary; Codex review | Exact PX4/Agent/ROS versions, `dds_topics.yaml`, matching messages, and loopback SITL | Generate inbound/outbound topic/service manifests; test schema/QoS/namespace/session/fragment/reconnect state; separately test offboard proof-of-life, setpoint freshness, writer collisions, loss timeout, mode precedence, and fallback. | `SYNTHETIC/OFFLINE-TESTED`: PX4 documents DDS as unauthenticated and directly connected to uORB, so isolation is an acceptance criterion. An XRCE client key is not authentication; no physical output. |
+| RQ19 | **GNSS receiver, correction-chain, and authentication-state contract** | Claude primary; Codex review | Exact receiver/protocol generation and pinned FC/correction stack | Generate receiver message contracts; test parse/resync/config ACK state, `GPS_RTCM_DATA` fragment/loss/source/freshness behavior, simulated stuck/wrong/off states, and Galileo OSNMA test vectors with navigation plausibility kept separate. | `SYNTHETIC/OFFLINE-TESTED`: checksums are not authentication; OSNMA navigation-data authentication is not range authentication or a safety guarantee. Synthetic/redacted coordinates only; no live GNSS, correction service, or RF. |
+| RQ20 | **Diagnostic-artifact privacy and release sanitizer** | Codex primary; Claude review | Existing exported artifacts or synthetic fixtures only | Scan Blackbox, ULog, DataFlash, configs, tlogs, metadata, and core dumps; produce a redacted derivative with original/derivative hashes, transformation manifest, class counts, and explicit residual-unknowns. Track encryption separately from redaction. | `SYNTHETIC/OFFLINE-TESTED`: originals stay private; no new acquisition. A RAM scanner cannot prove secret absence, and an encrypted artifact is not automatically share-safe. |
+| RQ21 | **ArduPilot Lua, ROMFS, defaults, and parameter-policy integrity** | Claude primary; Codex review | Exact build with scripting/ROMFS or a private existing script inventory | Hash and classify ROMFS/SD scripts; model load/run checksums; parse embedded defaults, read-only declarations, and parameter-lockdown allowlists; exercise deterministic fake-runtime load/error cases. | `SOURCE-DERIVED` and `SYNTHETIC/OFFLINE-TESTED`: checksums detect change, not author trust; static analysis is not runtime timing or safety evidence. |
+| RQ22 | **Conditional peripheral serial and cooperative-traffic adapters** | Claude primary; Codex review | Exact SRXL2, SmartAudio, or ADS-B/DAA implementation is proven | Add decode-only/state-only adapters for SRXL2 handshake/failsafe, SmartAudio version/transaction/table policy, and synthetic cooperative-traffic freshness/collision/eviction/conflict state. | `SYNTHETIC/OFFLINE-TESTED`: no bind, programming, UART, VTX, RF, or live traffic action. These adapters remain dormant and do not apply to the current ELRS link by analogy. |
 
-If the owner explicitly promotes a research task and moves R5 out of NOW, start
-with RQ1, then RQ2-RQ4. RQ5-RQ8 are the next target-specific evidence paths.
-RQ9-RQ14 are useful expansion paths, not reasons to delay current work.
+If the owner explicitly promotes a research task and moves R6 out of NOW, start
+with RQ15 for the current Betaflight target or RQ1 for the passive-capture
+family. RQ6 and RQ20 are the next reusable evidence gates; RQ17 follows only if
+the ESC identity is proven. RQ9-RQ14 and RQ16/RQ18/RQ19/RQ21/RQ22 are useful
+conditional expansion paths, not reasons to delay current work.
 
 ### Hardware queue
 
@@ -405,7 +448,7 @@ RQ9-RQ14 are useful expansion paths, not reasons to delay current work.
   desired after the app-factory layout stabilizes.
 - Pytest support only when it provides fixture or reporting value beyond the
   existing `unittest` suite.
-- Cosmetic theme and task-board polish after reliability work.
+- Further task-board polish after the R6 reliability/theme work.
 
 ## GATED / excluded from the active backlog
 
@@ -427,7 +470,7 @@ making dependencies explicit.
 
 | ID | Original task | Status | Roadmap decision |
 |---|---|---|---|
-| 1a | Theme toggle | LATER | Safe cosmetic work; follow R5. |
+| 1a | Theme toggle | NOW | Folded into R6 after the completed R5 asset/CSP handoff. |
 | 1b | Responsive mobile UI | DONE | Definite viewport height, scroll reachability, focus recovery, and 390 px browser coverage landed. |
 | 1c | Collapsible log viewer | PARTIAL | Drawer landed; hydration, copy, resize, and persistence move to R6. |
 | 1d | SSE backoff | CHANGED | Native `EventSource` already reconnects and carries `Last-Event-ID`; add observable state/retry in R6, not a competing loop. |

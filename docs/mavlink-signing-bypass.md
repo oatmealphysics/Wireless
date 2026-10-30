@@ -138,56 +138,43 @@ From PX4's `src/modules/mavlink/mavlink_main.cpp`:
 
 ---
 
-## 2. Key Extraction from Firmware
+## 2. Key custody and storage verification
 
-### Where Keys Are Stored
-
-MAVLink signing keys are **not** compiled into firmware binaries. They are stored in persistent parameter storage, which varies by platform:
+Key storage is implementation- and release-specific. Do not infer a current
+path or persistence mechanism from another flight stack or an old release.
+`SETUP_SIGNING` provisions a 32-byte secret and initial timestamp, but the
+receiving stack decides how that material is persisted and recovered.
 
 #### ArduPilot
 
-- **Storage:** EEPROM / SD card parameter file (`@ROMFS/parameters.parm` or flash-based param storage)
-- **Parameter:** Not a standard parameter — the signing key is stored via a dedicated setup mechanism
-- **Setup method:** `SETUP_SIGNING` MAVLink command (message ID 256) sends the 32-byte key + initial timestamp to the flight controller
-- **Runtime storage:** The key is held in RAM during operation and persisted to non-volatile storage
-- **Key file on SD:** If an SD card is present, ArduPilot may store the key in `/APM/signing.key` (32 bytes, raw binary)
-
-**Extraction vectors:**
-1. **SD card physical access:** Pull the SD card, read `/APM/signing.key` directly
-2. **MAVLink FTP:** If MAVLink FTP is accessible (unsigned channel or another signed channel), download the key file
-3. **Parameter dump:** While the key itself isn't a parameter, the `BRD_SERIAL_NUM` and other identifiers that may correlate with key generation are readable
-4. **Firmware dump via SWD/JTAG:** Dump the STM32 flash, locate the key in the parameter storage region (usually at the end of flash)
+The earlier `/APM/signing.key`, parameter-file, and generic flash-location
+claims in this document were not tied to an exact ArduPilot release and source
+location. Treat ArduPilot persistence as **unverified** until a promoted audit
+pins a release and traces its `SETUP_SIGNING` handler, storage backend, file
+permissions, log behavior, and lost-key recovery path. No key value, raw
+storage image, or private path should be retained in tracked evidence.
 
 #### PX4
 
-- **Storage:** Parameter system backed by `/fs/microsd/params` or onboard flash
-- **Key handling:** PX4 stores the signing key in its parameter subsystem
-- **Relevant files:** `src/modules/mavlink/mavlink_main.cpp` handles signing setup
-- **SD card:** Key may be stored in `/fs/microsd/mavlink_signing_key`
+Current PX4 `main` documentation says the signing key is stored on the SD card
+at `/mavlink/mavlink-signing-key.bin`, applies signing rules to USB as well as
+other links, and uses physical key-file removal as part of lost-key recovery.
+That is a current-main statement, not proof about an older installed release.
+Any platform finding must pin the exact PX4 version and confirm its source and
+configuration.
 
-**Extraction vectors:**
-1. **SD card access:** Read the key file directly
-2. **NSH console:** PX4's NuttShell (accessible via serial or MAVLink shell if unsigned) can read filesystem
-3. **SWD/JTAG debug:** Dump RAM while the system is running; the key is in a known struct
+Defensive verification should establish:
 
-### Binary Analysis Notes
+- where the pinned release persists the key and which principals can read,
+  replace, or delete it;
+- whether every enabled MAVLink link enforces the intended signed/unsigned
+  policy, including USB and companion-computer paths;
+- whether setup material or signatures can enter logs or support bundles;
+- how initial provisioning, rotation, revocation, and lost-key recovery work;
+- whether the deployment protects removable storage and debug interfaces.
 
-When analyzing a firmware `.bin` dump (e.g., in Ghidra):
-
-- The signing key is **not** in the firmware image itself — it's in a separate storage region
-- Look for the `SETUP_SIGNING` handler to understand how the key is stored
-- The `mavlink_signing_t` struct in RAM contains:
-  ```c
-  typedef struct {
-      uint8_t link_id;
-      uint8_t signing_streams_count;
-      mavlink_signing_streams_t *signing_streams;  // timestamp tracking
-      uint64_t timestamp;
-      uint8_t secret_key[32];
-      uint8_t flags;  // includes MAVLINK_SIGNING_FLAG_SIGN_OUTGOING
-  } mavlink_signing_t;
-  ```
-- Search for 32-byte aligned regions that look like keys (high entropy, no ASCII patterns)
+Primary source for the current PX4 statement:
+[PX4 MAVLink security hardening](https://github.com/PX4/PX4-Autopilot/blob/main/docs/en/mavlink/security_hardening.md).
 
 ### Weak Key Generation
 

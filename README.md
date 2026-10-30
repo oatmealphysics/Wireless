@@ -198,5 +198,6 @@ See [SECURITY.md](SECURITY.md) for the full review requirements.
 - [Per-device evidence dossiers](references/README.md)
 - [Firmware → Vulnerability → PoC methodology](docs/firmware-to-poc-methodology.md)
 - [New hardware research blueprint](docs/new-hardware-research-blueprint.md)
+- [2026 defensive hardware/firmware/protocol expansion](research/defensive-attack-surface-expansion-2026-10-29.md)
 - [Vulnerability evidence audit](research/CVE-AUDIT.md)
 - [Project and collaboration rules](AGENTS.md)

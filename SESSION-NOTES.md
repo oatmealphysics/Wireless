@@ -4626,3 +4626,88 @@ to versioned same-origin static assets, remove remaining inline style/event
 dependencies, add a strict CSP without unsafe inline/eval allowances, and keep
 the route plus loopback browser suites green. Claude is assigned the independent
 browser review after the pushed implementation handoff.
+
+---
+
+## 69. R5 strict-CSP handoff and defensive research expansion (Codex, 2026-10-30)
+
+**Starting revision and objective:** This pass started from clean pushed
+revision `b565742f66d3b00a5b440160a7c1bf14c4e3c3da`, which contains the completed
+R5 dashboard asset extraction and strict Content Security Policy. The owner
+then requested a deeper, source-backed assessment of additional drone hardware,
+firmware, and protocol pathways and asked that it become part of the maintained
+research documentation and singular roadmap.
+
+**R5 implementation evidence:** `web/templates/index.html` now loads versioned
+same-origin `dashboard.v1.css` and `dashboard.v1.js`. App-authored inline style
+and script blocks, inline event/style attributes, generated style attributes,
+and JavaScript style mutations were removed. HTML, API, and static responses
+carry the exact self-only CSP plus COOP, CORP, referrer, MIME-sniffing, and frame
+protections; static assets receive a one-year cache policy. Route tests verify
+the exact header, assets, cache behavior, and inline-free contract.
+
+The maintained local evidence was 43/43 API route tests, 53/53 frontend source
+contracts, 8/8 factory tests, 19/19 lifecycle tests, 10/10 history tests, 650
+full tool tests passing with 23 optional integration skips, and the 257-file
+project validator passing. A loopback-only local Chromium run loaded both
+versioned assets with no console or CSP violation, completed the simulated
+scan/open/dry-run-action/clear flow, and confirmed a 390x844 viewport with the
+detail region internally scrollable. No live action was enabled.
+
+**Hosted CI condition:** GitHub Actions run `40950236841` created eight red
+check runs but did not start any job step. The authenticated check-run
+annotations all state that recent account payments failed or the spending
+limit must be increased. The Ubuntu checks also carried an image-migration
+notice. This is recorded as an external account/billing block, not a code or
+test failure, and the roadmap does not call this run green.
+
+**Research synthesis:** The new
+`research/defensive-attack-surface-expansion-2026-10-29.md` integrates parallel
+hardware, firmware, and protocol reviews with current official sources. It
+defines "targetable" as an evidence-gated trust boundary with an offline test
+oracle, not a claim of reachability or exploitation. It ranks Betaflight
+preset/config/build attestation, verified boot/update/rollback coverage,
+DShot/ESC conformance, hardware/silicon provenance, diagnostic privacy,
+MAVLink transaction state, PX4 DDS/offboard leases, GNSS/RTCM/OSNMA state,
+DroneCAN/Cyphal update trust, ArduPilot extension integrity, rebuild variance,
+and conditional peripheral adapters.
+
+The roadmap now adds dormant RQ15-RQ22 rows and strengthens RQ6-RQ8, RQ11, and
+RQ14. All remain `GATED`. The document explicitly separates signature presence
+from boot-time enforcement, checksums from authentication, identifiers from
+attestation, and OSNMA navigation-data authentication from range or safety
+assurance. It also records the E8 MCU/boot posture as unknown rather than
+projecting ESP-family findings onto it.
+
+**Accuracy correction:** The stale PX4 signing-key path and unpinned ArduPilot
+storage claims in `docs/mavlink-signing-bypass.md` were replaced with a
+version-pinned defensive key-custody checklist. Current PX4 `main` documents
+`/mavlink/mavlink-signing-key.bin`; that is not presented as evidence about an
+older installed release.
+
+**Documentation validation:** `python3 -B tools/validate-project.py` passes all
+syntax, JSON, corpus provenance/hash, rainbow-data, CVE-coverage, and local-link
+checks across 258 tracked/worktree files. The roadmap has exactly one `NOW`
+heading and one `Status: NOW`, all 22 RQ table rows have the expected six
+columns, the research document has a complete 1–13 section sequence, and the
+staged diff passes `git diff --cached --check`.
+
+**Safety boundary:** Work used repository source, documentation, official
+primary sources, local loopback simulation, and prior automated evidence. It
+did not access hardware, serial ports, CAN, RF, GNSS services, firmware,
+bootloaders, debug interfaces, option bytes, eFuses, credentials, external
+targets, or live actions. No research row was promoted by documenting it.
+
+**Changed files:** `README.md`, `PROJECT-ROADMAP.md`,
+`research/defensive-attack-surface-expansion-2026-10-29.md`,
+`docs/mavlink-signing-bypass.md`, and this evidence log.
+
+**Commit/push status:** Prepared for one normal exact-path documentation commit
+and push to `origin/main`; no force push, rebase, branch switch, history rewrite,
+broad staging, hardware action, or external publication is used.
+
+**Next task:** R6 is the sole NOW lane: Claude implements log hydration/copy/
+resize/persistence, observable connection state with `Retry now`, and the
+post-extraction theme; Codex performs the independent browser/integration
+review. Research implementation remains dormant until an explicit promotion
+moves R6 out of NOW and satisfies the selected row's evidence and safety gates.
