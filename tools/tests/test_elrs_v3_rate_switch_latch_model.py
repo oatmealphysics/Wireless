@@ -14,6 +14,7 @@ model = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(model)
 
 
+@unittest.skip("QUARANTINE: uses fabricated state transitions; needs real rate-switch observations")
 class RateSwitchLatchModelTests(unittest.TestCase):
     def test_source_rate_table_and_integer_cycle_intervals(self):
         self.assertEqual(

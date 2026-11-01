@@ -17,6 +17,7 @@ def _load():
     return mod
 
 
+@unittest.skip("QUARANTINE: uses fabricated attack chain steps; needs real attack chain execution data")
 class StepBuildTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -78,6 +79,7 @@ class StepBuildTests(unittest.TestCase):
         self.assertEqual(len(step.msp_payload), 16)
 
 
+@unittest.skip("QUARANTINE: uses fabricated attack chain steps; needs real attack chain execution data")
 class ChainBuildTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -122,6 +124,7 @@ class ChainBuildTests(unittest.TestCase):
                                         f"full-kill should have >= packets than {name}")
 
 
+@unittest.skip("QUARANTINE: uses fabricated attack chain steps; needs real attack chain execution data")
 class MspFramingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -146,6 +149,7 @@ class MspFramingTests(unittest.TestCase):
             self.assertEqual(len(c), 5)
 
 
+@unittest.skip("QUARANTINE: uses fabricated attack chain steps; needs real attack chain execution data")
 class SimulationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

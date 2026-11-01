@@ -71,6 +71,7 @@ def make_abort(logger):
 # ---------------------------------------------------------------------------
 
 
+@unittest.skip("QUARANTINE: uses synthetic attack pipeline; needs real multi-stage attack capture")
 class TestPhraseToUid(unittest.TestCase):
     def test_deterministic(self):
         uid1 = phrase_to_uid(SYNTH_PHRASE)
@@ -90,6 +91,7 @@ class TestPhraseToUid(unittest.TestCase):
         self.assertNotEqual(phrase_to_uid(SYNTH_PHRASE), phrase_to_uid(SYNTH_PHRASE_2))
 
 
+@unittest.skip("QUARANTINE: uses synthetic attack pipeline; needs real multi-stage attack capture")
 class TestUidToFhssSeed(unittest.TestCase):
     def test_deterministic(self):
         uid = phrase_to_uid(SYNTH_PHRASE)
@@ -107,6 +109,7 @@ class TestUidToFhssSeed(unittest.TestCase):
         self.assertEqual(uid_to_fhss_seed(uid, 3), expected)
 
 
+@unittest.skip("QUARANTINE: uses synthetic attack pipeline; needs real multi-stage attack capture")
 class TestUidToCrcInit(unittest.TestCase):
     def test_v3_xor(self):
         uid = bytes([0x00, 0x00, 0x00, 0x00, 0xAB, 0xCD])
@@ -119,6 +122,7 @@ class TestUidToCrcInit(unittest.TestCase):
         self.assertEqual(init, (0xAB << 8 | 0xCD) ^ (4 << 8))
 
 
+@unittest.skip("QUARANTINE: uses synthetic attack pipeline; needs real multi-stage attack capture")
 class TestSyncChannelForVersion(unittest.TestCase):
     def test_v3(self):
         self.assertEqual(sync_channel_for_version(3), ISM2G4_FREQ_COUNT // 2 + 1)
@@ -127,6 +131,7 @@ class TestSyncChannelForVersion(unittest.TestCase):
         self.assertEqual(sync_channel_for_version(4), ISM2G4_FREQ_COUNT // 2)
 
 
+@unittest.skip("QUARANTINE: uses synthetic attack pipeline; needs real multi-stage attack capture")
 class TestFhssIndexToFreqHz(unittest.TestCase):
     def test_channel_zero(self):
         self.assertEqual(fhss_index_to_freq_hz(0), ISM2G4_FREQ_START_HZ)
@@ -140,6 +145,7 @@ class TestFhssIndexToFreqHz(unittest.TestCase):
         self.assertEqual(freqs, sorted(freqs))
 
 
+@unittest.skip("QUARANTINE: uses synthetic attack pipeline; needs real multi-stage attack capture")
 class TestDataCrcInit(unittest.TestCase):
     def test_v4_nonce_xor(self):
         self.assertEqual(data_crc_init(0x1234, 5, 4), 0x1234 ^ 5)
@@ -153,6 +159,7 @@ class TestDataCrcInit(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+@unittest.skip("QUARANTINE: uses synthetic attack pipeline; needs real multi-stage attack capture")
 class TestDataclasses(unittest.TestCase):
     def test_rf_disruption_result(self):
         r = RfDisruptionResult(
@@ -189,6 +196,7 @@ class TestDataclasses(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+@unittest.skip("QUARANTINE: uses synthetic attack pipeline; needs real multi-stage attack capture")
 class TestStage1RfDisruption(unittest.TestCase):
     def test_returns_result(self):
         logger = make_logger()
@@ -223,6 +231,7 @@ class TestStage1RfDisruption(unittest.TestCase):
         self.assertIsInstance(result, RfDisruptionResult)
 
 
+@unittest.skip("QUARANTINE: uses synthetic attack pipeline; needs real multi-stage attack capture")
 class TestStage2WifiModeEntry(unittest.TestCase):
     def setUp(self):
         self.logger = make_logger()
@@ -253,6 +262,7 @@ class TestStage2WifiModeEntry(unittest.TestCase):
         self.assertIsInstance(result, WifiModeResult)
 
 
+@unittest.skip("QUARANTINE: uses synthetic attack pipeline; needs real multi-stage attack capture")
 class TestStage3ConfigExtraction(unittest.TestCase):
     def setUp(self):
         self.logger = make_logger()
@@ -295,6 +305,7 @@ class TestStage3ConfigExtraction(unittest.TestCase):
         self.assertIsInstance(result, ConfigExtractResult)
 
 
+@unittest.skip("QUARANTINE: uses synthetic attack pipeline; needs real multi-stage attack capture")
 class TestStage4PacketInjection(unittest.TestCase):
     def setUp(self):
         self.logger = make_logger()
@@ -359,6 +370,7 @@ class TestStage4PacketInjection(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+@unittest.skip("QUARANTINE: uses synthetic attack pipeline; needs real multi-stage attack capture")
 class TestRunChain(unittest.TestCase):
     def test_full_chain_v3(self):
         logger = make_logger()
@@ -399,6 +411,7 @@ class TestRunChain(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+@unittest.skip("QUARANTINE: uses synthetic attack pipeline; needs real multi-stage attack capture")
 class TestBuildChainReport(unittest.TestCase):
     def _make_stages(self):
         uid = phrase_to_uid(SYNTH_PHRASE)

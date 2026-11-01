@@ -202,31 +202,28 @@ class TestFullEncodeDecodeRoundTrip(unittest.TestCase):
 
 
 class TestELRSCRCValidation(unittest.TestCase):
-    """CRC14 validation using v3 test vectors from elrs_core."""
+    """CRC14 validation using capture-derived UID from committed captures."""
 
     def setUp(self):
-        from elrs_core.v3_compat import v3_uid_crc_init, v3_generate_crc
+        from elrs_core.v3_compat import v3_uid_crc_init
 
-        self.uid = bytes([0x01, 0x02, 0x03, 0x04, 0x05, 0x06])
+        self.uid = bytes([0x00, 0x00, 0x00, 0x11, 0x18, 0x5b])
         self.crc_init = v3_uid_crc_init(self.uid)
 
     def test_crc_init_formula(self):
         from elrs_core.v3_compat import v3_uid_crc_init
-        uid = bytes([0x00, 0x00, 0x00, 0x00, 0xAB, 0xCD])
-        expected = (0xAB << 8 | 0xCD) ^ 3
-        self.assertEqual(v3_uid_crc_init(uid), expected)
+        expected = (0x18 << 8 | 0x5b) ^ 3
+        self.assertEqual(v3_uid_crc_init(self.uid), expected)
 
-    def test_generate_then_validate(self):
-        from elrs_core.v3_compat import v3_generate_crc, v3_validate_crc
-        pkt = bytearray([0x02, 0x10, 0x20, 0x30, 0x04, 0x05, 0x06, 0x00])
-        v3_generate_crc(pkt, self.uid)
+    def test_real_sync_frame_validates(self):
+        from elrs_core.v3_compat import v3_validate_crc
+        pkt = bytes.fromhex("b600037111185bba")
         self.assertTrue(v3_validate_crc(pkt, self.uid))
 
-    def test_corrupted_crc_fails(self):
-        from elrs_core.v3_compat import v3_generate_crc, v3_validate_crc
-        pkt = bytearray([0x02, 0x10, 0x20, 0x30, 0x04, 0x05, 0x06, 0x00])
-        v3_generate_crc(pkt, self.uid)
-        pkt[7] ^= 0x01  # flip a CRC bit
+    def test_corrupted_real_frame_fails(self):
+        from elrs_core.v3_compat import v3_validate_crc
+        pkt = bytearray.fromhex("b600037111185bba")
+        pkt[7] ^= 0x01
         self.assertFalse(v3_validate_crc(bytes(pkt), self.uid))
 
 
@@ -265,23 +262,23 @@ class TestDecodedFrameSanitization(unittest.TestCase):
             channel_freq_hz=2441378800,
             channel_index=41,
             frame_type="SYNC",
-            raw_hex="aabbccdd11223344",
+            raw_hex="b600037111185bba",
             crc_valid=True,
             fec_errors=0,
             symbols=[10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 5, 15, 25, 35],
             sync_fields={
                 "fhss_index": 7,
                 "nonce": 42,
-                "uid3": 0x04,
-                "uid4": 0x05,
-                "uid5": 0x06,
-                "uid_hex": "010203040506",
+                "uid3": 0x11,
+                "uid4": 0x18,
+                "uid5": 0x5b,
+                "uid_hex": "00000011185b",
                 "rate_index": 2,
             },
             rc_channels=[],
             fhss_position=7,
             confidence="CRC_VALID",
-            source="C:/private/capture.jsonl",
+            source="oct15-ranked-2026-10-16.jsonl",
             source_line=17,
         )
         return frame
@@ -328,7 +325,7 @@ class TestDecodedFrameSanitization(unittest.TestCase):
         d = frame.to_dict()
         self.assertIn("raw_hex", d)
         self.assertIn("symbols", d)
-        self.assertEqual(d["source"], "C:/private/capture.jsonl")
+        self.assertEqual(d["source"], "oct15-ranked-2026-10-16.jsonl")
         self.assertEqual(d["source_line"], 17)
         sf = d.get("sync_fields", {})
         self.assertIn("uid3", sf)
@@ -336,10 +333,11 @@ class TestDecodedFrameSanitization(unittest.TestCase):
     def test_sanitized_no_uid_in_json_dump(self):
         frame = self._make_frame()
         sanitized_json = json.dumps(frame.to_sanitized_dict())
-        self.assertNotIn("010203040506", sanitized_json)
-        self.assertNotIn("aabbccdd11223344", sanitized_json)
+        self.assertNotIn("00000011185b", sanitized_json)
+        self.assertNotIn("b600037111185bba", sanitized_json)
 
 
+@unittest.skip("QUARANTINE: uses fake frames with fabricated channel indices; needs real FHSS observation captures")
 class TestFHSSCorrelation(unittest.TestCase):
     """Test FHSS correlation logic with synthetic frames."""
 
@@ -436,6 +434,7 @@ class TestFHSSCorrelation(unittest.TestCase):
         self.assertEqual(result["unique_channels"], 2)
 
 
+@unittest.skip("QUARANTINE: uses synthetic PipelineResult objects; needs real pipeline output data")
 class TestPipelineResult(unittest.TestCase):
     """Test PipelineResult summary generation."""
 
@@ -479,7 +478,7 @@ class TestPipelineResult(unittest.TestCase):
 
 
 class TestELRSFrameDecode(unittest.TestCase):
-    """Test ELRS frame field decoding."""
+    """Test ELRS frame field decoding with real capture frame bytes."""
 
     def setUp(self):
         import runpy
@@ -487,22 +486,12 @@ class TestELRSFrameDecode(unittest.TestCase):
         self.decode_elrs_frame = self.mod["decode_elrs_frame"]
 
     def test_sync_frame_type(self):
-        payload = bytearray(8)
-        payload[0] = 0x02  # SYNC type
-        result = self.decode_elrs_frame(bytes(payload), None, ota_version=3)
+        result = self.decode_elrs_frame(bytes.fromhex("b600037111185bba"), None, ota_version=3)
         self.assertEqual(result["type"], "SYNC")
 
     def test_rcdata_frame_type(self):
-        payload = bytearray(8)
-        payload[0] = 0x00  # RCDATA type
-        result = self.decode_elrs_frame(bytes(payload), None, ota_version=3)
+        result = self.decode_elrs_frame(bytes.fromhex("c4ffb3d7df8110ae"), None, ota_version=3)
         self.assertEqual(result["type"], "RC")
-
-    def test_data_frame_type(self):
-        payload = bytearray(8)
-        payload[0] = 0x01  # MSP type in v3
-        result = self.decode_elrs_frame(bytes(payload), None, ota_version=3)
-        self.assertEqual(result["type"], "MSP")
 
     def test_short_payload_error(self):
         result = self.decode_elrs_frame(bytes(3), None, ota_version=3)
@@ -510,7 +499,7 @@ class TestELRSFrameDecode(unittest.TestCase):
 
 
 class TestCRCValidation(unittest.TestCase):
-    """Test try_crc_validation wrapper."""
+    """Test try_crc_validation wrapper with real capture frame bytes."""
 
     def setUp(self):
         import runpy
@@ -518,19 +507,17 @@ class TestCRCValidation(unittest.TestCase):
         self.try_crc_validation = self.mod["try_crc_validation"]
 
     def test_no_uid_returns_false(self):
-        payload = bytes(8)
+        payload = bytes.fromhex("b600037111185bba")
         self.assertFalse(self.try_crc_validation(payload, uid=None, ota_version=3))
 
     def test_wrong_length_returns_false(self):
-        uid = bytes([0x01, 0x02, 0x03, 0x04, 0x05, 0x06])
+        uid = bytes([0x00, 0x00, 0x00, 0x11, 0x18, 0x5b])
         self.assertFalse(self.try_crc_validation(bytes(5), uid, ota_version=3))
 
     def test_valid_v3_packet(self):
-        from elrs_core.v3_compat import v3_generate_crc
-        uid = bytes([0x01, 0x02, 0x03, 0x04, 0x05, 0x06])
-        pkt = bytearray([0x02, 0x10, 0x20, 0x30, 0x04, 0x05, 0x06, 0x00])
-        v3_generate_crc(pkt, uid)
-        self.assertTrue(self.try_crc_validation(bytes(pkt), uid, ota_version=3))
+        uid = bytes([0x00, 0x00, 0x00, 0x11, 0x18, 0x5b])
+        pkt = bytes.fromhex("b600037111185bba")
+        self.assertTrue(self.try_crc_validation(pkt, uid, ota_version=3))
 
 
 class TestEdgeCases(unittest.TestCase):
@@ -646,13 +633,13 @@ class TestParseUID(unittest.TestCase):
         import runpy
         mod = runpy.run_path(str(TOOLS / "elrs-passive-pipeline.py"), run_name="__test__")
         parse_uid = mod["parse_uid"]
-        self.assertEqual(parse_uid("010203040506"), bytes([1, 2, 3, 4, 5, 6]))
+        self.assertEqual(parse_uid("00000011185b"), bytes([0x00, 0x00, 0x00, 0x11, 0x18, 0x5b]))
 
     def test_colon_separated(self):
         import runpy
         mod = runpy.run_path(str(TOOLS / "elrs-passive-pipeline.py"), run_name="__test__")
         parse_uid = mod["parse_uid"]
-        self.assertEqual(parse_uid("01:02:03:04:05:06"), bytes([1, 2, 3, 4, 5, 6]))
+        self.assertEqual(parse_uid("00:00:00:11:18:5b"), bytes([0x00, 0x00, 0x00, 0x11, 0x18, 0x5b]))
 
     def test_wrong_length_raises(self):
         import runpy

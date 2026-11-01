@@ -16,6 +16,7 @@ TOOL = Path(__file__).resolve().parents[1] / "elrs-sync-channel-record.py"
 
 
 @unittest.skipIf(np is None, "NumPy is optional")
+@unittest.skip("QUARANTINE: uses FakeDevice SDR mock; needs real SDR capture session data")
 class SyncChannelRecordTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

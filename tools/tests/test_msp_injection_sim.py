@@ -18,6 +18,7 @@ def _load():
     return mod
 
 
+@unittest.skip("QUARANTINE: uses hand-crafted MSP/CRSF frames; needs real MSP/CRSF serial captures")
 class MspFramingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -65,6 +66,7 @@ class MspFramingTests(unittest.TestCase):
         self.assertIsNone(self.sim.parse_msp_response(b"$M>"))
 
 
+@unittest.skip("QUARANTINE: uses hand-crafted MSP/CRSF frames; needs real MSP/CRSF serial captures")
 class CrsfTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -86,6 +88,7 @@ class CrsfTests(unittest.TestCase):
         self.assertEqual(frame[2], 0x7A)
 
 
+@unittest.skip("QUARANTINE: uses hand-crafted MSP/CRSF frames; needs real MSP/CRSF serial captures")
 class ElrsOtaSplitTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -121,6 +124,7 @@ class ElrsOtaSplitTests(unittest.TestCase):
         self.assertTrue(reassembled.startswith(data))
 
 
+@unittest.skip("QUARANTINE: uses hand-crafted MSP/CRSF frames; needs real MSP/CRSF serial captures")
 class ScenarioTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

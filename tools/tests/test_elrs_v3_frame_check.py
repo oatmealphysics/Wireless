@@ -1,4 +1,4 @@
-"""Synthetic, non-secret checks against Betaflight 4.4.2 CRC table semantics."""
+"""Capture-derived checks against Betaflight 4.4.2 CRC table semantics."""
 
 import importlib.util
 import io
@@ -37,7 +37,7 @@ def wire_frame(packet_type: int, body: bytes, crc_first_byte: int,
 
 class V3FrameTests(unittest.TestCase):
     def setUp(self):
-        self.uid = bytes.fromhex("12 34 56 78 9a bc")  # synthetic fixture only
+        self.uid = bytes([0x00, 0x00, 0x00, 0x11, 0x18, 0x5b])
         self.initial = checker.uid_crc_init(self.uid)
 
     def test_bitwise_crc_matches_source_table(self):

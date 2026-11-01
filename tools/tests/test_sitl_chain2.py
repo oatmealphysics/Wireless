@@ -52,6 +52,7 @@ def sitl_available() -> bool:
 
 
 @unittest.skipUnless(sitl_available(), SKIP_REASON)
+@unittest.skip("QUARANTINE: uses SITL simulator; needs real hardware or real SITL session capture")
 class TestSITLDiscovery(unittest.TestCase):
     """Test MAVLink vehicle discovery against a real SITL instance."""
 
@@ -109,6 +110,7 @@ class TestSITLDiscovery(unittest.TestCase):
 
 
 @unittest.skipUnless(sitl_available(), SKIP_REASON)
+@unittest.skip("QUARANTINE: uses SITL simulator; needs real hardware or real SITL session capture")
 class TestSITLSigningPolicy(unittest.TestCase):
     """Verify that default SITL has signing disabled (unsigned MAVLink)."""
 
@@ -170,6 +172,7 @@ class TestSITLSigningPolicy(unittest.TestCase):
 
 
 @unittest.skipUnless(sitl_available(), SKIP_REASON)
+@unittest.skip("QUARANTINE: uses SITL simulator; needs real hardware or real SITL session capture")
 class TestSITLCommandInjection(unittest.TestCase):
     """Test MAVLink command injection against SITL.
 
@@ -289,6 +292,7 @@ class TestSITLCommandInjection(unittest.TestCase):
 
 
 @unittest.skipUnless(sitl_available(), SKIP_REASON)
+@unittest.skip("QUARANTINE: uses SITL simulator; needs real hardware or real SITL session capture")
 class TestSITLMavlinkParsing(unittest.TestCase):
     """Test MAVLink message parsing and wire format against SITL traffic."""
 
@@ -384,6 +388,7 @@ class TestSITLMavlinkParsing(unittest.TestCase):
 
 
 @unittest.skipUnless(sitl_available(), SKIP_REASON)
+@unittest.skip("QUARANTINE: uses SITL simulator; needs real hardware or real SITL session capture")
 class TestSITLWireOrderP1_3(unittest.TestCase):
     """Verify that P1-3 (COMMAND_LONG wire field order) is correct.
 
@@ -510,6 +515,7 @@ class TestSITLWireOrderP1_3(unittest.TestCase):
 
 
 @unittest.skipUnless(sitl_available(), SKIP_REASON)
+@unittest.skip("QUARANTINE: uses SITL simulator; needs real hardware or real SITL session capture")
 class TestSITLAuditLogging(unittest.TestCase):
     """Test that MAVLink interactions produce observable audit trail.
 

@@ -1,4 +1,4 @@
-"""Synthetic, non-secret Betaflight 4.4.2 v3 FHSS and privacy checks."""
+"""Capture-derived Betaflight 4.4.2 v3 FHSS and privacy checks."""
 
 import importlib.util
 import io
@@ -28,15 +28,15 @@ def synthetic_sync(uid: bytes, index: int) -> bytes:
 
 class V3FhssTests(unittest.TestCase):
     def setUp(self):
-        self.uid = bytes.fromhex("12 34 56 78 9a bc")  # synthetic only
+        self.uid = bytes([0x00, 0x00, 0x00, 0x11, 0x18, 0x5b])
         self.sequence = fhss.build_v3_sequence(self.uid)
 
     def test_version_pinned_sequence_vector_and_blocks(self):
         # Fixed vector from an independent direct port of the source's LCG
         # and swap loop, not from this Python function's output.
         self.assertEqual(self.sequence[:20], [
-            41, 75, 70, 62, 46, 13, 29, 20, 17, 58,
-            40, 8, 22, 38, 67, 57, 9, 25, 45, 24])
+            41, 8, 27, 48, 1, 0, 58, 74, 77, 38,
+            28, 15, 29, 63, 67, 53, 13, 71, 66, 16])
         self.assertEqual(len(self.sequence), 240)
         for start in (0, 80, 160):
             self.assertEqual(self.sequence[start], 41)
@@ -66,10 +66,10 @@ class V3FhssTests(unittest.TestCase):
 
     def test_uid_seed_byte_not_covered_by_crc_changes_hop(self):
         raw = synthetic_sync(self.uid, 1)
-        item = {"packet_bytes_hex": raw.hex(), "channel_hz": 2_475_400_000}
+        item = {"packet_bytes_hex": raw.hex(), "channel_hz": 2_408_400_000}
         self.assertEqual(fhss.evaluate_record(item, self.uid, self.sequence, 100_000),
                          "channel_match")
-        different_uid = bytes.fromhex("12 34 57 78 9a bc")
+        different_uid = bytes([0x00, 0x00, 0x01, 0x11, 0x18, 0x5b])
         different_sequence = fhss.build_v3_sequence(different_uid)
         # UID[2] changes the FHSS seed but not this frame's CRC initializer
         # or the SYNC-visible UID[3..5] identity check.

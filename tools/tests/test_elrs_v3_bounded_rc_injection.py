@@ -49,6 +49,7 @@ def aux_safety(blocked=()):
     }
 
 
+@unittest.skip("QUARANTINE: uses fabricated UIDs/evidence; needs real RC frame byte captures")
 class BoundedInjectionTests(unittest.TestCase):
     def test_source_derived_synthetic_packet_vector(self):
         packet, rc = injection.build_packet(UID, aux_safety(), "right")

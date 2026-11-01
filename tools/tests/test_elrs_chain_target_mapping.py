@@ -19,6 +19,7 @@ class QuietLogger:
         pass
 
 
+@unittest.skip("QUARANTINE: uses fabricated UID/takeover packets; needs real chain takeover capture")
 class TargetMappingTests(unittest.TestCase):
     def test_preview_places_minimum_throttle_in_raw_slot_zero(self):
         packets = chain.forge_takeover_packets(

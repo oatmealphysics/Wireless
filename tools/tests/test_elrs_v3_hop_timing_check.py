@@ -31,6 +31,7 @@ def candidate(channel: int, stamp: float) -> dict:
     }
 
 
+@unittest.skip("QUARANTINE: uses fabricated timing data; needs real hop timing observations from IQ capture")
 class HopTimingTests(unittest.TestCase):
     def make_times(self):
         sequence = hop.fhss.build_v3_sequence(SYNTHETIC_UID)

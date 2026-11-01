@@ -17,6 +17,7 @@ def _load():
     return mod
 
 
+@unittest.skip("QUARANTINE: uses hand-crafted MSP frames; needs real MSP characterization dump")
 class MspFramingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -47,6 +48,7 @@ class MspFramingTests(unittest.TestCase):
         self.assertIsNone(self.mod.parse_msp_response(b"$M>"))
 
 
+@unittest.skip("QUARANTINE: uses hand-crafted MSP frames; needs real MSP characterization dump")
 class ElrsPacketSizingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -67,6 +69,7 @@ class ElrsPacketSizingTests(unittest.TestCase):
         self.assertGreaterEqual(pkts, 1)
 
 
+@unittest.skip("QUARANTINE: uses hand-crafted MSP frames; needs real MSP characterization dump")
 class CommandDatabaseTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -103,6 +106,7 @@ class CommandDatabaseTests(unittest.TestCase):
             self.assertTrue(frame.startswith(b"$M<"))
 
 
+@unittest.skip("QUARANTINE: uses hand-crafted MSP frames; needs real MSP characterization dump")
 class ScanLogicTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

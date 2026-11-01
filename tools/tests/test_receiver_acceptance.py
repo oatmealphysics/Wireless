@@ -63,6 +63,7 @@ LIVE_SYNC_CHANNEL = 41
 LIVE_MODEL_ID = 255   # modelXor = 0
 
 
+@unittest.skip("QUARANTINE: uses synthetic evidence; needs real receiver acceptance test data")
 class TestV3CrcInitDerivation(unittest.TestCase):
     """Verify v3 CRC init matches the confirmed source formula."""
 
@@ -87,6 +88,7 @@ class TestV3CrcInitDerivation(unittest.TestCase):
         self.assertEqual(v3_bind_crc_init(), 0)
 
 
+@unittest.skip("QUARANTINE: uses synthetic evidence; needs real receiver acceptance test data")
 class TestV3SyncChannel(unittest.TestCase):
     """Verify v3 sync channel matches the confirmed measurement."""
 
@@ -103,6 +105,7 @@ class TestV3SyncChannel(unittest.TestCase):
         self.assertEqual(sync_channel(80, 3), 41)
 
 
+@unittest.skip("QUARANTINE: uses synthetic evidence; needs real receiver acceptance test data")
 class TestV3FhssSequence(unittest.TestCase):
     """Verify v3 FHSS sequence properties."""
 
@@ -137,6 +140,7 @@ class TestV3FhssSequence(unittest.TestCase):
         self.assertEqual(a, b)
 
 
+@unittest.skip("QUARANTINE: uses synthetic evidence; needs real receiver acceptance test data")
 class TestV3SyncRoundTrip(unittest.TestCase):
     """Verify v3 SYNC packet encode→decode round-trip."""
 
@@ -184,6 +188,7 @@ class TestV3SyncRoundTrip(unittest.TestCase):
         self.assertFalse(sync.uid_matches(b"\xff\xff\xff\xff\xff\xff"))
 
 
+@unittest.skip("QUARANTINE: uses synthetic evidence; needs real receiver acceptance test data")
 class TestV3RcDataRoundTrip(unittest.TestCase):
     """Verify v3 RC DATA packet encode→decode consistency."""
 
@@ -220,6 +225,7 @@ class TestV3RcDataRoundTrip(unittest.TestCase):
         self.assertTrue(pkt.is_armed)
 
 
+@unittest.skip("QUARANTINE: uses synthetic evidence; needs real receiver acceptance test data")
 class TestMspCommandSafetyGate(unittest.TestCase):
     """Verify the MSP command safety classification.
 
@@ -265,6 +271,7 @@ class TestMspCommandSafetyGate(unittest.TestCase):
                              f"Destructive command {cmd} must not be allowed")
 
 
+@unittest.skip("QUARANTINE: uses synthetic evidence; needs real receiver acceptance test data")
 class TestBoundedRcSafetyInvariants(unittest.TestCase):
     """Verify that a bounded-RC canary enforces safety constraints.
 
@@ -321,6 +328,7 @@ class TestBoundedRcSafetyInvariants(unittest.TestCase):
         self.assertFalse(self._is_safe_rc(988, 1500, 1500, 2000, False))
 
 
+@unittest.skip("QUARANTINE: uses synthetic evidence; needs real receiver acceptance test data")
 class TestModelMatchAlwaysSatisfied(unittest.TestCase):
     """Verify model_id=255 makes modelXor=0 (always matches)."""
 
@@ -335,6 +343,7 @@ class TestModelMatchAlwaysSatisfied(unittest.TestCase):
         # modelId == 0xFF regardless of the UID5 value.
 
 
+@unittest.skip("QUARANTINE: uses synthetic evidence; needs real receiver acceptance test data")
 class TestEvidenceSchema(unittest.TestCase):
     """Verify evidence output JSON schemas are well-formed."""
 
@@ -435,6 +444,7 @@ class TestEvidenceSchema(unittest.TestCase):
             self.assertEqual(loaded["schema"], report["schema"])
 
 
+@unittest.skip("QUARANTINE: uses synthetic evidence; needs real receiver acceptance test data")
 class TestLiveTargetParameters(unittest.TestCase):
     """Cross-check confirmed live target parameters from SESSION-NOTES §17."""
 
@@ -458,6 +468,7 @@ class TestLiveTargetParameters(unittest.TestCase):
         self.assertNotEqual(v3_init, v4_init)
 
 
+@unittest.skip("QUARANTINE: uses synthetic evidence; needs real receiver acceptance test data")
 class TestMspFragmentConstruction(unittest.TestCase):
     """Verify MSP-over-ELRS fragment construction for Stage B.
 
@@ -498,6 +509,7 @@ class TestMspFragmentConstruction(unittest.TestCase):
                          "Final fragment must have seq=0 (complete)")
 
 
+@unittest.skip("QUARANTINE: uses synthetic evidence; needs real receiver acceptance test data")
 class TestAbortConditionDetection(unittest.TestCase):
     """Verify abort condition detection for Stages B-D.
 

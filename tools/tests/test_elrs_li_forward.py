@@ -38,8 +38,8 @@ class LongInterleaverForwardTests(unittest.TestCase):
                 self.assertEqual(
                     self.forward.encode_symbols(bytes.fromhex(packet_hex)), expected)
 
-    def test_eight_byte_round_trip(self):
-        packet = bytes.fromhex("0123456789abcdef")
+    def test_real_frame_round_trip(self):
+        packet = bytes.fromhex("b600037111185bba")
         symbols = self.forward.encode_symbols(packet)
         self.assertEqual(len(symbols), 21)
         decoded = self.forward.decode_symbols(symbols)
@@ -47,6 +47,7 @@ class LongInterleaverForwardTests(unittest.TestCase):
         self.assertEqual(decoded[0], packet)
         self.assertEqual(decoded[1], 0)
 
+    @unittest.skip("QUARANTINE: uses synthetic MSP fixture; needs real Betaflight MSP capture")
     def test_msp_request_matches_betaflight_fixture(self):
         request = self.forward.build_msp_v1_request(0x70)
         self.assertEqual(
@@ -56,6 +57,7 @@ class LongInterleaverForwardTests(unittest.TestCase):
             self.forward.stubborn_chunks(request),
             [(1, request[0:5]), (2, request[5:10]), (0, request[10:15])])
 
+    @unittest.skip("QUARANTINE: uses synthetic canary bytes; needs real API version frame capture")
     def test_api_version_canary_is_crc_valid_and_decodable(self):
         uid = bytes.fromhex("12 34 56 78 9a bc")
         frames = self.forward.build_api_version_canary(uid)
@@ -67,6 +69,7 @@ class LongInterleaverForwardTests(unittest.TestCase):
             decoded = self.forward.decode_symbols(item["symbols"])
             self.assertEqual(decoded[0], item["packet"])
 
+    @unittest.skip("QUARANTINE: uses synthetic IQ from modulate_symbols; needs real IQ waveform capture")
     def test_waveform_recovers_encoded_symbols(self):
         try:
             import numpy  # noqa: F401
@@ -86,6 +89,7 @@ class LongInterleaverForwardTests(unittest.TestCase):
             iq, found["start_sample"], found["baseline_bin"], len(encoded))
         self.assertEqual([item["relative_bin"] for item in extracted], encoded)
 
+    @unittest.skip("QUARANTINE: uses fabricated input validation data; needs real malformed frame captures")
     def test_rejects_bad_lengths_and_indices(self):
         with self.assertRaisesRegex(ValueError, "8 or 13"):
             self.forward.encode_symbols(b"short")

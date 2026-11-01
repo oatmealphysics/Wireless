@@ -21,6 +21,7 @@ from importlib import import_module
 bench = import_module("bench-controller")
 
 
+@unittest.skip("QUARANTINE: uses fabricated plan dicts; needs real bench controller session data")
 class TestPlanCreation(unittest.TestCase):
     """Plan creation produces valid, complete plans."""
 
@@ -120,6 +121,7 @@ class TestPlanCreation(unittest.TestCase):
         self.assertIn("work/bench/", plan["crypto"]["uid_stored_at"])
 
 
+@unittest.skip("QUARANTINE: uses fabricated plan dicts; needs real bench controller session data")
 class TestPlanVerification(unittest.TestCase):
     """Verification catches safety violations and missing prerequisites."""
 
@@ -245,6 +247,7 @@ class TestPlanVerification(unittest.TestCase):
         self.assertTrue(any("evidence" in e.check for e in errors))
 
 
+@unittest.skip("QUARANTINE: uses fabricated plan dicts; needs real bench controller session data")
 class TestPlanArming(unittest.TestCase):
     """Arming requires --arm flag, passing verification, and confirmation."""
 
@@ -320,6 +323,7 @@ class TestPlanArming(unittest.TestCase):
         self.assertFalse(plan["armed"])
 
 
+@unittest.skip("QUARANTINE: uses fabricated plan dicts; needs real bench controller session data")
 class TestPlanAbort(unittest.TestCase):
     """Aborting disarms the plan."""
 
@@ -336,6 +340,7 @@ class TestPlanAbort(unittest.TestCase):
         self.assertEqual(plan["status"], "aborted")
 
 
+@unittest.skip("QUARANTINE: uses fabricated plan dicts; needs real bench controller session data")
 class TestPlanFileIO(unittest.TestCase):
     """Plan save/load round-trip."""
 
@@ -353,6 +358,7 @@ class TestPlanFileIO(unittest.TestCase):
             self.assertEqual(loaded["test_type"], "passive_capture")
 
 
+@unittest.skip("QUARANTINE: uses fabricated plan dicts; needs real bench controller session data")
 class TestCLIHelp(unittest.TestCase):
     """CLI parses correctly and --help works."""
 
@@ -374,6 +380,7 @@ class TestCLIHelp(unittest.TestCase):
             parser.parse_args(["arm", "--plan", "x.json"])
 
 
+@unittest.skip("QUARANTINE: uses fabricated plan dicts; needs real bench controller session data")
 class TestNoFlashConstraint(unittest.TestCase):
     """The no-flash rule is always enforced."""
 

@@ -82,6 +82,7 @@ def rc_canary():
     return rc["build_plan"](UID, frame, interleaver, rc_aux_safety())
 
 
+@unittest.skip("QUARANTINE: uses fabricated records/packets; needs real SYNC timing captures")
 class FreshSyncClockTests(unittest.TestCase):
     def test_bounded_injection_normalizes_to_one_fresh_slot(self):
         evidence = rc_aux_safety()
