@@ -49,8 +49,6 @@ import datetime
 import hashlib
 import json
 import logging
-import os
-import queue
 import signal
 import socket
 import struct
@@ -58,10 +56,9 @@ import sys
 import threading
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Optional
 
 try:
     import numpy as np
@@ -71,7 +68,7 @@ except ImportError:
 
 try:
     import SoapySDR
-    from SoapySDR import SOAPY_SDR_RX, SOAPY_SDR_CF32
+    from SoapySDR import SOAPY_SDR_CF32, SOAPY_SDR_RX
     HAS_SOAPY = True
 except ImportError:
     HAS_SOAPY = False
@@ -232,7 +229,7 @@ def elrs_binding_phrase_to_uid(phrase: str) -> bytes:
 class CRSFDecoder:
     """Decode CRSF/ELRS telemetry frames from a byte stream."""
 
-    def __init__(self, rainbow_table: Optional[dict] = None):
+    def __init__(self, rainbow_table: dict | None = None):
         self.buf = bytearray()
         self.rainbow = rainbow_table or {}
         self.frame_count = 0
@@ -278,8 +275,8 @@ class CRSFDecoder:
                 results.append(decoded)
         return results
 
-    def _decode_frame(self, frame: bytes) -> Optional[dict]:
-        sync = frame[0]
+    def _decode_frame(self, frame: bytes) -> dict | None:
+        _sync = frame[0]
         ftype = frame[2]
         payload = frame[3:-1]
         now = time.time()
@@ -437,7 +434,7 @@ class MAVLinkDecoder:
                 results.append(result)
         return results
 
-    def _try_v1(self) -> Optional[dict | str]:
+    def _try_v1(self) -> dict | str | None:
         if len(self.buf) < 8:
             return None
         payload_len = self.buf[1]
@@ -446,7 +443,7 @@ class MAVLinkDecoder:
             return None
 
         frame = bytes(self.buf[:total])
-        seq = frame[2]
+        _seq = frame[2]
         sys_id = frame[3]
         comp_id = frame[4]
         msg_id = frame[5]
@@ -465,7 +462,7 @@ class MAVLinkDecoder:
         self.frame_count += 1
         return self._decode_msg(1, sys_id, comp_id, msg_id, payload)
 
-    def _try_v2(self) -> Optional[dict | str]:
+    def _try_v2(self) -> dict | str | None:
         if len(self.buf) < 12:
             return None
         payload_len = self.buf[1]
@@ -476,7 +473,7 @@ class MAVLinkDecoder:
             return None
 
         frame = bytes(self.buf[:total])
-        seq = frame[4]
+        _seq = frame[4]
         sys_id = frame[5]
         comp_id = frame[6]
         msg_id = frame[7] | (frame[8] << 8) | (frame[9] << 16)
@@ -680,7 +677,7 @@ class FrSkyDecoder:
                 i += 1
         return bytes(out)
 
-    def _decode_sensor(self, sensor_id: int, value: int, phys_id: int) -> Optional[dict]:
+    def _decode_sensor(self, sensor_id: int, value: int, phys_id: int) -> dict | None:
         now = time.time()
         name = FRSKY_SENSOR_IDS.get(sensor_id & 0xFFF0, f"0x{sensor_id:04X}")
         result = {
@@ -950,7 +947,7 @@ class SDRSource:
         self.device.activateStream(self.stream)
         self.running = True
 
-    def read(self) -> Optional[np.ndarray]:
+    def read(self) -> np.ndarray | None:
         buf = np.zeros(self.buf_size, dtype=np.complex64)
         sr = self.device.readStream(self.stream, [buf], self.buf_size)
         if sr.ret > 0:
@@ -1068,7 +1065,7 @@ class IQFileSource:
         self.fh = open(path, "rb")
         self.chunk_size = 16384
 
-    def read(self) -> Optional[np.ndarray]:
+    def read(self) -> np.ndarray | None:
         raw = self.fh.read(self.chunk_size * 8)  # 2 x float32 per sample
         if not raw:
             return None
@@ -1091,7 +1088,7 @@ class StdinSource:
     def __init__(self):
         self.chunk_size = 4096
 
-    def read(self) -> Optional[bytes]:
+    def read(self) -> bytes | None:
         data = sys.stdin.buffer.read(self.chunk_size)
         if not data:
             return None

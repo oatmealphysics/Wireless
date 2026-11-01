@@ -1,14 +1,13 @@
 """Offline tests for private batch symbol export; no captures or radios used."""
 
-from contextlib import redirect_stderr
 import importlib.util
 import io
 import json
-from pathlib import Path
 import tempfile
 import unittest
+from contextlib import redirect_stderr
+from pathlib import Path
 from unittest.mock import patch
-
 
 TOOL = Path(__file__).resolve().parents[1] / "elrs-batch-evidence.py"
 SPEC = importlib.util.spec_from_file_location("elrs_batch_evidence", TOOL)

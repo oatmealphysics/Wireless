@@ -33,7 +33,6 @@ For authorized CTF research only.
 
 from __future__ import annotations
 
-
 # ---------------------------------------------------------------------------
 # Capture-validated SX1280 4/8 long-interleaver inverse
 # ---------------------------------------------------------------------------
@@ -448,7 +447,7 @@ def interleave_standard(codewords: list[list[int]], sf: int) -> list[int]:
 
             # Diagonal write: codeword c contributes bit r at row r, col (c+r)%sf
             bits = [0] * sf
-            for r in range(min(ppg, block_size)):
+            for _r in range(min(ppg, block_size)):
                 cw_idx = sym_idx  # which codeword
                 # We want: matrix[r][(cw_idx + r) % sf] = codeword[cw_idx][r]
                 # But for encoding we build matrix then read rows as symbols

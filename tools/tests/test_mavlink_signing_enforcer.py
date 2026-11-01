@@ -1,6 +1,5 @@
 """Tests for the MAVLink signing enforcer."""
 
-import hashlib
 import struct
 import sys
 import time
@@ -10,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import importlib.util
+
 spec = importlib.util.spec_from_file_location(
     "mavlink_signing_enforcer",
     str(Path(__file__).resolve().parent.parent / "mavlink-signing-enforcer.py"),

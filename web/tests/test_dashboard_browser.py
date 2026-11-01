@@ -13,19 +13,18 @@ import importlib.util
 import ipaddress
 import json
 import os
-from pathlib import Path
 import re
 import sys
 import threading
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from playwright.sync_api import expect, sync_playwright
 from werkzeug.serving import WSGIRequestHandler, make_server
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = REPO_ROOT / "web"

@@ -42,11 +42,8 @@ import datetime
 import os
 import signal
 import socket
-import struct
 import sys
-import threading
 import time
-
 
 TELLO_CMD_PORT = 8889
 TELLO_STATE_PORT = 8890
@@ -85,7 +82,7 @@ class TelloVideoCapture:
             resp = data.decode("utf-8", errors="replace").strip()
             log(f"RX << {resp}")
             return resp
-        except socket.timeout:
+        except TimeoutError:
             log(f"TIMEOUT waiting for response to '{cmd}'")
             return None
 

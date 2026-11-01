@@ -1,9 +1,9 @@
 """Synthetic, receive-only tests for automatic LoRa PHY candidate finding."""
 
 import importlib.util
-from pathlib import Path
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 try:

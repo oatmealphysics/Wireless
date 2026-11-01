@@ -5,10 +5,17 @@ WiFi, BLE, SDR, MAVLink, and telemetry scanner backends. Live scan results are
 heuristic candidates: a matching name, an energy peak, or an unsigned MAVLink
 frame is not by itself proof of device identity, vulnerability, or control.
 
-Run all commands below from the repository root. Examples use `python3` on
-Linux/macOS; use `python` inside an activated Windows virtual environment.
+## Architecture
 
-## Quick start: simulation
+The dashboard uses a Flask application factory (`create_app()`) and a
+`DashboardState` dataclass that owns all mutable runtime state: targets,
+scan status, events, action history, hardware status, and Chain 2 state.
+Each application instance gets its own state via `app.extensions["state"]`,
+so tests can create independent instances that share no mutable data.
+A single per-application `RLock` guards every mutable field; event, action,
+and Chain 2 injection histories are bounded to fixed retained-entry limits.
+
+## Quick Start
 
 ```bash
 python3 -m pip install -r web/requirements.txt
@@ -134,7 +141,26 @@ Chain 2 currently has API routes but no dedicated dashboard panel:
 - `GET /api/chain2/commands` lists supported command definitions.
 - `GET /api/chain2/status` returns the bounded Chain 2 history and latest state.
 
-## API reference
+The dashboard uses Server-Sent Events (SSE) at `/api/events` for live updates. Event types include `scan_start`, `scanner_done`, `target_found`, `scan_complete`, `action_executed`, and `targets_cleared`.
+
+## Programmatic Usage
+
+The app uses a factory pattern for testing and embedding:
+
+```python
+from web.app import create_app, create_dashboard_state, DashboardState
+
+# Default (reads CLI args)
+app = create_app()
+
+# Custom state for testing
+state = create_dashboard_state(simulate=True, dry_run=True)
+app = create_app(state=state)
+```
+
+`DashboardState` holds all mutable scan/target/action state. Each `create_app()` call produces an isolated Flask instance with its own state — no module-level globals leak between instances.
+
+## API Reference
 
 | Endpoint | Method | Description |
 |---|---|---|
@@ -165,7 +191,22 @@ Domain event types are `scan_start`, `scanner_start`, `scanner_done`,
 `action_executed`, and `targets_cleared`. The UI does not display every event
 type directly.
 
-## State and lifecycle
+```bash
+# Original dashboard tests (52 tests)
+python3 -m unittest discover -s tools/tests -p "test_web_dashboard.py" -v
+
+# API route tests (38 tests)
+python3 -m unittest discover -s web/tests -p "test_api_routes.py" -v
+
+# Application factory and cross-instance isolation (R1)
+python3 -m unittest discover -s web/tests -p "test_app_factory.py" -v
+
+# Lifecycle, scan generations, partial startup, and cleanup (R3)
+python3 -m unittest discover -s web/tests -p "test_app_lifecycle.py" -v
+
+# Bounded history, concurrent rollover, and SSE replay (R2)
+python3 -m unittest discover -s web/tests -p "test_state_histories.py" -v
+```
 
 `create_app()` creates an isolated `DashboardState` unless one is supplied.
 One state may belong to exactly one Flask app, one scan lifecycle may run per

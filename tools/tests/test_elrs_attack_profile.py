@@ -10,7 +10,6 @@ import unittest
 from unittest import TestCase
 from unittest.mock import patch
 
-
 SCRIPT = Path(__file__).resolve().parents[1] / "elrs-attack-profile.py"
 spec = spec_from_file_location("elrs_attack_profile", SCRIPT)
 assert spec is not None and spec.loader is not None

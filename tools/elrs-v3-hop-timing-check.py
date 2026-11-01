@@ -25,13 +25,12 @@ It does not open a radio, transmit, or modify a capture. Python 3.10+.
 from __future__ import annotations
 
 import argparse
-from bisect import bisect_left
 import importlib.util
 import json
 import math
-from pathlib import Path
 import sys
-
+from bisect import bisect_left
+from pathlib import Path
 
 SOURCE = Path(__file__).with_name("elrs-v3-fhss-check.py")
 SPEC = importlib.util.spec_from_file_location("elrs_v3_fhss_check", SOURCE)

@@ -47,7 +47,6 @@ Python 3.10+. For authorized CTF research only.
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 import copy
 import hashlib
 import importlib.util
@@ -56,6 +55,7 @@ import math
 import runpy
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -63,20 +63,28 @@ TOOLS = Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOLS))
 
 from elrs_core.fhss import (
-    DOMAINS, DEFAULT_2G4_DOMAIN, FhssDomain, build_sequence,
+    DEFAULT_2G4_DOMAIN,
+    DOMAINS,
+    FhssDomain,
+    build_sequence,
 )
 from elrs_core.ota import (
-    PACKET_TYPE_SYNC, PACKET_TYPE_RCDATA, PACKET_TYPE_DATA,
+    PACKET_TYPE_DATA,
+    PACKET_TYPE_RCDATA,
+    PACKET_TYPE_SYNC,
     decode_std,
 )
 from elrs_core.v3_compat import (
     V3_SYNC_CHANNEL_80,
-    v3_validate_crc, v3_decode_sync, v3_build_sequence, uid_crc_init,
+    uid_crc_init,
+    v3_build_sequence,
+    v3_decode_sync,
+    v3_validate_crc,
 )
 
 try:
-    import numpy as _numpy
-    import scipy as _scipy
+    import numpy as _numpy  # noqa: F401
+    import scipy as _scipy  # noqa: F401
     HAS_DSP = True
 except ImportError:
     HAS_DSP = False
@@ -933,7 +941,7 @@ def parse_uid(uid_str: str) -> bytes:
 
 def binding_phrase_uid(phrase: str) -> bytes:
     """Apply the ExpressLRS build-define UID derivation contract."""
-    define = f'-DMY_BINDING_PHRASE="{phrase}"'.encode("utf-8")
+    define = f'-DMY_BINDING_PHRASE="{phrase}"'.encode()
     return hashlib.md5(define).digest()[:6]
 
 

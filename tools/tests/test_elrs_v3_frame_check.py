@@ -2,11 +2,10 @@
 
 import importlib.util
 import io
-from pathlib import Path
 import tempfile
 import unittest
-from contextlib import redirect_stdout, redirect_stderr
-
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 
 TOOL = Path(__file__).resolve().parents[1] / "elrs-v3-frame-check.py"
 SPEC = importlib.util.spec_from_file_location("elrs_v3_frame_check", TOOL)

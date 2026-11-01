@@ -1,9 +1,8 @@
 """Regression test for the legacy ELRS chain's TinyHawk raw-channel order."""
 
 import importlib.util
-from pathlib import Path
 import unittest
-
+from pathlib import Path
 
 TOOL = Path(__file__).resolve().parents[1] / "exploit_chains" / "elrs_chain.py"
 SPEC = importlib.util.spec_from_file_location("elrs_chain_target_mapping", TOOL)

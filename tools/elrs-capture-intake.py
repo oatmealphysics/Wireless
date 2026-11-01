@@ -29,7 +29,6 @@ import struct
 import sys
 from pathlib import Path
 
-
 SAMPLE_BYTES = {"sc16le": 4, "cf32le": 8, "cu8": 2}
 CAPTURE_SUFFIXES = {".iq", ".complex8", ".cdif", ".cfile", ".raw"}
 HASH_LINE = re.compile(r"^([0-9a-fA-F]{64})\s+\*?(.+?)\s*$")

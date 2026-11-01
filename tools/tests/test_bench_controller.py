@@ -4,8 +4,6 @@ Covers plan creation, prerequisite verification, arming gates,
 abort handling, safety constraints, and the no-flash rule.
 """
 
-import json
-import os
 import sys
 import tempfile
 import unittest
@@ -395,7 +393,6 @@ class TestNoFlashConstraint(unittest.TestCase):
 
 
 import argparse
-
 
 if __name__ == "__main__":
     unittest.main()

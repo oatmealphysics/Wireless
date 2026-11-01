@@ -64,9 +64,7 @@ For CTF research and authorized security testing only.
 
 import argparse
 import hashlib
-import os
 import signal
-import struct
 import sys
 import time
 
@@ -435,7 +433,7 @@ class SoapySDRBackend:
                  antenna=None, bandwidth=None, rate=2.5e6):
         try:
             import SoapySDR as _soapy
-            from SoapySDR import SOAPY_SDR_TX, SOAPY_SDR_CF32
+            from SoapySDR import SOAPY_SDR_CF32, SOAPY_SDR_TX
         except ImportError:
             print("[!] SoapySDR not installed. Install with: pip install SoapySDR", file=sys.stderr)
             print("    Also install the driver module for your hardware:", file=sys.stderr)
@@ -498,14 +496,14 @@ class SoapySDRBackend:
         self._dev.setFrequency(self._SOAPY_SDR_TX, self._channel, float(freq_hz))
 
     def transmit(self, packet: bytes):
-        np = self._np
+        _np = self._np
         # EXPERIMENTAL: chirp prototype, not SX1280-compatible framing.
         # A successful SDR write does NOT mean the packet is receiver-decodable.
         samples = self._modulate_lora(packet)
         status = self._dev.writeStream(self._tx_stream, [samples], len(samples))
         return status
 
-    def _modulate_lora(self, packet: bytes) -> 'numpy.ndarray':
+    def _modulate_lora(self, packet: bytes):
         np = self._np
         # EXPERIMENTAL PROTOTYPE — not SX1280-compatible.
         # Fixed SF6/BW812.5kHz, no whitening/interleaving/header coding,
@@ -798,7 +796,7 @@ class ElrsTxEmulator:
         self.packet_interval_s = interval_us / 1_000_000.0
 
         uid_hex = ":".join(f"{b:02X}" for b in self.uid)
-        print(f"[*] ELRS TX Emulator initialized", file=sys.stderr)
+        print("[*] ELRS TX Emulator initialized", file=sys.stderr)
         print(f"[*]   Phrase: \"{phrase}\"", file=sys.stderr)
         print(f"[*]   UID: {uid_hex}", file=sys.stderr)
         print(f"[*]   OTA v{ota_version} | Rate: {1_000_000/interval_us:.0f} Hz | "
@@ -821,9 +819,9 @@ class ElrsTxEmulator:
         return channel == self.sync_channel
 
     def takeover(self, channels_us: list[int], is_armed: bool = True,
-                 duration_s: float = 0, msp_cmd: int = None,
+                 duration_s: float = 0, msp_cmd: int | None = None,
                  msp_payload: bytes = b""):
-        print(f"[*] TAKEOVER mode — overriding legitimate TX", file=sys.stderr)
+        print("[*] TAKEOVER mode — overriding legitimate TX", file=sys.stderr)
         print(f"[*]   Channels (us): {channels_us}", file=sys.stderr)
         print(f"[*]   Armed: {is_armed}", file=sys.stderr)
         if msp_cmd is not None:
@@ -890,7 +888,7 @@ class ElrsTxEmulator:
                     time.sleep(next_time - now)
 
         except KeyboardInterrupt:
-            print(f"\n[*] Interrupted by user", file=sys.stderr)
+            print("\n[*] Interrupted by user", file=sys.stderr)
         finally:
             elapsed = time.monotonic() - start_time
             print(f"\n[*] Takeover complete: {pkt_count} packets in {elapsed:.1f} s "
@@ -898,9 +896,9 @@ class ElrsTxEmulator:
             self.backend.stop()
 
     def inject(self, msp_cmd: int, msp_payload: bytes = b"",
-               channels_us: list[int] = None, is_armed: bool = False,
+               channels_us: list[int] | None = None, is_armed: bool = False,
                listen_time_s: float = 2.0, inject_count: int = 10):
-        print(f"[*] INJECT mode — sending when TX signal absent", file=sys.stderr)
+        print("[*] INJECT mode — sending when TX signal absent", file=sys.stderr)
         print(f"[*]   MSP command: {msp_cmd} (0x{msp_cmd:04X})", file=sys.stderr)
         print(f"[*]   Listen window: {listen_time_s:.1f} s", file=sys.stderr)
         print(f"[*]   Inject burst: {inject_count} packets", file=sys.stderr)
@@ -951,7 +949,7 @@ class ElrsTxEmulator:
                 time.sleep(max(0, next_time - time.monotonic()))
 
         except KeyboardInterrupt:
-            print(f"\n[*] Interrupted by user", file=sys.stderr)
+            print("\n[*] Interrupted by user", file=sys.stderr)
         finally:
             print(f"[*] Injection complete: {inject_count} packets", file=sys.stderr)
             self.backend.stop()
@@ -988,7 +986,7 @@ def cmd_info(args):
     mode = "full-res (13B, CRC16)" if args.full_res else "standard (8B, CRC14)"
     print(f"Packet mode:     {mode}")
 
-    print(f"\nFirst 20 FHSS hops:")
+    print("\nFirst 20 FHSS hops:")
     for i in range(min(20, len(fhss_seq))):
         ch = fhss_seq[i]
         freq = fhss_index_to_freq_hz(ch)

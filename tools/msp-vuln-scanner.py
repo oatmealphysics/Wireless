@@ -44,10 +44,8 @@ import os
 import socket
 import struct
 import sys
-import time
 from dataclasses import dataclass, field
-from enum import Enum, auto
-from typing import Sequence
+from enum import Enum
 
 _TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _TOOLS_DIR not in sys.path:
@@ -283,7 +281,7 @@ class TcpTransport(Transport):
         self.sock.sendall(frame)
         try:
             return self.sock.recv(256) or None
-        except socket.timeout:
+        except TimeoutError:
             return None
 
     def close(self) -> None:
@@ -304,7 +302,7 @@ def open_transport(target: str, execute: bool) -> Transport:
     elif target.startswith("serial:"):
         parts = target[7:].split(":")
         try:
-            import serial  # type: ignore[import-untyped]
+            import serial  # type: ignore[import-untyped]  # noqa: F401
         except ImportError:
             print("ERROR: pyserial required for serial targets", file=sys.stderr)
             sys.exit(1)
@@ -468,7 +466,7 @@ def print_scan_results(scan: ScanResult, verbose: bool = False) -> None:
 
     if scan.endpoint_info:
         info = scan.endpoint_info
-        print(f"\n--- Endpoint Identity ---")
+        print("\n--- Endpoint Identity ---")
         if "fc_variant" in info:
             print(f"  FC variant:    {info['fc_variant']}")
         if "fc_version" in info:
@@ -497,19 +495,19 @@ def print_scan_results(scan: ScanResult, verbose: bool = False) -> None:
             if verbose:
                 print(f"         {r['description']}")
                 print(f"         Impact: {r['impact']}")
-                if "inject_time_ms" in r and r["inject_time_ms"]:
+                if r.get("inject_time_ms"):
                     print(f"         OTA inject: {r['inject_time_ms']} ms")
                 print()
 
     if scan.summary:
         s = scan.summary
-        print(f"\n--- Summary ---")
+        print("\n--- Summary ---")
         print(f"  Commands scanned:    {s['total_commands_scanned']}")
         print(f"  No armed check:     {s['no_armed_check']}")
         print(f"  ELRS reachable:     {s['elrs_reachable']}")
         if s['accepted'] > 0:
             print(f"  Accepted (live):    {s['accepted']}")
-        print(f"\n  Severity breakdown:")
+        print("\n  Severity breakdown:")
         for sev, count in s["by_severity"].items():
             print(f"    {sev}: {count}")
         print(f"\n  Risk: {s['risk_assessment']}")

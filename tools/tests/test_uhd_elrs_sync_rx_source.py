@@ -1,8 +1,7 @@
 """Static safety boundary for the optional native UHD receive helper."""
 
-from pathlib import Path
 import unittest
-
+from pathlib import Path
 
 SOURCE = (Path(__file__).resolve().parents[1] / "uhd-elrs-sync-rx.c")
 

@@ -1,13 +1,12 @@
 """Synthetic timing tests; these do not validate an IQ byte decoder."""
 
-from contextlib import redirect_stderr, redirect_stdout
 import importlib.util
 import io
 import json
-from pathlib import Path
 import tempfile
 import unittest
-
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 
 TOOL = Path(__file__).resolve().parents[1] / "elrs-v3-hop-timing-check.py"
 SPEC = importlib.util.spec_from_file_location("hop_timing", TOOL)

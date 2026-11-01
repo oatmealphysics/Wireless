@@ -17,7 +17,6 @@ Usage:
     python3 -B -m unittest discover -s tools/tests -p "test_sitl_chain2.py" -v
 """
 
-import os
 import struct
 import sys
 import time
@@ -35,8 +34,11 @@ except ImportError:
 
 try:
     from sitl_harness import (
-        SITLHarness, SITL_BINARY,
-        wait_for_mode, wait_armed, get_vehicle_state,
+        SITL_BINARY,
+        SITLHarness,
+        get_vehicle_state,
+        wait_armed,
+        wait_for_mode,
     )
 except (ImportError, SystemExit):
     SITLHarness = None

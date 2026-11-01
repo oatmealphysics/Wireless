@@ -18,14 +18,13 @@ observed channel ranges; the tool does not search permutations or clock offset.
 from __future__ import annotations
 
 import argparse
-from bisect import bisect_left
-from datetime import datetime, timedelta, timezone
 import json
-from pathlib import Path
 import re
 import statistics
 import sys
-
+from bisect import bisect_left
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 ISO_FRACTION_RE = re.compile(
     r"(?P<prefix>T\d{2}:\d{2}:\d{2}\.)(?P<fraction>\d+)(?P<suffix>Z|[+-]\d{2}:\d{2})$"

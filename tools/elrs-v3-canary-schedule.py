@@ -20,10 +20,9 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from pathlib import Path
 import runpy
 import sys
-
+from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
 ROOT = TOOLS.parent

@@ -1,9 +1,8 @@
 """Known-answer tests for the offline SX1280 LI forward path."""
 
 import importlib.util
-from pathlib import Path
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 FORWARD = ROOT / "tools" / "elrs-li-forward.py"

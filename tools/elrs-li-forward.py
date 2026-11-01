@@ -30,10 +30,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import runpy
 import sys
-
+from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
 DECODER = runpy.run_path(str(TOOLS / "elrs-li-offline.py"))

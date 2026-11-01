@@ -27,7 +27,6 @@ import argparse
 import struct
 import sys
 import time
-from typing import Optional
 
 # ---------------------------------------------------------------------------
 # CRC tables
@@ -207,13 +206,13 @@ class CRSFFrame:
         return FRAME_TYPES.get(self.frame_type, f"Unknown(0x{self.frame_type:02X})")
 
     @property
-    def dest(self) -> Optional[int]:
+    def dest(self) -> int | None:
         if self.is_extended and len(self.payload) >= 2:
             return self.payload[0]
         return None
 
     @property
-    def origin(self) -> Optional[int]:
+    def origin(self) -> int | None:
         if self.is_extended and len(self.payload) >= 2:
             return self.payload[1]
         return None
@@ -338,7 +337,7 @@ class CRSFFrame:
         return "\n".join(lines)
 
 
-def parse_frame(data: bytes, offset: int = 0) -> tuple[Optional[CRSFFrame], int]:
+def parse_frame(data: bytes, offset: int = 0) -> tuple[CRSFFrame | None, int]:
     """Parse one CRSF frame from data at offset. Returns (frame, next_offset)."""
     if offset + 2 > len(data):
         return None, offset
@@ -600,7 +599,7 @@ def cmd_ping(args: argparse.Namespace) -> None:
         ser = serial.Serial(args.port, baud, timeout=1.0)
         ser.write(frame)
         ser.flush()
-        print(f"Sent ping, listening for responses...", file=sys.stderr)
+        print("Sent ping, listening for responses...", file=sys.stderr)
         buf = b""
         start = time.monotonic()
         while time.monotonic() - start < 2.0:

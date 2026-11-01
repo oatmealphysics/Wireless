@@ -109,7 +109,7 @@ def read_config(port: str, show_raw: bool = False) -> int:
         return 1
 
     rate, cfg1, cfg2 = response[2], response[3], response[4]
-    uid = response[5:11]
+    _uid = response[5:11]
     pad = response[11:17]
 
     print("EMAX E8 ELRS — Read Configuration")

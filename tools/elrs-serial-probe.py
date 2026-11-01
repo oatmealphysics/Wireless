@@ -15,13 +15,13 @@ Capture stores all received bytes, including corrupt packets/noise. JSON lines
 go to stdout; actions and errors go to stderr. Existing captures are preserved.
 """
 
-import struct
-import time
-import sys
 import argparse
-from contextlib import ExitStack
 import json
 import math
+import struct
+import sys
+import time
+from contextlib import ExitStack
 from pathlib import Path
 
 # Live serial access requires pyserial==3.5; offline parsing uses only stdlib.

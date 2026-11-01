@@ -2,11 +2,10 @@
 
 import importlib.util
 import json
-from pathlib import Path
 import tempfile
 import time
 import unittest
-
+from pathlib import Path
 
 TOOL = Path(__file__).resolve().parents[1] / "elrs-v3-fresh-sync-clock.py"
 SPEC = importlib.util.spec_from_file_location("elrs_v3_fresh_sync_clock", TOOL)

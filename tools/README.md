@@ -61,8 +61,8 @@ Shared cryptographic primitives vendored from the ExpressLRS and Betaflight sour
 
 | Tool | Description |
 |---|---|
-| `lora_decode.py` | Library decoder for the capture-validated SX1280 SF7 4/8 long-interleaver mapping. Its generic transpose/LFSR helpers are synthetic round-trip models, not the live-link decoder. |
-| `elrs-li-offline.py` | Independent SX1280 SF7 4/8 long-interleaver decoder for ranked JSONL. Reports CRC-valid frames. SYNC frames self-check their transmitted suffix; RC validation transfers a consistent suffix learned from separate SYNC frames. Algorithm adapted from WaveShark (GPL-3.0-or-later). |
+| `elrs-li-offline.py` | SX1280 SF7 4/8 long-interleaver decoder for ranked symbol JSONL. Reports CRC-verified decoded frames. Algorithm adapted from WaveShark (GPL-3.0-or-later). |
+| `lora_decode.py` | LoRa PHY helpers and capture-validated SX1280 4/8-LI decoder. Generic Gray/de-interleave/Hamming/de-whiten chain plus the measured `decode_sx1280_li()` mapping matching `elrs-li-offline.py` and two tracked capture sets (54 CRC-valid frames). GPL-3.0-or-later. Python 3.10+, no external dependencies. |
 | `elrs-li-forward.py` | Offline SX1280 encoder and ELRS v3 MSP canary planner. Inverts the long-interleaver mapping; prepares read-only MSP_API_VERSION request packets. |
 | `elrs-v3-frame-check.py` | Offline CRC/field checker for pre-decoded Betaflight 4.4.2 ELRS v3 8-byte frames. Validates against a private UID file. |
 | `elrs-v3-fhss-check.py` | Cross-checks pre-decoded frames against the source-derived FHSS sequence for a given UID. Aggregate-only output. |
@@ -124,6 +124,12 @@ agreement, receiver acceptance, or operational capability.
 |---|---|
 | `elrs-anomaly-detector.py` | Detect forged, replayed, or anomalous ELRS packets: UID mismatch, unexpected FHSS channel, nonce reuse, CRC failure, rate anomalies, binding-mode probes. |
 
+### Passive Pipeline
+
+| Tool | Description |
+|---|---|
+| `elrs-passive-pipeline.py` | Evidence-grade passive ELRS capture pipeline. End-to-end decode chain: IQ capture → preamble detection → symbol extraction → FEC decode → CRC validation → SYNC decode → FHSS hop correlation → validation report. Requires NumPy, SciPy. |
+
 ## MAVLink
 
 | Tool | Description |
@@ -183,9 +189,11 @@ Automated multi-stage attack scripts. See [`exploit_chains/README.md`](exploit_c
 
 | Tool | Description |
 |---|---|
+| `bench-controller.py` | Safe bench controller — create, verify, review, and gate RF bench test plans. Two-step arming (`--arm` + interactive confirmation) required for any RF action. The controller itself never transmits, flashes, or modifies hardware; it produces a validated plan file for a separate TX tool. Enforces the E8/TinyHawk no-flashing rule. |
 | `sdr_common.py` | Generic SDR abstraction via SoapySDR. Works with USRP, HackRF, RTL-SDR, LimeSDR, BladeRF. |
 | `sitl_harness.py` | ArduPilot SITL test harness for offline MAVLink integration testing. Manages SITL lifecycle, localhost-only. |
 | `validate-project.py` | Offline repository checks: Python syntax, firmware manifest, JSON/CSV consistency, CVE-index coverage, Markdown link validation. No network, no hardware. |
+| `bench-controller.py` | Safe bench controller for RF bench tests. Creates validated plan files, verifies prerequisites, and gates transmission behind two-step arming. Never transmits or flashes hardware. |
 | `audit-cve-records.py` | Audit CVE record index against research findings. |
 | `inspect-e8-configurator.py` | Inspect EMAX E8 configurator protocol. |
 | `inspect-e8-serial-handlers.py` | Inspect E8 serial handler behavior. |

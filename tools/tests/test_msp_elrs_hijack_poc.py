@@ -1,9 +1,9 @@
 """Offline tests for msp-elrs-hijack-poc.py."""
 
-import importlib.util
 import hashlib
-from pathlib import Path
+import importlib.util
 import unittest
+from pathlib import Path
 
 TOOL = Path(__file__).resolve().parents[1] / "msp-elrs-hijack-poc.py"
 

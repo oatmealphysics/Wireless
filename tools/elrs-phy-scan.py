@@ -23,15 +23,14 @@ MIDAS/BLUE .cdif via the existing bounded IQ reader. No file is overwritten.
 from __future__ import annotations
 
 import argparse
-from fractions import Fraction
 import importlib.util
 import json
 import math
-from pathlib import Path
 import sys
+from fractions import Fraction
+from pathlib import Path
 
 import numpy as np
-
 
 WORK_ROOT = Path(__file__).resolve().parents[1] / "work"
 BLOCK = 32  # 39.4 us at the 812.5 kS/s baseband rate

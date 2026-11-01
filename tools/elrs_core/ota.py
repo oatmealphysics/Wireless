@@ -29,7 +29,7 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass, field
 
-from .crc import Crc2Byte, ELRS_CRC14_POLY, ELRS_CRC16_POLY
+from .crc import ELRS_CRC14_POLY, ELRS_CRC16_POLY, Crc2Byte
 
 # src/include/targets.h
 OTA_VERSION_ID = 4

@@ -29,12 +29,10 @@ For CTF research and authorized security testing only.
 
 import argparse
 import json
-import os
 import socket
 import struct
 import sys
 import time
-from collections import defaultdict
 from datetime import datetime, timezone
 
 # MAVLink constants
@@ -274,7 +272,7 @@ def listen_udp(host, port, parser, json_mode, systems):
     while True:
         try:
             data, addr = sock.recvfrom(4096)
-        except socket.timeout:
+        except TimeoutError:
             continue
         except KeyboardInterrupt:
             break
@@ -308,7 +306,8 @@ def listen_serial(port, baud, parser, json_mode, systems):
 def read_pcap(path, parser, json_mode, systems):
     """Read MAVLink frames from a pcap file."""
     try:
-        from scapy.all import rdpcap, UDP as ScapyUDP
+        from scapy.all import UDP as ScapyUDP
+        from scapy.all import rdpcap
     except ImportError:
         log("ERROR: scapy required for pcap mode (pip install scapy)")
         sys.exit(1)

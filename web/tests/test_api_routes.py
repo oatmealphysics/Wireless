@@ -15,7 +15,7 @@ TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
 sys.path.insert(0, str(TOOLS_DIR / "tests"))
 
-from helpers import needs_flask, get_web_app, make_flask_client, make_target
+from helpers import get_web_app, make_flask_client, make_target, needs_flask
 
 web_app = get_web_app()
 

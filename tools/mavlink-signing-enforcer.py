@@ -43,7 +43,6 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Optional
 
 MAVLINK_V2_MAGIC = 0xFD
 MAVLINK_V1_MAGIC = 0xFE
@@ -102,8 +101,8 @@ class Anomaly:
     packet_summary: str = ""
     details: dict = field(default_factory=dict)
 
-    def to_dict(self) -> dict:
-        d = {
+    def to_dict(self) -> dict[str, object]:
+        d: dict[str, object] = {
             "timestamp": self.timestamp,
             "severity": self.severity,
             "category": self.category,
@@ -149,8 +148,8 @@ class MAVLinkSigningEnforcer:
     def __init__(
         self,
         require_signing: bool = False,
-        secret_key: Optional[bytes] = None,
-        allowed_sysids: Optional[set] = None,
+        secret_key: bytes | None = None,
+        allowed_sysids: set | None = None,
     ):
         self.require_signing = require_signing
         self.secret_key = secret_key
@@ -164,7 +163,7 @@ class MAVLinkSigningEnforcer:
         self.seen_v2 = False
 
     def _emit(self, severity: str, category: str, desc: str,
-              pkt_summary: str = "", details: dict = None):
+              pkt_summary: str = "", details: dict | None = None):
         a = Anomaly(
             timestamp=now_iso(),
             severity=severity,
@@ -176,7 +175,7 @@ class MAVLinkSigningEnforcer:
         self.anomalies.append(a)
         print(json.dumps(a.to_dict()), file=sys.stderr)
 
-    def _parse_v2_header(self, data: bytes) -> Optional[dict]:
+    def _parse_v2_header(self, data: bytes) -> dict | None:
         """Parse MAVLink v2 header. Returns dict or None."""
         if len(data) < 10:
             return None
@@ -185,7 +184,7 @@ class MAVLinkSigningEnforcer:
 
         payload_len = data[1]
         incompat_flags = data[2]
-        compat_flags = data[3]
+        _compat_flags = data[3]
         seq = data[4]
         sysid = data[5]
         compid = data[6]
@@ -431,7 +430,7 @@ class MAVLinkSigningEnforcer:
 def _build_v2_packet(sysid: int, compid: int, msgid: int, payload: bytes,
                      signed: bool = False, link_id: int = 0,
                      mav_timestamp: int = 0,
-                     secret_key: Optional[bytes] = None) -> bytes:
+                     secret_key: bytes | None = None) -> bytes:
     """Build a MAVLink v2 packet (CRC is placeholder — detection doesn't verify MAVLink CRC)."""
     incompat = MAVLINK_IFLAG_SIGNED if signed else 0
     header = struct.pack("<BBBBBBBBB",
@@ -547,7 +546,7 @@ def simulate_traffic(enforcer: MAVLinkSigningEnforcer):
                 print(f"[{status}] v2 msgid={msgid} {sig} "
                       f"sysid={parsed['sysid']}")
             else:
-                print(f"[WARN] Malformed v2")
+                print("[WARN] Malformed v2")
         elif magic == MAVLINK_V1_MAGIC:
             status = "ALERT" if new else "OK"
             print(f"[{status}] v1 downgrade packet")

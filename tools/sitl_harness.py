@@ -268,7 +268,7 @@ def smoke_test():
 
             conn = sitl.connect()
             state = get_vehicle_state(conn)
-            print(f"[+] Heartbeat received:", file=sys.stderr)
+            print("[+] Heartbeat received:", file=sys.stderr)
             print(f"    Mode: {state.get('mode', '?')}", file=sys.stderr)
             print(f"    Armed: {state.get('armed', '?')}", file=sys.stderr)
             print(f"    Type: {state.get('mav_type', '?')}", file=sys.stderr)

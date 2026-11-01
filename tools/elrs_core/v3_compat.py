@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .crc import ELRS_CRC14_POLY
-from .fhss import Lcg, FHSS_SEQUENCE_LEN, FhssDomain, DOMAINS
+from .fhss import FHSS_SEQUENCE_LEN, Lcg
 
 V3_OTA_VERSION_ID = 3
 V3_SYNC_CHANNEL_80 = 41  # (freq_count / 2) + 1, measured on the live link

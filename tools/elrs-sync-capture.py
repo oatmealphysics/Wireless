@@ -69,13 +69,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import os
 import signal
 import struct
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -85,27 +84,26 @@ _TOOLS_DIR = Path(__file__).resolve().parent
 if str(_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(_TOOLS_DIR))
 
-from elrs_core.crc import ELRS_CRC14_POLY, ELRS_CRC16_POLY
 from elrs_core.fhss import (
-    DOMAINS,
     DEFAULT_2G4_DOMAIN,
+    DOMAINS,
     build_sequence,
     sync_channel_candidates,
 )
 from elrs_core.ota import (
     OTA4_PACKET_SIZE,
     OTA8_PACKET_SIZE,
-    OTA_VERSION_ID,
     PACKET_TYPE_SYNC,
     decode_full,
     decode_std,
     validate_crc,
 )
 from elrs_core.v3_compat import (
-    uid_crc_init as v3_uid_crc_init,
-    uid_fhss_seed,
-    sync_channel,
     DEFAULT_OTA_VERSION,
+    uid_fhss_seed,
+)
+from elrs_core.v3_compat import (
+    uid_crc_init as v3_uid_crc_init,
 )
 
 # Optional numpy — required for IQ demodulation, not for stdin-raw mode
@@ -429,14 +427,13 @@ def process_stdin_raw(tracker: SyncTracker, json_output: bool) -> None:
 # Input: IQ file (--iq-file)
 # ---------------------------------------------------------------------------
 def read_iq_file(path: str, sample_rate: float, center_freq: float,
-                 iq_format: str = "auto") -> "np.ndarray":
+                 iq_format: str = "auto") -> np.ndarray:
     """Read an IQ file into a numpy complex64 array."""
     if not HAS_NUMPY:
         log_err("NumPy is required for IQ file processing. Install: pip install numpy")
         sys.exit(1)
 
     p = Path(path)
-    size = p.stat().st_size
 
     if iq_format == "auto":
         if p.suffix.lower() in (".cdif",):
@@ -522,7 +519,7 @@ class LoRaDemodulator:
         # Build reference downchirp for dechirping
         self._downchirp = self._make_chirp(down=True)
 
-    def _make_chirp(self, down: bool = False) -> "np.ndarray":
+    def _make_chirp(self, down: bool = False) -> np.ndarray:
         """Generate one LoRa chirp symbol at the configured sample rate."""
         n = self.samples_per_symbol
         t = np.arange(n, dtype=np.float64) / self.sample_rate
@@ -535,7 +532,7 @@ class LoRaDemodulator:
         phase = 2 * np.pi * (f0 * t + 0.5 * chirp_rate * t * t)
         return np.exp(1j * phase).astype(np.complex64)
 
-    def dechirp_symbol(self, samples: "np.ndarray") -> tuple[int, float]:
+    def dechirp_symbol(self, samples: np.ndarray) -> tuple[int, float]:
         """Dechirp one symbol period and return (symbol_value, peak_power).
 
         Multiplies by conjugate downchirp, takes FFT, finds peak bin.
@@ -555,7 +552,7 @@ class LoRaDemodulator:
 
         return peak_bin, snr
 
-    def find_preamble(self, iq: "np.ndarray", threshold: float = 6.0,
+    def find_preamble(self, iq: np.ndarray, threshold: float = 6.0,
                       min_preamble: int = 4) -> list[int]:
         """Scan IQ for preamble sequences (consecutive same-value symbols).
 
@@ -591,7 +588,7 @@ class LoRaDemodulator:
 
         return preamble_starts
 
-    def demodulate_packet(self, iq: "np.ndarray", preamble_offset: int,
+    def demodulate_packet(self, iq: np.ndarray, preamble_offset: int,
                           preamble_symbols: int = 8) -> bytes | None:
         """Attempt to demodulate an ELRS packet starting after preamble.
 
@@ -686,7 +683,7 @@ class LoRaDemodulator:
 # ---------------------------------------------------------------------------
 # Channel scanner for live SDR or IQ file
 # ---------------------------------------------------------------------------
-def scan_iq_for_syncs(iq: "np.ndarray", sample_rate: float, center_freq: float,
+def scan_iq_for_syncs(iq: np.ndarray, sample_rate: float, center_freq: float,
                       tracker: SyncTracker, channels: list[int] | None = None,
                       json_output: bool = False, sf: int = 7,
                       ota_version: int = DEFAULT_OTA_VERSION) -> None:
@@ -704,8 +701,6 @@ def scan_iq_for_syncs(iq: "np.ndarray", sample_rate: float, center_freq: float,
         candidates = sync_channel_candidates(FHSS_FREQ_COUNT)
         channels = sorted(candidates.keys())
         log(f"Scanning sync channel candidates: {channels}")
-
-    demod = LoRaDemodulator(sf=sf, bw_hz=LORA_BW_HZ, sample_rate=sample_rate)
 
     for ch_idx in channels:
         if ch_idx < 0 or ch_idx >= FHSS_FREQ_COUNT:
@@ -796,7 +791,7 @@ def run_sdr_capture(tracker: SyncTracker, args: argparse.Namespace,
                     ota_version: int = DEFAULT_OTA_VERSION) -> None:
     """Live SDR capture via SoapySDR, hopping across FHSS channels."""
     try:
-        from sdr_common import SDRDevice, add_sdr_args
+        from sdr_common import SDRDevice, add_sdr_args  # noqa: F401
     except ImportError:
         log_err("sdr_common.py not found. Place it in tools/ alongside this script.")
         sys.exit(1)

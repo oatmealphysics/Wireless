@@ -42,13 +42,11 @@ Usage:
     python3 elrs-uid-rainbow.py --lookup AA:BB:CC     # lookup recovered UID[3:5]
 """
 
-import hashlib
 import argparse
 import csv
-import sys
+import hashlib
 import json
-from pathlib import Path
-
+import sys
 
 DEFAULT_OTA_VERSION = 3
 
@@ -1023,7 +1021,7 @@ def main():
             print(f"\nNo matches for SYNC bytes {args.lookup} (OTA version {ota_ver})")
             print("Try expanding the wordlist with -w <file>")
             if ota_ver == DEFAULT_OTA_VERSION:
-                print(f"Also try --ota-version 3 if the target runs ELRS 3.x")
+                print("Also try --ota-version 3 if the target runs ELRS 3.x")
         return
 
     # Output CSV

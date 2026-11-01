@@ -42,12 +42,11 @@ Usage:
 For CTF research and authorized security testing only.
 """
 
-import hashlib
 import argparse
-import struct
+import hashlib
 import sys
 
-from elrs_core.crc import Crc2Byte, ELRS_CRC14_POLY, ELRS_CRC16_POLY
+from elrs_core.crc import ELRS_CRC14_POLY, ELRS_CRC16_POLY, Crc2Byte
 from elrs_core.fhss import build_sequence
 
 # ---------------------------------------------------------------------------
@@ -357,7 +356,7 @@ def cmd_rc(uid, nonce, crc_init, crc_engine, args):
 
 def cmd_msp(uid, nonce, crc_init, crc_engine, args):
     msp_cmd = args.msp_cmd
-    msp_payload = bytes()
+    msp_payload = b''
     if args.msp_payload:
         msp_payload = bytes.fromhex(args.msp_payload.replace(":", "").replace(" ", ""))
 

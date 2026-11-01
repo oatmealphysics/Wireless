@@ -70,26 +70,23 @@ _TOOLS_DIR = Path(__file__).resolve().parent
 if str(_TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(_TOOLS_DIR))
 
-from elrs_core.crc import Crc2Byte, ELRS_CRC14_POLY, ELRS_CRC16_POLY
+from elrs_core.crc import ELRS_CRC14_POLY, ELRS_CRC16_POLY
 from elrs_core.fhss import (
-    DOMAINS,
     DEFAULT_2G4_DOMAIN,
+    DOMAINS,
     build_sequence,
-    sync_channel_candidates,
 )
 from elrs_core.ota import (
-    OTA_VERSION_ID,
     PACKET_TYPE_SYNC,
     build_sync,
     validate_crc,
-    ota_uid_crc_init,
 )
 from elrs_core.v3_compat import (
-    v3_uid_crc_init,
-    v3_uid_seed,
-    v3_sync_channel,
     v3_build_sequence,
     v3_build_sync,
+    v3_sync_channel,
+    v3_uid_crc_init,
+    v3_uid_seed,
     v3_validate_crc,
 )
 
@@ -160,7 +157,7 @@ def uid_from_wifi_json(path: str) -> tuple[bytes, dict]:
         uid_bytes = uid_info.get("bytes", [])
         if len(uid_bytes) == 6:
             return bytes(uid_bytes), data
-        raise ValueError(f"WiFi JSON has 'extracted' status but no valid UID data")
+        raise ValueError("WiFi JSON has 'extracted' status but no valid UID data")
 
     if status == "not_set":
         raise ValueError("WiFi JSON reports UID is all zeros (no binding phrase set)")

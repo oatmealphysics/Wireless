@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 import logging
+import sys
 import threading
 import unittest
+from copy import deepcopy
 from pathlib import Path
-import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-
 
 TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
 sys.path.insert(0, str(TOOLS_DIR / "tests"))
 
 from helpers import get_web_app, make_flask_client, make_target, needs_flask
-
 
 web_app = get_web_app()
 

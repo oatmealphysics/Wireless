@@ -28,9 +28,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import sys
-
+from pathlib import Path
 
 CRC14_POLY = 0x2E57
 CRC14_MASK = 0x3FFF

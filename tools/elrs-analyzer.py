@@ -28,7 +28,6 @@ import hashlib
 import json
 import os
 import random
-import struct
 import sys
 import time
 from datetime import datetime, timezone
@@ -36,7 +35,6 @@ from pathlib import Path
 
 from elrs_core.ota import build_rcdata_std, build_sync, decode_full, decode_std
 from elrs_core.v3_compat import uid_crc_init, DEFAULT_OTA_VERSION
-
 
 # ELRS packet types
 ELRS_PKT_RC_DATA_4CH = 0x00

@@ -1,12 +1,11 @@
 """Tests for the offline Betaflight 4.4.2 ELRS rate-switch model."""
 
-from contextlib import redirect_stdout
 import importlib.util
 import io
 import json
-from pathlib import Path
 import unittest
-
+from contextlib import redirect_stdout
+from pathlib import Path
 
 TOOL = Path(__file__).resolve().parents[1] / "elrs-v3-rate-switch-latch-model.py"
 SPEC = importlib.util.spec_from_file_location("elrs_v3_rate_switch_latch_model", TOOL)

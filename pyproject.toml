@@ -1,0 +1,64 @@
+[project]
+name = "wireless-ctf-research"
+version = "0.1.0"
+requires-python = ">=3.10"
+description = "Wireless CTF research project — ELRS/MAVLink exploit tooling"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["tools", "web"]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "RUF",   # ruff-specific
+]
+ignore = [
+    "E501",   # line length handled by formatter
+    "E402",   # module-import-not-at-top — tests use sys.path before imports
+    "E731",   # lambda assignment — used for concise test factories
+    "E741",   # ambiguous variable name — l/O are context-appropriate in RF math
+    "SIM102", # collapsible-if — readability preference
+    "SIM103", # needless-bool — readability preference
+    "SIM105", # suppressible-exception — try/except/pass is clearer than contextlib
+    "SIM108", # ternary operator — readability preference
+    "SIM113", # enumerate-for-loop — not always clearer
+    "SIM115", # open-file-with-context-handler — scripts close on exit
+    "SIM117", # multiple-with-statements — readability preference
+    "UP015",  # redundant open mode — explicit is fine
+    "UP038",  # isinstance union — deprecated in ruff ≥0.3; isinstance(x,(A,B)) is fine
+    "B904",   # raise from in except — not always appropriate
+    "B905",   # zip-without-explicit-strict — Python 3.10 compat patterns
+    "RUF002", # ambiguous unicode in docstrings — intentional symbols (μs, dBm)
+    "RUF003", # ambiguous unicode in comments — same
+    "RUF001", # ambiguous unicode in strings — same
+    "RUF005", # collection-literal-concatenation — list + list is readable
+    "RUF007", # zip-instead-of-pairwise — Python 3.10 compat
+    "RUF012", # mutable class default — unittest classes use this pattern
+    "RUF046", # unnecessary-cast-to-int — explicit int() is clearer
+    "RUF059", # unused-unpacked-variable — common in tuple unpacking
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tools/tests/*" = ["B007", "B011", "F821", "SIM300", "F841", "UP022"]
+"web/tests/*" = ["B007"]
+"tools/elrs_core/*" = ["RUF005"]
+"tools/exploit_chains/*" = ["F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["elrs_core"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+ignore_missing_imports = true

@@ -2,21 +2,19 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
+import sys
 import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from pathlib import Path
-import sys
 from unittest.mock import patch
-
 
 TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
 sys.path.insert(0, str(TOOLS_DIR / "tests"))
 
 from helpers import get_web_app, make_target, needs_flask
-
 
 web_app = get_web_app()
 

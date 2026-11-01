@@ -2,7 +2,6 @@
 
 import io
 import sys
-import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -24,7 +23,11 @@ main = _VALIDATE["main"]
 _LI = runpy.run_path(str(TOOLS / "elrs-li-offline.py"))
 read_rows = _LI["read_rows"]
 
-from elrs_core.v3_compat import v3_validate_crc
+from elrs_core.v3_compat import (
+    v3_build_sync,
+    v3_generate_crc,
+    v3_validate_crc,
+)
 
 
 class PhraseToUidTests(unittest.TestCase):

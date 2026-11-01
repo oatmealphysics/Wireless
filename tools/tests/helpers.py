@@ -24,13 +24,13 @@ if str(WEB_DIR) not in sys.path:
     sys.path.insert(0, str(WEB_DIR))
 
 
-def make_logger(name: str = "test") -> "ChainLogger":
+def make_logger(name: str = "test") -> ChainLogger:
     """Create a ChainLogger for tests (no file output)."""
     from exploit_chains.common import ChainLogger
     return ChainLogger(name, log_dir=None)
 
 
-def make_abort(name: str = "test") -> "AbortHandler":
+def make_abort(name: str = "test") -> AbortHandler:
     """Create an AbortHandler backed by a test logger."""
     from exploit_chains.common import AbortHandler
     return AbortHandler(make_logger(name))

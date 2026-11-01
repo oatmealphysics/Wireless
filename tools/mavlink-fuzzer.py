@@ -48,11 +48,9 @@ Usage:
 import argparse
 import json
 import math
-import struct
 import sys
 import time
-from collections import defaultdict
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 try:

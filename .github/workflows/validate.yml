@@ -53,6 +53,20 @@ jobs:
       - name: Rainbow table schema and loader patterns
         run: python -B -m unittest tools.tests.test_rainbow_table_schema -v
 
+  lint:
+    name: Ruff lint check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check ruff==0.11.12
+      - run: python -m ruff check tools/ web/
+
   web-dashboard:
     name: Web dashboard tests (${{ matrix.os }}, Python ${{ matrix.python }})
     strategy:

@@ -22,7 +22,6 @@ import argparse
 import copy
 import json
 
-
 SCHEMA = "elrs-v3-rate-switch-latch-model-v1"
 INITIAL_CHANNEL = 41
 GENERIC_RX_DEADLINE_MS = 100

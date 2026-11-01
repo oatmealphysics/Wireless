@@ -40,8 +40,6 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Optional
 
 # Known drone WiFi SSID patterns
 DRONE_SSID_PATTERNS = [
@@ -93,8 +91,8 @@ class Anomaly:
     description: str
     details: dict = field(default_factory=dict)
 
-    def to_dict(self) -> dict:
-        d = {
+    def to_dict(self) -> dict[str, object]:
+        d: dict[str, object] = {
             "timestamp": self.timestamp,
             "severity": self.severity,
             "category": self.category,
@@ -119,8 +117,8 @@ class EvilTwinDetector:
 
     def __init__(
         self,
-        known_bssids: Optional[dict[str, str]] = None,
-        drone_ssid: Optional[str] = None,
+        known_bssids: dict[str, str] | None = None,
+        drone_ssid: str | None = None,
     ):
         # known_bssids maps SSID -> expected BSSID
         self.known_bssids = known_bssids or {}
@@ -131,7 +129,7 @@ class EvilTwinDetector:
         self.scan_count = 0
 
     def _emit(self, severity: str, category: str, desc: str,
-              details: dict = None):
+              details: dict | None = None):
         a = Anomaly(
             timestamp=now_iso(),
             severity=severity,

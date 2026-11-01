@@ -19,29 +19,48 @@ Test groups:
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 # Add tools/ to path for imports
 TOOLS_DIR = Path(__file__).resolve().parents[1]
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
-from elrs_core.crc import Crc2Byte, ELRS_CRC14_POLY, ELRS_CRC16_POLY
+from elrs_core.crc import ELRS_CRC14_POLY, Crc2Byte
+from elrs_core.fhss import (
+    DOMAINS,
+    FHSS_SEQUENCE_LEN,
+    Lcg,
+    build_sequence,
+    uid_seed,
+)
 from elrs_core.ota import (
     OTA_VERSION_ID as V4_OTA_VERSION_ID,
-    ota_uid_crc_init, bind_crc_init,
-    validate_crc, generate_crc, build_sync, decode_std,
-    PACKET_TYPE_SYNC, PACKET_TYPE_RCDATA, PACKET_TYPE_DATA,
-    OTA4_PACKET_SIZE,
 )
-from elrs_core.fhss import (
-    Lcg, build_sequence, uid_seed, DOMAINS, FHSS_SEQUENCE_LEN,
+from elrs_core.ota import (
+    PACKET_TYPE_DATA,
+    PACKET_TYPE_RCDATA,
+    PACKET_TYPE_SYNC,
+    bind_crc_init,
+    build_sync,
+    decode_std,
+    generate_crc,
+    ota_uid_crc_init,
+    validate_crc,
 )
 from elrs_core.v3_compat import (
-    V3_OTA_VERSION_ID, v3_crc14, v3_uid_crc_init, v3_bind_crc_init,
-    v3_validate_crc, v3_generate_crc, v3_uid_seed, v3_sync_channel,
-    v3_build_sequence, v3_decode_sync, v3_build_sync, V3Sync,
+    V3_OTA_VERSION_ID,
+    v3_bind_crc_init,
+    v3_build_sequence,
+    v3_build_sync,
+    v3_crc14,
+    v3_decode_sync,
+    v3_generate_crc,
+    v3_sync_channel,
+    v3_uid_crc_init,
+    v3_uid_seed,
+    v3_validate_crc,
 )
 
 # UID suffix derived from SYNC frames in committed captures.

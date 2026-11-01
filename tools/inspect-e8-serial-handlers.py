@@ -9,8 +9,8 @@ Results are static analysis leads, not a verified source reconstruction.
 """
 import argparse
 import json
-from pathlib import Path
 import struct
+from pathlib import Path
 
 
 def main():

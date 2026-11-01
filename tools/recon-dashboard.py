@@ -30,7 +30,6 @@ For CTF research and authorized security testing only.
 import argparse
 import curses
 import json
-import os
 import signal
 import subprocess
 import sys
@@ -40,7 +39,6 @@ import time
 from collections import OrderedDict
 from datetime import datetime, timezone
 from pathlib import Path
-
 
 TOOLS_DIR = Path(__file__).parent
 
@@ -252,7 +250,7 @@ class ReconEngine:
 
     def _read_stderr(self, name, proc):
         try:
-            for line in proc.stderr:
+            for _line in proc.stderr:
                 if not self.running:
                     break
         except Exception:
@@ -397,7 +395,7 @@ class ReconEngine:
                     "state": random.choice(["STANDBY", "ACTIVE"]),
                     "mode_flags": ["STABILIZE"],
                     "version": 2,
-                    "source": "192.168.1.100:14550",
+                    "endpoint": "192.168.1.100:14550",
                     "signed": False,
                     "new_system": False,
                 }
@@ -418,7 +416,7 @@ class ReconEngine:
 
     def stop(self):
         self.running = False
-        for name, proc in self.processes.items():
+        for _name, proc in self.processes.items():
             try:
                 proc.terminate()
                 proc.wait(timeout=3)

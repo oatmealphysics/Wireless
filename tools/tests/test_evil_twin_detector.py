@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import importlib.util
+
 spec = importlib.util.spec_from_file_location(
     "evil_twin_detector",
     str(Path(__file__).resolve().parent.parent / "evil-twin-detector.py"),

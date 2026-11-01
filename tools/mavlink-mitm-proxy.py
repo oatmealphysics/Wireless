@@ -56,7 +56,6 @@ For CTF research and authorized security testing only.
 
 import argparse
 import json
-import os
 import select
 import signal
 import socket
@@ -69,8 +68,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "exploit_chains"))
-from common import ChainLogger, AbortHandler
-
+from common import AbortHandler, ChainLogger
 
 # MAVLink constants
 MAVLINK_V1_MAGIC = 0xFE
@@ -588,7 +586,7 @@ def main():
 
     args = parser.parse_args()
     logger = ChainLogger("mavlink-mitm", args.log_dir)
-    abort = AbortHandler(logger)
+    _abort = AbortHandler(logger)
 
     if args.simulate:
         simulate_proxy(logger)
@@ -626,7 +624,7 @@ def main():
     if proxy.modify_mode:
         logger.step("INIT", f"  Rewriting mode to: {proxy.modify_mode}")
     if proxy.inject_rc:
-        logger.step("INIT", f"  RC override injection: ON")
+        logger.step("INIT", "  RC override injection: ON")
 
     def _shutdown(sig, frame):
         proxy.stop()

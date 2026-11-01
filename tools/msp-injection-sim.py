@@ -68,7 +68,6 @@ import struct
 import sys
 import time
 from dataclasses import dataclass
-from typing import Sequence
 
 # ---------------------------------------------------------------------------
 # MSP v1 protocol constants (from Betaflight src/main/msp/msp_protocol.h)
@@ -411,7 +410,7 @@ class TcpTransport(Transport):
         try:
             resp = self.sock.recv(256)
             return resp if resp else None
-        except socket.timeout:
+        except TimeoutError:
             return None
 
     def close(self) -> None:
@@ -484,7 +483,7 @@ def show_ota_encapsulation(scenario: AttackScenario, phrase: str,
     try:
         tools_dir = __import__("os").path.dirname(__import__("os").path.abspath(__file__))
         sys.path.insert(0, tools_dir)
-        from elrs_core.v3_compat import uid_crc_init, uid_fhss_seed, sync_channel
+        from elrs_core.v3_compat import sync_channel, uid_crc_init, uid_fhss_seed
         crc_init = uid_crc_init(uid, ota_version)
         seed = uid_fhss_seed(uid, ota_version)
         sync_ch = sync_channel(80, ota_version)
@@ -551,7 +550,7 @@ def run_scenario(scenario: AttackScenario, transport: Transport,
 
         resp_raw = transport.send_recv(frame)
         if resp_raw is None:
-            print(f"    [TIMEOUT] No response", file=sys.stderr)
+            print("    [TIMEOUT] No response", file=sys.stderr)
             result["status"] = "timeout"
             results.append(result)
             continue

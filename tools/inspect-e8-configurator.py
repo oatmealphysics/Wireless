@@ -13,9 +13,9 @@ import argparse
 import base64
 import hashlib
 import json
-from pathlib import Path
 import re
 import struct
+from pathlib import Path
 from urllib.request import Request, urlopen
 
 SOURCE = "https://emaxusa2.freshdesk.com/support/solutions/articles/19000157264-expresslrs-e8-transmitter-custom-configurator"

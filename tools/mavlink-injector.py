@@ -35,8 +35,6 @@ For CTF research and authorized security testing only.
 import argparse
 import sys
 import time
-import struct
-from datetime import datetime
 
 try:
     from pymavlink import mavutil
@@ -135,7 +133,7 @@ class MAVLinkInjector:
             self.target_sysid = sysid
             self.target_compid = msg.get_srcComponent()
 
-            from mavlink_recon import VEHICLE_TYPES, AUTOPILOT_TYPES
+            from mavlink_recon import AUTOPILOT_TYPES, VEHICLE_TYPES
             vtype = VEHICLE_TYPES.get(msg.type, f"Unknown({msg.type})")
             ap = AUTOPILOT_TYPES.get(msg.autopilot, f"Unknown({msg.autopilot})")
             armed = "ARMED" if msg.base_mode & 128 else "DISARMED"
@@ -149,7 +147,7 @@ class MAVLinkInjector:
 
     def check_signing(self, timeout=5):
         """Check if the target uses message signing."""
-        print(f"[*] Checking for message signing...", file=sys.stderr)
+        print("[*] Checking for message signing...", file=sys.stderr)
         deadline = time.time() + timeout
         signed = 0
         unsigned = 0
@@ -171,7 +169,7 @@ class MAVLinkInjector:
 
         if signed > 0:
             print(f"  [!] WARNING: Target uses message signing ({signed} signed msgs).", file=sys.stderr)
-            print(f"      Injected commands will likely be REJECTED.", file=sys.stderr)
+            print("      Injected commands will likely be REJECTED.", file=sys.stderr)
             return True
         else:
             print(f"  [+] No signing detected ({unsigned} unsigned msgs). Injection viable.", file=sys.stderr)
@@ -203,7 +201,7 @@ class MAVLinkInjector:
             result = result_names.get(ack.result, f"UNKNOWN({ack.result})")
             print(f"  [RX] ACK: {result}", file=sys.stderr)
         else:
-            print(f"  [RX] No ACK received (timeout or different command)", file=sys.stderr)
+            print("  [RX] No ACK received (timeout or different command)", file=sys.stderr)
 
     def cmd_disarm(self):
         """Disarm motors."""
@@ -278,7 +276,7 @@ class MAVLinkInjector:
             return
 
         # Send several times — RC override needs to be maintained
-        for i in range(10):
+        for _i in range(10):
             self.conn.mav.rc_channels_override_send(
                 self.target_sysid,
                 self.target_compid,
@@ -322,12 +320,12 @@ class MAVLinkInjector:
         print(f"  MAVLink Injector — [{mode}]", file=sys.stderr)
         print(f"  Target: sysid={self.target_sysid} @ {self.conn_str}", file=sys.stderr)
         print(f"{'=' * 60}", file=sys.stderr)
-        print(f"\n  Available commands:", file=sys.stderr)
+        print("\n  Available commands:", file=sys.stderr)
         for name, info in COMMANDS.items():
             print(f"    {name:16s}  {info['desc']}", file=sys.stderr)
         print(f"    {'quit':16s}  Exit", file=sys.stderr)
         print(f"    {'help <cmd>':16s}  Show command details", file=sys.stderr)
-        print(f"", file=sys.stderr)
+        print("", file=sys.stderr)
 
         while True:
             try:

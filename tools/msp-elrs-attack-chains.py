@@ -49,8 +49,7 @@ _TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
 
-from elrs_core.v3_compat import v3_uid_crc_init, v3_generate_crc
-
+from elrs_core.v3_compat import v3_generate_crc
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -454,7 +453,7 @@ def print_chain_result(result: ChainSimResult, verbose: bool = False) -> None:
     print(f"  Conn setup: {result.connection_overhead_ms} ms")
     print(f"  Total time: {result.total_time_ms} ms")
 
-    print(f"\n--- Execution Timeline ---\n")
+    print("\n--- Execution Timeline ---\n")
     print(f"  {'#':<3s} {'Time':>8s} {'Step':<22s} {'Pkts':>5s} "
           f"{'Inject':>8s} {'Cmd':>5s}")
     print(f"  {'-'*3} {'-'*8} {'-'*22} {'-'*5} {'-'*8} {'-'*5}")
@@ -467,7 +466,7 @@ def print_chain_result(result: ChainSimResult, verbose: bool = False) -> None:
               f"{detail['msp_cmd']:>5d}{armed_note}")
 
     if verbose:
-        print(f"\n--- Step Details ---")
+        print("\n--- Step Details ---")
         for i, detail in enumerate(result.step_details):
             print(f"\n  Step {i+1}: {detail['name']}")
             print(f"    {detail['description']}")
@@ -552,7 +551,7 @@ def main() -> None:
 
     if args.chain == "all":
         print_chain_comparison(chains)
-        for name, chain in chains.items():
+        for _name, chain in chains.items():
             result = simulate_chain(chain, uid, args.show_ota)
             print_chain_result(result, args.verbose)
     else:

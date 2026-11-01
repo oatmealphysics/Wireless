@@ -10,10 +10,10 @@ import ast
 import csv
 import hashlib
 import json
-from pathlib import Path
 import re
 import subprocess
 import sys
+from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]

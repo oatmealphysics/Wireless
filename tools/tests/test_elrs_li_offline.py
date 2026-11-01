@@ -6,10 +6,9 @@ SPDX-License-Identifier: GPL-3.0-or-later
 """
 
 import importlib.util
-from pathlib import Path
 import unittest
+from pathlib import Path
 from unittest.mock import patch
-
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOL = ROOT / "tools" / "elrs-li-offline.py"

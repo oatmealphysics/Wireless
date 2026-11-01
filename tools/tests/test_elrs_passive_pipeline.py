@@ -15,7 +15,6 @@ For authorized CTF research only.
 from __future__ import annotations
 
 import json
-import os
 import sys
 import tempfile
 import unittest
@@ -775,9 +774,8 @@ class TestCaptureValidatedPipeline(unittest.TestCase):
                 self.mod["write_full_report"](result, report)
 
     def test_private_output_rejects_path_outside_work(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(ValueError):
-                self.mod["private_output"](Path(tmp) / "report.json")
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(ValueError):
+            self.mod["private_output"](Path(tmp) / "report.json")
 
     def test_measured_channel_frequency_is_not_rounded(self):
         PipelineResult = self.mod["PipelineResult"]

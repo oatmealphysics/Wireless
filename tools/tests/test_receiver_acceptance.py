@@ -21,37 +21,40 @@ Python 3.10+, standard library + tools/elrs_core only.
 from __future__ import annotations
 
 import json
-import os
-import struct
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(TOOLS))
 
-from elrs_core.crc import Crc2Byte, ELRS_CRC14_POLY, ELRS_CRC16_POLY
-from elrs_core.fhss import Lcg, FHSS_SEQUENCE_LEN, DOMAINS
-from elrs_core.ota import (
-    OTA4_PACKET_SIZE, OTA8_PACKET_SIZE,
-    PACKET_TYPE_SYNC, PACKET_TYPE_RCDATA, PACKET_TYPE_DATA,
-    ota_uid_crc_init, build_sync, build_rcdata_std,
-    decode_std, decode_full, validate_crc, generate_crc,
-    decode,
-)
-from elrs_core.v3_compat import (
-    V3_OTA_VERSION_ID, V3_SYNC_CHANNEL_80,
-    v3_crc14, v3_uid_crc_init, v3_bind_crc_init,
-    v3_validate_crc, v3_generate_crc,
-    v3_uid_seed, v3_sync_channel, v3_build_sequence,
-    v3_decode_sync, v3_build_sync,
-    uid_crc_init, uid_fhss_seed, sync_channel,
-)
-
 # Test UID: MD5("iloveflying")[:6] — a well-known example binding phrase.
 # This is NOT the owned pair's UID (that is private under work/).
 import hashlib
+
+from elrs_core.fhss import FHSS_SEQUENCE_LEN
+from elrs_core.ota import (
+    PACKET_TYPE_RCDATA,
+    PACKET_TYPE_SYNC,
+    build_rcdata_std,
+    decode_std,
+    ota_uid_crc_init,
+)
+from elrs_core.v3_compat import (
+    V3_SYNC_CHANNEL_80,
+    sync_channel,
+    uid_crc_init,
+    uid_fhss_seed,
+    v3_bind_crc_init,
+    v3_build_sequence,
+    v3_build_sync,
+    v3_decode_sync,
+    v3_sync_channel,
+    v3_uid_crc_init,
+    v3_uid_seed,
+    v3_validate_crc,
+)
+
 TEST_PHRASE = "iloveflying"
 TEST_UID = hashlib.md5(TEST_PHRASE.encode()).digest()[:6]
 

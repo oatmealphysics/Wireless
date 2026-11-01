@@ -19,7 +19,7 @@ B205mini/B210 the relevant table is ISM2G4 / CE_LBT.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 FHSS_SEQUENCE_LEN = 256
 

@@ -31,11 +31,10 @@ from __future__ import annotations
 import argparse
 import copy
 import json
-from pathlib import Path
 import runpy
 import sys
 import time
-
+from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parent
 REPLAY = runpy.run_path(str(TOOLS / "elrs-v3-rc-replay-canary.py"))

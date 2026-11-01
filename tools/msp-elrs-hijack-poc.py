@@ -44,10 +44,8 @@ import json
 import os
 import struct
 import sys
-import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Sequence
 
 # ---------------------------------------------------------------------------
 # Add tools/ to path for elrs_core imports
@@ -57,18 +55,15 @@ if _TOOLS_DIR not in sys.path:
     sys.path.insert(0, _TOOLS_DIR)
 
 from elrs_core.v3_compat import (
-    v3_crc14,
+    V3Sync,
+    v3_build_sequence,
+    v3_build_sync,
+    v3_decode_sync,
+    v3_generate_crc,
+    v3_sync_channel,
     v3_uid_crc_init,
     v3_uid_seed,
-    v3_build_sequence,
-    v3_sync_channel,
-    v3_generate_crc,
-    v3_decode_sync,
-    v3_build_sync,
-    V3Sync,
 )
-from elrs_core.fhss import FHSS_SEQUENCE_LEN
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -543,7 +538,7 @@ def print_result(result: HijackSimResult, verbose: bool = False) -> None:
     print(f"  Sync channel:   {result.sync_channel}")
     print(f"  FHSS seq len:   {result.fhss_sequence_len}")
 
-    print(f"\n--- Connection State Machine ---")
+    print("\n--- Connection State Machine ---")
     for entry in result.connection_log:
         print(f"  {entry}")
 

@@ -1,8 +1,8 @@
 """Offline tests for msp-elrs-attack-chains.py."""
 
 import importlib.util
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 TOOL = Path(__file__).resolve().parents[1] / "msp-elrs-attack-chains.py"
 

@@ -45,10 +45,10 @@ Usage:
 """
 
 import argparse
+import math
 import struct
 import sys
 import time
-import math
 from datetime import datetime, timezone
 
 
@@ -148,7 +148,7 @@ def make_ubx_nav_pvt(lat: float, lon: float, alt: float,
     head_acc = int(5.0 * 1e5)  # heading accuracy (deg * 1e-5)
     p_dop = 120           # pDOP * 0.01
     flags3 = 0x00
-    reserved1 = 0
+    _reserved1 = 0
     head_veh = 0
     mag_dec = 0
     mag_acc = 0
@@ -347,7 +347,7 @@ def run_rtl_spoof(args, serial_port) -> None:
                               args.home_lat, args.home_lon)
     hdg = bearing(args.lat, args.lon, args.home_lat, args.home_lon)
 
-    print(f"[*] RTL spoof mode", file=sys.stderr)
+    print("[*] RTL spoof mode", file=sys.stderr)
     print(f"[*] Fake home: ({args.home_lat:.6f}, {args.home_lon:.6f})",
           file=sys.stderr)
     print(f"[*] Current pos: ({args.lat:.6f}, {args.lon:.6f})",

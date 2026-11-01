@@ -36,7 +36,7 @@ import time
 
 try:
     import SoapySDR
-    from SoapySDR import SOAPY_SDR_RX, SOAPY_SDR_TX, SOAPY_SDR_CF32
+    from SoapySDR import SOAPY_SDR_CF32, SOAPY_SDR_RX, SOAPY_SDR_TX
     HAS_SOAPY = True
 except ImportError:
     HAS_SOAPY = False

@@ -3,11 +3,10 @@
 import importlib.util
 import io
 import json
-from pathlib import Path
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-
+from pathlib import Path
 
 TOOL = Path(__file__).resolve().parents[1] / "elrs-v3-fhss-check.py"
 SPEC = importlib.util.spec_from_file_location("elrs_v3_fhss_check", TOOL)

@@ -31,9 +31,8 @@ import argparse
 import importlib.util
 import json
 import math
-from pathlib import Path
 import sys
-
+from pathlib import Path
 
 SOURCE = Path(__file__).with_name("elrs-v3-frame-check.py")
 SPEC = importlib.util.spec_from_file_location("elrs_v3_frame_check", SOURCE)

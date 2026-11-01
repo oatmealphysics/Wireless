@@ -24,11 +24,10 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import struct
 import sys
 import time
-
+from pathlib import Path
 
 QUERIES = ((1, "API_VERSION"), (2, "FC_VARIANT"), (3, "FC_VERSION"),
            (4, "BOARD_INFO"), (10, "NAME"), (105, "RC"))

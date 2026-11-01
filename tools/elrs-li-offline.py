@@ -26,12 +26,11 @@ SPDX-License-Identifier: GPL-3.0-or-later
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 import json
-from pathlib import Path
 import runpy
 import sys
-
+from collections import Counter
+from pathlib import Path
 
 CHECKER = runpy.run_path(str(Path(__file__).with_name("elrs-v3-frame-check.py")))
 check_frame = CHECKER["check_frame"]

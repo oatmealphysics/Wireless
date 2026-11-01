@@ -1,10 +1,10 @@
 """Synthetic receiver tests; no SDR or E8 is opened."""
 
 import importlib.util
-from pathlib import Path
 import tempfile
-from types import SimpleNamespace
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 
 try:
     import numpy as np

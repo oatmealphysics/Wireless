@@ -28,16 +28,15 @@ This script never transmits, opens a device, or modifies the input file.
 from __future__ import annotations
 
 import argparse
-from fractions import Fraction
 import json
 import math
-from pathlib import Path
 import struct
 import sys
+from fractions import Fraction
+from pathlib import Path
 
 import numpy as np
 from scipy.signal import resample_poly
-
 
 BW_HZ = 812_500
 SF = 7

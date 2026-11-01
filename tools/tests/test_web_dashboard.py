@@ -4,16 +4,13 @@ Covers: hostile SSIDs (XSS), action validation, scanner failure cleanup,
 score-to-threat-level labels, dry-run gating, and action categories.
 """
 
-import html
-from copy import deepcopy
-import json
 import os
 import re
 import sys
-import threading
 import time
 import unittest
-from unittest.mock import patch, MagicMock
+from copy import deepcopy
+from unittest.mock import patch
 
 TOOLS_DIR = os.path.join(os.path.dirname(__file__), "..")
 WEB_DIR = os.path.join(TOOLS_DIR, "..", "web")
@@ -562,7 +559,6 @@ class TestLocalhostBinding(unittest.TestCase):
 
     def test_app_argparse_default(self):
         """The app.py main() default host is 127.0.0.1, not 0.0.0.0."""
-        import ast
         app_path = os.path.join(WEB_DIR, "app.py")
         with open(app_path) as f:
             source = f.read()
@@ -598,9 +594,8 @@ class TestDryRunDefault(unittest.TestCase):
             with patch.object(sys, "argv", [
                     "app.py", "--simulate", "--live-actions",
                     "--wifi-iface", "test-wifi", "--ble-iface", "test-ble",
-                    "--sdr-args", "driver=test"]):
-                with patch.object(web_app.app, "run") as run:
-                    web_app.main()
+                    "--sdr-args", "driver=test"]), patch.object(web_app.app, "run") as run:
+                web_app.main()
 
             self.assertFalse(_state().dry_run_mode)
             self.assertEqual(_state().scan_defaults["wifi_iface"], "test-wifi")

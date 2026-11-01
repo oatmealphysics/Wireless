@@ -51,11 +51,14 @@ _FC = runpy.run_path(str(TOOLS / "elrs-v3-frame-check.py"))
 check_frame = _FC["check_frame"]
 
 from elrs_core.v3_compat import (
-    v3_crc14, v3_uid_crc_init, v3_uid_seed, v3_build_sequence,
-    v3_build_sync, v3_generate_crc, v3_validate_crc, v3_decode_sync,
     V3_SYNC_CHANNEL_80,
+    v3_build_sequence,
+    v3_build_sync,
+    v3_decode_sync,
+    v3_uid_crc_init,
+    v3_uid_seed,
+    v3_validate_crc,
 )
-from elrs_core.fhss import DOMAINS
 
 
 def phrase_to_uid(phrase: str) -> bytes:

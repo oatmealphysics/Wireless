@@ -36,33 +36,28 @@ For CTF defense and authorized security research only.
 import argparse
 import hashlib
 import json
-import os
-import random
-import struct
 import sys
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 # Add parent for elrs_core imports
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from elrs_core.crc import Crc2Byte, ELRS_CRC14_POLY, ELRS_CRC16_POLY
-from elrs_core.fhss import build_sequence, uid_seed, DOMAINS
-from elrs_core.v3_compat import v3_build_sequence
+from elrs_core.crc import ELRS_CRC14_POLY, ELRS_CRC16_POLY, Crc2Byte
+from elrs_core.fhss import DOMAINS, build_sequence, uid_seed
 from elrs_core.ota import (
-    OTA_VERSION_ID,
-    UID_LEN,
     OTA4_PACKET_SIZE,
     OTA8_PACKET_SIZE,
     PACKET_TYPE_RCDATA,
     PACKET_TYPE_SYNC,
-    ota_uid_crc_init,
+    UID_LEN,
     bind_crc_init,
+    ota_uid_crc_init,
 )
+from elrs_core.v3_compat import v3_build_sequence
 
 # ---------------------------------------------------------------------------
 # Anomaly severity levels
@@ -104,8 +99,8 @@ class Anomaly:
     packet_hex: str = ""
     details: dict = field(default_factory=dict)
 
-    def to_dict(self) -> dict:
-        d = {
+    def to_dict(self) -> dict[str, object]:
+        d: dict[str, object] = {
             "timestamp": self.timestamp,
             "severity": self.severity,
             "category": self.category,
@@ -132,8 +127,8 @@ class ELRSAnomalyDetector:
 
     def __init__(
         self,
-        uid: Optional[bytes] = None,
-        phrase: Optional[str] = None,
+        uid: bytes | None = None,
+        phrase: str | None = None,
         ota_version: int = 3,
         strict: bool = False,
     ):
@@ -165,7 +160,7 @@ class ELRSAnomalyDetector:
             )
 
     def _emit(self, severity: str, category: str, desc: str,
-              pkt_hex: str = "", details: dict = None):
+              pkt_hex: str = "", details: dict | None = None):
         a = Anomaly(
             timestamp=now_iso(),
             severity=severity,

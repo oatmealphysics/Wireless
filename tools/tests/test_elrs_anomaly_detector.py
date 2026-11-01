@@ -1,20 +1,19 @@
 """Tests for the ELRS anomaly detector."""
 
 import hashlib
-import struct
 import sys
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from elrs_core.crc import Crc2Byte, ELRS_CRC14_POLY
-from elrs_core.ota import ota_uid_crc_init, PACKET_TYPE_SYNC, PACKET_TYPE_RCDATA
-
 # Import detector components
 import importlib.util
+
+from elrs_core.crc import ELRS_CRC14_POLY, Crc2Byte
+from elrs_core.ota import PACKET_TYPE_RCDATA, PACKET_TYPE_SYNC, ota_uid_crc_init
+
 spec = importlib.util.spec_from_file_location(
     "elrs_anomaly_detector",
     str(Path(__file__).resolve().parent.parent / "elrs-anomaly-detector.py"),

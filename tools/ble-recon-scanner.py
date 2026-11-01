@@ -26,11 +26,10 @@ import asyncio
 import json
 import sys
 import time
-from dataclasses import dataclass, field, asdict
-from typing import Optional
+from dataclasses import asdict, dataclass, field
 
 try:
-    from bleak import BleakScanner, BleakClient
+    from bleak import BleakClient, BleakScanner
     from bleak.exc import BleakError
 except ImportError:
     print("ERROR: bleak not installed. Run: pip install bleak", file=sys.stderr)
@@ -149,39 +148,39 @@ class GattCharInfo:
     uuid: str
     handle: int
     properties: list[str]
-    known_name: Optional[str] = None
-    value: Optional[str] = None
-    risk: Optional[str] = None
-    notes: Optional[str] = None
+    known_name: str | None = None
+    value: str | None = None
+    risk: str | None = None
+    notes: str | None = None
 
 
 @dataclass
 class GattServiceInfo:
     uuid: str
     handle: int
-    known_name: Optional[str] = None
-    risk: Optional[str] = None
-    notes: Optional[str] = None
+    known_name: str | None = None
+    risk: str | None = None
+    notes: str | None = None
     characteristics: list[GattCharInfo] = field(default_factory=list)
 
 
 @dataclass
 class DeviceResult:
     address: str
-    name: Optional[str]
+    name: str | None
     rssi: int
-    matched_pattern: Optional[str] = None
-    pattern_description: Optional[str] = None
-    threat_notes: Optional[str] = None
+    matched_pattern: str | None = None
+    pattern_description: str | None = None
+    threat_notes: str | None = None
     matched_services: list[str] = field(default_factory=list)
     service_uuids: list[str] = field(default_factory=list)
     manufacturer_data: dict = field(default_factory=dict)
     gatt_services: list[GattServiceInfo] = field(default_factory=list)
     enumerated: bool = False
-    enum_error: Optional[str] = None
+    enum_error: str | None = None
 
 
-def match_device_name(name: Optional[str]) -> Optional[tuple[str, str, str]]:
+def match_device_name(name: str | None) -> tuple[str, str, str] | None:
     if not name:
         return None
     name_upper = name.upper()

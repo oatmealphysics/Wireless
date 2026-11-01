@@ -35,7 +35,6 @@ import hashlib
 import json
 import os
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,13 +42,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from elrs_core.crc import Crc2Byte, ELRS_CRC14_POLY
-from elrs_core.v3_compat import (
-    v3_uid_crc_init, v3_uid_seed, v3_sync_channel, v3_build_sequence,
-    v3_build_sync, uid_crc_init, uid_fhss_seed, sync_channel,
-    V3_OTA_VERSION_ID,
-)
 from elrs_core.fhss import FHSS_SEQUENCE_LEN
+from elrs_core.v3_compat import (
+    sync_channel,
+    uid_crc_init,
+    uid_fhss_seed,
+    v3_build_sequence,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -409,29 +408,29 @@ def _print_plan_summary(plan: dict):
     print(f"  Status:       {plan.get('status')}", file=sys.stderr)
     print(f"  Armed:        {plan.get('armed')}", file=sys.stderr)
     print(f"  Created:      {plan.get('created')}", file=sys.stderr)
-    print(f"\n  Target:", file=sys.stderr)
+    print("\n  Target:", file=sys.stderr)
     print(f"    Device:     {target.get('device')}", file=sys.stderr)
     print(f"    Firmware:   {target.get('firmware')}", file=sys.stderr)
     print(f"    OTA:        v{target.get('ota_version')}", file=sys.stderr)
     print(f"    Rate:       {target.get('rate_params', {}).get('name', 'unknown')}", file=sys.stderr)
     print(f"    PHY:        {target.get('phy')}", file=sys.stderr)
-    print(f"\n  RF Parameters:", file=sys.stderr)
+    print("\n  RF Parameters:", file=sys.stderr)
     print(f"    Frequency:  {rf.get('frequency_hz', 0) / 1e6:.1f} MHz", file=sys.stderr)
     print(f"    Sync ch:    {rf.get('sync_channel')}", file=sys.stderr)
     print(f"    Power:      {rf.get('power_dbm')} dBm (max {rf.get('max_power_dbm')})", file=sys.stderr)
     print(f"    Duration:   {rf.get('duration_s')}s (max {rf.get('max_duration_s')})", file=sys.stderr)
     print(f"    Modulation: {rf.get('modulation')}", file=sys.stderr)
-    print(f"\n  Crypto:", file=sys.stderr)
+    print("\n  Crypto:", file=sys.stderr)
     print(f"    CRC init:   {crypto.get('crc_init')}", file=sys.stderr)
     print(f"    FHSS seed:  {crypto.get('fhss_seed')}", file=sys.stderr)
     print(f"    Seq len:    {crypto.get('fhss_sequence_len')}", file=sys.stderr)
-    print(f"\n  Safety:", file=sys.stderr)
+    print("\n  Safety:", file=sys.stderr)
     print(f"    No-flash:   {safety.get('no_flash_devices')}", file=sys.stderr)
     print(f"    Props off:  {safety.get('props_removed')}", file=sys.stderr)
     print(f"    Dry-run:    {safety.get('dry_run_default')}", file=sys.stderr)
     print(f"    Max power:  {safety.get('max_power_dbm')} dBm", file=sys.stderr)
     print(f"    Max time:   {safety.get('max_duration_s')}s", file=sys.stderr)
-    print(f"\n  Expected receiver state:", file=sys.stderr)
+    print("\n  Expected receiver state:", file=sys.stderr)
     for k, v in plan.get("expected_receiver_state", {}).items():
         print(f"    {k}: {v}", file=sys.stderr)
     print(f"\n  Abort conditions: {', '.join(plan.get('abort_conditions', []))}", file=sys.stderr)
@@ -550,7 +549,7 @@ def main():
                 log_error(f"  {e}")
             log_error("Plan has blocking issues — fix before arming")
 
-        filepath = save_plan(plan, args.output_dir)
+        _filepath = save_plan(plan, args.output_dir)
         log_info("Plan created. Next: verify, review, then arm.")
         log_safety("No RF transmission occurs from this tool.")
 

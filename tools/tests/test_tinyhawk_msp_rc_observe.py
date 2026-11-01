@@ -2,12 +2,11 @@
 
 import importlib.util
 import io
-from pathlib import Path
 import struct
 import unittest
 from contextlib import redirect_stderr
+from pathlib import Path
 from unittest.mock import patch
-
 
 TOOL = Path(__file__).resolve().parents[1] / "tinyhawk-msp-rc-observe.py"
 SPEC = importlib.util.spec_from_file_location("tinyhawk_msp_rc_observe", TOOL)

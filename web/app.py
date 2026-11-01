@@ -17,8 +17,6 @@ For authorized CTF research only.
 from __future__ import annotations
 
 import argparse
-from copy import deepcopy
-from dataclasses import dataclass, field
 import json
 import socket
 import subprocess
@@ -26,9 +24,12 @@ import sys
 import threading
 import time
 import uuid
+from collections.abc import Generator
+from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 from flask import (
     Blueprint,
@@ -45,7 +46,7 @@ TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
 sys.path.insert(0, str(TOOLS_DIR / "exploit_chains"))
 
-from exploit_chains.common import ChainLogger, AbortHandler
+from exploit_chains.common import AbortHandler, ChainLogger
 
 MAX_EVENTS = 500
 MAX_LOG = 200
@@ -386,7 +387,7 @@ def detect_hardware() -> dict[str, Any]:
         wifi_devs = [
             line.split(":")[0]
             for line in result.stdout.splitlines()
-            if ":wifi:" in line and "connected" in line.lower() or ":wifi:" in line
+            if (":wifi:" in line and "connected" in line.lower()) or ":wifi:" in line
         ]
         if not wifi_devs:
             result2 = subprocess.run(
@@ -791,7 +792,7 @@ def run_scan_live(
     try:
         all_targets = []
         scan_errors = {}
-        from exploit_chains.multi_recon import scan_wifi, scan_ble, scan_sdr
+        from exploit_chains.multi_recon import scan_ble, scan_sdr, scan_wifi
 
         logger = ChainLogger("web-scan")
         abort = AbortHandler(logger, install_signal_handlers=False)
@@ -967,7 +968,7 @@ def run_scan_live(
 
 def _scan_mavlink_udp(timeout: float, logger: ChainLogger, abort: AbortHandler) -> list[dict[str, Any]]:
     """Scan common MAVLink UDP ports for traffic (pure UDP, no SDR needed)."""
-    from exploit_chains.mavlink_chain import parse_mavlink_packet, parse_heartbeat
+    from exploit_chains.mavlink_chain import parse_heartbeat, parse_mavlink_packet
 
     results = []
     for port in [14550, 14555, 14560, 5760, 5762, 5763]:
@@ -995,7 +996,7 @@ def _scan_mavlink_udp(timeout: float, logger: ChainLogger, abort: AbortHandler) 
                     "chain": "mavlink_chain",
                 })
                 logger.success("MAVLINK", f"Found MAVLink on port {port} from {addr[0]}:{addr[1]}")
-        except (socket.timeout, OSError):
+        except (TimeoutError, OSError):
             pass
         finally:
             sock.close()
@@ -1005,8 +1006,8 @@ def _scan_mavlink_udp(timeout: float, logger: ChainLogger, abort: AbortHandler) 
 def _scan_passive_telemetry(sdr_args: str, timeout: float, logger: ChainLogger, abort: AbortHandler) -> list[dict[str, Any]]:
     """Quick passive telemetry scan on 2.4 GHz for CRSF/ELRS frames."""
     try:
-        import SoapySDR
         import numpy as np
+        import SoapySDR
     except ImportError:
         logger.warn("TELEMETRY", "SoapySDR/numpy not available — skipping passive telemetry scan")
         return []
@@ -1267,14 +1268,14 @@ def _exec_wifi_tello(target: dict[str, Any], action_name: str, details: dict[str
         try:
             resp, _ = sock.recvfrom(1024)
             sdk_resp = resp.decode("utf-8", errors="replace")
-        except socket.timeout:
+        except TimeoutError:
             sdk_resp = "(no response)"
 
         sock.sendto(sdk_cmd.encode(), (target_ip, tello_port))
         try:
             resp, _ = sock.recvfrom(1024)
             cmd_resp = resp.decode("utf-8", errors="replace")
-        except socket.timeout:
+        except TimeoutError:
             cmd_resp = "(no response)"
 
         return {
@@ -1325,8 +1326,12 @@ def _exec_wifi_parrot(target: dict[str, Any], action_name: str, details: dict[st
 def _exec_mavlink(target: dict[str, Any], action_name: str, details: dict[str, Any]) -> dict[str, Any]:
     """Execute MAVLink commands (injection or sniff)."""
     from exploit_chains.mavlink_chain import (
-        build_command_long, sniff_mavlink,
-        MAV_CMD_ARM_DISARM, MAV_CMD_NAV_LAND, MAV_CMD_NAV_RTL, MAV_CMD_REBOOT,
+        MAV_CMD_ARM_DISARM,
+        MAV_CMD_NAV_LAND,
+        MAV_CMD_NAV_RTL,
+        MAV_CMD_REBOOT,
+        build_command_long,
+        sniff_mavlink,
     )
 
     source = details.get("source", "")
@@ -1401,8 +1406,11 @@ def _exec_mavlink(target: dict[str, Any], action_name: str, details: dict[str, A
 def _exec_elrs(target: dict[str, Any], action_name: str, details: dict[str, Any]) -> dict[str, Any]:
     """Execute ELRS exploit chain actions."""
     from exploit_chains.elrs_chain import (
-        phrase_to_uid, uid_to_fhss_seed, uid_to_crc_init,
-        compute_fhss_sequence, forge_takeover_packets,
+        compute_fhss_sequence,
+        forge_takeover_packets,
+        phrase_to_uid,
+        uid_to_crc_init,
+        uid_to_fhss_seed,
     )
 
     phrase = details.get("binding_phrase")
@@ -1488,6 +1496,7 @@ def _exec_ble(target: dict[str, Any], action_name: str, details: dict[str, Any])
 
         try:
             import asyncio
+
             from bleak import BleakClient
 
             async def enumerate_services():
@@ -1782,7 +1791,8 @@ def api_chain2_simulate() -> tuple[Response, int] | Response:
     state = get_dashboard_state()
     try:
         from exploit_chains.wifi_mavlink_chain import (
-            ATTACK_COMMANDS, build_command_long,
+            ATTACK_COMMANDS,
+            build_command_long,
         )
     except ImportError:
         return jsonify({"error": "Chain 2 module not found"}), 500

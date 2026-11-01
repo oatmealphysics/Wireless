@@ -3,11 +3,10 @@
 import argparse
 import hashlib
 import importlib.util
-from pathlib import Path
 import struct
 import tempfile
 import unittest
-
+from pathlib import Path
 
 TOOLS = Path(__file__).resolve().parents[1]
 

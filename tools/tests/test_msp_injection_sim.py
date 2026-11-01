@@ -1,9 +1,8 @@
 """Offline tests for msp-injection-sim.py MSP/CRSF/OTA framing logic."""
 
 import importlib.util
-from pathlib import Path
 import unittest
-
+from pathlib import Path
 
 TOOL = Path(__file__).resolve().parents[1] / "msp-injection-sim.py"
 

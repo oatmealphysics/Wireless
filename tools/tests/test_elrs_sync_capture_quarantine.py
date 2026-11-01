@@ -1,10 +1,9 @@
 """The unvalidated SYNC prototype must not claim packet recovery."""
 
-from pathlib import Path
 import subprocess
 import sys
 import unittest
-
+from pathlib import Path
 
 TOOL = Path(__file__).resolve().parents[1] / "elrs-sync-capture.py"
 
