@@ -202,63 +202,58 @@ class MavlinkPacket:
     def rebuild_with_link_id(self, new_link_id, secret_key=None):
         if not self.signed:
             return self.raw
+        if secret_key is None:
+            raise ValueError(
+                "secret_key is required to modify link_id on a signed packet — "
+                "the signature covers link_id, so changing it without re-signing "
+                "produces an invalid packet the receiver will drop"
+            )
 
         crc_offset = 10 + self.payload_len
         crc_bytes = self.raw[crc_offset:crc_offset + 2]
         ts_bytes = self.timestamp.to_bytes(6, "little")
 
-        if secret_key is not None:
-            header_for_sig = bytearray(self.raw[0:10])
-            header_for_sig[2] = header_for_sig[2] & ~MAVLINK_IFLAG_SIGNED
-            h = hashlib.sha256()
-            h.update(secret_key)
-            h.update(header_for_sig)
-            h.update(self.payload)
-            h.update(crc_bytes)
-            h.update(bytes([new_link_id]))
-            h.update(ts_bytes)
-            new_sig = h.digest()[:6]
-            result = bytearray(self.raw[:crc_offset + 2])
-            result.append(new_link_id)
-            result.extend(ts_bytes)
-            result.extend(new_sig)
-            return bytes(result)
-        else:
-            # No key: strip signature — old sig is invalid after field change.
-            # Return an unsigned packet so caller knows it won't authenticate.
-            result = bytearray(self.raw[:crc_offset + 2])
-            result[2] = result[2] & ~MAVLINK_IFLAG_SIGNED
-            return bytes(result)
+        h = hashlib.sha256()
+        h.update(secret_key)
+        h.update(self.raw[0:10])
+        h.update(self.payload)
+        h.update(crc_bytes)
+        h.update(bytes([new_link_id]))
+        h.update(ts_bytes)
+        new_sig = h.digest()[:6]
+        result = bytearray(self.raw[:crc_offset + 2])
+        result.append(new_link_id)
+        result.extend(ts_bytes)
+        result.extend(new_sig)
+        return bytes(result)
 
     def rebuild_with_timestamp(self, new_timestamp, secret_key=None):
         if not self.signed:
             return self.raw
+        if secret_key is None:
+            raise ValueError(
+                "secret_key is required to modify timestamp on a signed packet — "
+                "the signature covers the timestamp, so changing it without "
+                "re-signing produces an invalid packet the receiver will drop"
+            )
 
         crc_offset = 10 + self.payload_len
         crc_bytes = self.raw[crc_offset:crc_offset + 2]
         ts_bytes = new_timestamp.to_bytes(6, "little")
 
-        if secret_key is not None:
-            header_for_sig = bytearray(self.raw[0:10])
-            header_for_sig[2] = header_for_sig[2] & ~MAVLINK_IFLAG_SIGNED
-            h = hashlib.sha256()
-            h.update(secret_key)
-            h.update(header_for_sig)
-            h.update(self.payload)
-            h.update(crc_bytes)
-            h.update(bytes([self.link_id]))
-            h.update(ts_bytes)
-            new_sig = h.digest()[:6]
-            result = bytearray(self.raw[:crc_offset + 2])
-            result.append(self.link_id)
-            result.extend(ts_bytes)
-            result.extend(new_sig)
-            return bytes(result)
-        else:
-            # No key: strip signature — old sig is invalid after field change.
-            result = bytearray(self.raw[:crc_offset + 2])
-            result[2] = result[2] & ~MAVLINK_IFLAG_SIGNED
-            return bytes(result)
+        h = hashlib.sha256()
+        h.update(secret_key)
+        h.update(self.raw[0:10])
+        h.update(self.payload)
+        h.update(crc_bytes)
+        h.update(bytes([self.link_id]))
+        h.update(ts_bytes)
+        new_sig = h.digest()[:6]
+        result = bytearray(self.raw[:crc_offset + 2])
+        result.append(self.link_id)
+        result.extend(ts_bytes)
+        result.extend(new_sig)
+        return bytes(result)
 
 
 class PacketReader:
@@ -525,6 +520,25 @@ def cmd_replay(args):
         print(f"\nRe-run with --execute to send these packets.")
         return
 
+    # Parse signing key if provided
+    secret_key = None
+    if args.secret_key:
+        try:
+            secret_key = bytes.fromhex(args.secret_key)
+        except ValueError:
+            log("ERROR: --secret-key must be a hex string")
+            sys.exit(1)
+        if len(secret_key) != 32:
+            log(f"ERROR: signing key must be 32 bytes, got {len(secret_key)}")
+            sys.exit(1)
+
+    if (args.cross_link is not None or args.timestamp_offset) and secret_key is None:
+        log("ERROR: --cross-link and --timestamp-offset modify signed fields "
+            "and require --secret-key to re-sign the packet.")
+        log("Without the key, use pure replay (no --cross-link / --timestamp-offset) "
+            "to resend captured packets unmodified.")
+        sys.exit(1)
+
     # Live replay
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sent = 0
@@ -532,9 +546,7 @@ def cmd_replay(args):
 
     log(f"Replaying {len(packets)} packets to {target_host}:{target_port}")
     if args.cross_link is not None:
-        log(f"Cross-link replay: link_id -> {args.cross_link}")
-        log("WARNING: no signing key — mutated packets are sent UNSIGNED "
-            "(signature stripped). A receiver requiring valid signatures will reject them.")
+        log(f"Cross-link replay: link_id -> {args.cross_link} (re-signing with provided key)")
 
     for p in packets:
         raw = bytes.fromhex(p["raw_hex"])
@@ -544,13 +556,13 @@ def cmd_replay(args):
             continue
 
         if args.cross_link is not None and pkt.signed:
-            send_bytes = pkt.rebuild_with_link_id(args.cross_link)
+            send_bytes = pkt.rebuild_with_link_id(args.cross_link, secret_key)
         elif args.timestamp_offset and pkt.signed and pkt.timestamp is not None:
             offset_ticks = int(args.timestamp_offset * 100000)
             new_ts = pkt.timestamp + offset_ticks
             if new_ts < 0:
                 new_ts = 0
-            send_bytes = pkt.rebuild_with_timestamp(new_ts)
+            send_bytes = pkt.rebuild_with_timestamp(new_ts, secret_key)
         else:
             send_bytes = raw
 
@@ -732,6 +744,9 @@ def main():
     p_rep.add_argument("--msg-filter", help="Comma-separated message names to replay")
     p_rep.add_argument("--delay", type=float, default=10,
                        help="Delay between packets in ms (default: 10)")
+    p_rep.add_argument("--secret-key", metavar="HEX",
+                       help="32-byte signing key (hex). Required for --cross-link "
+                            "and --timestamp-offset on signed packets.")
     p_rep.add_argument("--execute", action="store_true",
                        help="Actually send packets (default: dry-run)")
 

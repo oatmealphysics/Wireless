@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from elrs_core.ota import build_rcdata_std, build_sync, decode_full, decode_std
+from elrs_core.v3_compat import uid_crc_init, DEFAULT_OTA_VERSION
 
 
 # ELRS packet types
@@ -271,9 +272,9 @@ class ElrsTracker:
         return summary
 
 
-def simulate_traffic(tracker, json_mode, duration=0):
+def simulate_traffic(tracker, json_mode, duration=0, ota_version=DEFAULT_OTA_VERSION):
     """Generate simulated ELRS traffic for testing."""
-    log("SIMULATION MODE — generating fake ELRS traffic")
+    log(f"SIMULATION MODE — generating fake ELRS traffic (OTA v{ota_version})")
 
     sim_txs = [
         {"phrase": "iloveflying", "rate_hz": 2.0},
@@ -296,8 +297,7 @@ def simulate_traffic(tracker, json_mode, duration=0):
                 rssi = random.randint(-90, -40)
                 snr = random.uniform(5.0, 15.0)
 
-                # Generate a structurally valid v3 standard SYNC packet.
-                crc_init = ((uid[4] << 8) | uid[5]) ^ 3
+                crc_init = uid_crc_init(uid, ota_version)
                 sync_raw = build_sync(
                     False,
                     fhss_index=random.randint(0, 239),
@@ -383,6 +383,12 @@ def main():
                         help='Simulation duration in seconds (0 = infinite)')
     parser.add_argument('--json', action='store_true',
                         help='Output JSON lines')
+    parser.add_argument('--ota-version', type=int, default=DEFAULT_OTA_VERSION,
+                        choices=[3, 4],
+                        help=f'ELRS OTA version for CRC computation '
+                             f'(default: {DEFAULT_OTA_VERSION}; '
+                             f'3 = Betaflight 4.4.2 / ELRS 3.x, '
+                             f'4 = ELRS 4.x)')
     parser.add_argument('--summary', action='store_true',
                         help='Print summary at end')
     args = parser.parse_args()
@@ -409,7 +415,8 @@ def main():
     tracker = ElrsTracker(rainbow)
 
     if args.simulate:
-        summary = simulate_traffic(tracker, args.json, args.sim_duration)
+        summary = simulate_traffic(tracker, args.json, args.sim_duration,
+                                   ota_version=args.ota_version)
     elif args.input:
         summary = analyze_packet_log(args.input, tracker, args.json)
     else:
