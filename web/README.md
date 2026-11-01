@@ -82,7 +82,7 @@ python3 web/app.py --wifi-iface wlan0 --ble-iface hci0 --sdr-args "driver=uhd"
 ### Static assets and browser policy
 
 The HTML shell loads the versioned same-origin assets
-`/static/dashboard.v1.css` and `/static/dashboard.v1.js`. They are cacheable for
+`/static/dashboard.v2.css` and `/static/dashboard.v2.js`. They are cacheable for
 one year, so a content change must also bump the filename and the two template
 references. The template and generated UI fragments do not depend on inline
 scripts, style blocks, `style=` attributes, or inline event handlers.

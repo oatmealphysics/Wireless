@@ -308,13 +308,11 @@ The companion research pass is recorded in
 [`research/defensive-attack-surface-expansion-2026-10-29.md`](research/defensive-attack-surface-expansion-2026-10-29.md).
 It adds evidence-gated pathways without activating any research implementation.
 
-## NOW
-
 ### R6 — Finish selected UX reliability gaps
 
 **Owner:** Claude implementation after the R5 handoff; Codex browser/integration review
 **Depends on:** R5 for theme work
-**Status:** NOW
+**Status:** DONE
 
 In order:
 
@@ -325,12 +323,24 @@ In order:
    not add a competing manual reconnect loop without a failing test.
 3. Add a dark/light theme after asset extraction.
 
-## NEXT
+Evidence (2026-11-01): Static assets bumped from v1 to v2. `dashboard.v2.js`
+hydrates the log viewer from `/api/log` on init, adds a Copy button that writes
+all log entries to clipboard, adds a drag-to-resize handle on the log viewer
+body with height persisted in `localStorage`, shows a persistent SSE
+connection-state banner with Retry button on disconnect (hidden on reconnect),
+and adds a dark/light theme toggle persisting preference in `localStorage` with
+`data-theme` attribute on `<html>`. `dashboard.v2.css` provides light-mode
+defaults with dark mode via `prefers-color-scheme` media query (guarded by
+`:root:not([data-theme="light"])`) and explicit `data-theme="dark"` selector.
+`index.html` updated with SSE banner element, theme toggle button, resize
+handle, and Copy button — no inline handlers or style attributes. All 43 API
+route tests, 53 frontend contract tests, and project validator pass locally.
 
 ### R7 — Incremental quality gates
 
-**Owner:** Codex configuration; Claude cleanup/review
+**Owner:** Claude implementation
 **Depends on:** current Ubuntu/Windows Python 3.10/3.12 matrix green
+**Status:** DONE
 
 - Add Python 3.13 and fix compatibility issues; do not skip failures merely to
   turn CI green.
@@ -338,6 +348,18 @@ In order:
   modules, then ratchet scope.
 - Exclude vendored/generated/archive material. Do not blanket-format the
   repository or install optional hardware stacks in offline validator jobs.
+
+Evidence (2026-11-01): Python 3.13 added to both CI matrix jobs (6-cell:
+Ubuntu/Windows x 3.10/3.12/3.13). New `lint` job runs pinned Ruff 0.8.6 on
+`web/app.py`, `tools/exploit_chains/common.py`, and `web/tests/` with E402
+per-file ignores (sys.path manipulation) and E501 ignored repo-wide.
+`ruff.toml` added. Unused imports removed from `web/app.py` (os),
+`tools/exploit_chains/common.py` (time), `web/tests/test_api_routes.py` (time),
+and `web/app.py` (parse_mavlink_packet duplicate import). New `typecheck` job
+runs pinned mypy 1.14.1 on `tools/exploit_chains/common.py` with
+`--follow-imports=skip`. `web/app.py` mypy deferred due to internal mypy crash
+on complex Flask app serialization; to be ratcheted when mypy upstream fix
+lands. All local checks pass.
 
 ## GATED research pathway queue
 

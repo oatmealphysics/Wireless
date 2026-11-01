@@ -20,7 +20,6 @@ import argparse
 from copy import deepcopy
 from dataclasses import dataclass, field
 import json
-import os
 import socket
 import subprocess
 import sys
@@ -1326,7 +1325,7 @@ def _exec_wifi_parrot(target: dict[str, Any], action_name: str, details: dict[st
 def _exec_mavlink(target: dict[str, Any], action_name: str, details: dict[str, Any]) -> dict[str, Any]:
     """Execute MAVLink commands (injection or sniff)."""
     from exploit_chains.mavlink_chain import (
-        build_command_long, sniff_mavlink, parse_mavlink_packet,
+        build_command_long, sniff_mavlink,
         MAV_CMD_ARM_DISARM, MAV_CMD_NAV_LAND, MAV_CMD_NAV_RTL, MAV_CMD_REBOOT,
     )
 

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Drone Scanner</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.v1.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='dashboard.v2.css') }}">
 </head>
 <body>
 
@@ -20,11 +20,17 @@
   </div>
 </div>
 
+<div class="sse-banner" id="sse-banner" role="alert">
+  <span>Live updates disconnected</span>
+  <button type="button" id="sse-retry-btn">Retry</button>
+</div>
+
 <div class="toolbar">
   <button type="button" class="btn btn-primary" id="btn-scan">Scan</button>
   <button type="button" class="btn" id="btn-clear">Clear</button>
   <span class="toolbar-spacer"></span>
   <span id="mode-badge" class="mode-badge"></span>
+  <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle theme"><span class="theme-toggle-icon"></span></button>
   <div class="hw-widget-wrap" id="hw-widget-wrap">
     <button type="button" class="hw-widget" id="hw-widget" aria-expanded="false" aria-controls="hw-popover">
       <span class="hw-widget-title">HW</span>
@@ -79,10 +85,12 @@
       Event Log <span class="log-viewer-count" id="log-viewer-count">0</span>
     </span>
     <span class="log-viewer-actions">
+      <button type="button" id="log-copy-btn">Copy</button>
       <button type="button" id="log-clear-btn">Clear</button>
       <span class="log-viewer-toggle" aria-hidden="true">&#9650;</span>
     </span>
   </div>
+  <div class="log-viewer-resize" id="log-viewer-resize" aria-hidden="true"></div>
   <div class="log-viewer-body" id="log-viewer-body" role="log" aria-live="polite" aria-relevant="additions"></div>
 </div>
 
@@ -117,6 +125,6 @@
 
 <div class="event-feed" id="event-feed" role="log" aria-live="polite" aria-relevant="additions"></div>
 
-<script src="{{ url_for('static', filename='dashboard.v1.js') }}" defer></script>
+<script src="{{ url_for('static', filename='dashboard.v2.js') }}" defer></script>
 </body>
 </html>

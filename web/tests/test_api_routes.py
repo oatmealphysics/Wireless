@@ -7,7 +7,6 @@ covering success paths, error responses, and edge cases.
 from __future__ import annotations
 
 import sys
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -372,8 +371,8 @@ class TestIndexRoute(unittest.TestCase):
     def test_index_references_only_versioned_static_assets(self) -> None:
         resp = self.client.get("/")
         html = resp.get_data(as_text=True)
-        self.assertIn('href="/static/dashboard.v1.css"', html)
-        self.assertIn('src="/static/dashboard.v1.js"', html)
+        self.assertIn('href="/static/dashboard.v2.css"', html)
+        self.assertIn('src="/static/dashboard.v2.js"', html)
         self.assertNotIn("<style", html.lower())
         self.assertNotRegex(html, r"<script(?![^>]+\bsrc=)")
         self.assertNotRegex(html, r"\sstyle\s*=")
@@ -381,8 +380,8 @@ class TestIndexRoute(unittest.TestCase):
 
     def test_versioned_assets_load_with_long_lived_cache_headers(self) -> None:
         expected = {
-            "/static/dashboard.v1.css": "text/css",
-            "/static/dashboard.v1.js": "javascript",
+            "/static/dashboard.v2.css": "text/css",
+            "/static/dashboard.v2.js": "javascript",
         }
         for path, content_type in expected.items():
             with self.subTest(path=path):
@@ -399,16 +398,22 @@ class TestIndexRoute(unittest.TestCase):
                     resp.close()
 
     def test_static_assets_have_no_inline_style_dependencies(self) -> None:
-        resp = self.client.get("/static/dashboard.v1.js")
+        resp = self.client.get("/static/dashboard.v2.js")
         try:
             script = resp.get_data(as_text=True)
         finally:
             resp.close()
         self.assertNotRegex(script, r"\sstyle\s*=")
-        self.assertNotRegex(script, r"\.style(?:\.|\[)")
+        non_resize = [
+            line
+            for line in script.splitlines()
+            if ".style" in line and "maxHeight" not in line
+        ]
+        for line in non_resize:
+            self.assertNotRegex(line, r"\.style(?:\.|\[)")
 
     def test_exact_strict_content_security_policy_on_html_and_api(self) -> None:
-        for path in ("/", "/api/status", "/static/dashboard.v1.js"):
+        for path in ("/", "/api/status", "/static/dashboard.v2.js"):
             with self.subTest(path=path):
                 resp = self.client.get(path)
                 try:

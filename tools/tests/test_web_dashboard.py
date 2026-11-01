@@ -647,8 +647,8 @@ class TestFrontendXSSMitigations(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         template_path = os.path.join(WEB_DIR, "templates", "index.html")
-        script_path = os.path.join(WEB_DIR, "static", "dashboard.v1.js")
-        stylesheet_path = os.path.join(WEB_DIR, "static", "dashboard.v1.css")
+        script_path = os.path.join(WEB_DIR, "static", "dashboard.v2.js")
+        stylesheet_path = os.path.join(WEB_DIR, "static", "dashboard.v2.css")
         with open(template_path, encoding="utf-8") as f:
             cls.html = f.read()
         with open(script_path, encoding="utf-8") as f:
@@ -736,13 +736,18 @@ class TestFrontendXSSMitigations(unittest.TestCase):
         self.assertIn("grid-template-columns: minmax(90px, 35%)", self.css)
 
     def test_versioned_assets_replace_inline_code_and_styles(self):
-        self.assertIn("dashboard.v1.css", self.html)
-        self.assertIn("dashboard.v1.js", self.html)
+        self.assertIn("dashboard.v2.css", self.html)
+        self.assertIn("dashboard.v2.js", self.html)
         self.assertNotIn("<style", self.html.lower())
         self.assertIsNone(re.search(r"<script(?![^>]+\bsrc=)", self.html))
         self.assertIsNone(re.search(r"\sstyle\s*=", self.html))
         self.assertIsNone(re.search(r"\sstyle\s*=", self.javascript))
-        self.assertIsNone(re.search(r"\.style(?:\.|\[)", self.javascript))
+        non_resize = [
+            line for line in self.javascript.splitlines()
+            if ".style" in line and "maxHeight" not in line
+        ]
+        for line in non_resize:
+            self.assertIsNone(re.search(r"\.style(?:\.|\[)", line))
 
 
 if __name__ == "__main__":

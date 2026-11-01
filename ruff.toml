@@ -1,0 +1,8 @@
+[lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+[lint.per-file-ignores]
+"web/app.py" = ["E402"]
+"web/tests/*.py" = ["E402"]
+"tools/exploit_chains/*.py" = ["E402"]

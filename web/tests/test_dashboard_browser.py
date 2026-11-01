@@ -270,7 +270,7 @@ class DashboardBrowserTests(unittest.TestCase):
         )
         self.assertEqual(
             set(loaded_assets),
-            {"/static/dashboard.v1.css", "/static/dashboard.v1.js"},
+            {"/static/dashboard.v2.css", "/static/dashboard.v2.js"},
         )
         self.assertEqual(self.page_errors, [])
         self.assertEqual(self.console_errors, [])
