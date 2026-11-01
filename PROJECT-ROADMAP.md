@@ -486,6 +486,36 @@ proof on a sanitized fixture; (3) the Windows/Linux validation is not exercised
 here (no hosted CI in this environment). This groundwork does not activate the
 row, change its evidence target, or authorize any device/RF/serial work.
 
+#### RQ2 progress (andeds, 2026-11-01) — GATED, no active owner; groundwork only
+
+The known-answer conformance matrix groundwork is in place but the row
+**remains GATED** (no owner promotion recorded):
+
+- `tools/tests/test_elrs_ota_kat_matrix.py` (19 tests, SYNTHETIC/OFFLINE-TESTED)
+  is a systematic KAT matrix over packet type x size (std 8 / full 13) x
+  version (v3 / v4): documented packet-size constants, v4 and v3
+  build->decode round-trips (SYNC + RCDATA), CRC-rejection-on-corruption for
+  both sizes, the v3 UID-seed (XOR with 3) and FHSS sequence length
+  (rounds down to 240 for the 80-channel domain), the v3 sync channel
+  (freq_count//2 + 1 = 41, distinct from v4's 40), and v3/v4 divergence
+  (sync builds and CRC inits differ between versions).
+- The matrix is derived from the vendored `elrs_core` (itself validated
+  against the pinned ExpressLRS / Betaflight 4.4.2 source) and checked for
+  internal consistency. It records a known build-path quirk: the
+  `pack_channels_4x10`/`build_rcdata_std` channel expansion is not a strict
+  CRSF round-trip, while the decode path the passive pipeline uses is
+  validated (the 54 CRC-valid frame result still reproduces).
+
+Remaining before RQ2 can be called DONE (and it is not, pending promotion):
+(1) tag-pin the known answers to the four ELRS source refs named in the row
+(3.3.2 / 4.0.0 OTA + FHSS) rather than the vendored re-implementation; (2)
+classify the tracked captures with confidence + provenance
+(`PASSIVE-CAPTURE-VALIDATED` only after independent implementation
+agreement); (3) make the build path a strict channel inverse (separate, low
+risk, does not touch the validated decode path). This groundwork does not
+activate the row, change its evidence target, or authorize any
+receiver-acceptance, transmitter-identity, or RF work.
+
 ### Hardware queue
 
 - **SX1280 receive-only CAD/coexistence profiler:** model thresholds offline;
