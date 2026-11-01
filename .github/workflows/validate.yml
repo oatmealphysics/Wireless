@@ -1,7 +1,10 @@
 name: Offline project validation
 on:
-  push:
-  pull_request:
+  # Temporarily disabled push/pull_request triggers — Actions minutes
+  # exhausted for the month. Re-enable after Nov 1 reset.
+  # push:
+  # pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
