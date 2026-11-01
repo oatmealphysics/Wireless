@@ -51,8 +51,8 @@ jobs:
       - name: Rainbow table schema and loader patterns
         run: python -B -m unittest tools.tests.test_rainbow_table_schema -v
 
-  lint:
-    name: Ruff lint check
+  lint-full:
+    name: Ruff lint check (full tree)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

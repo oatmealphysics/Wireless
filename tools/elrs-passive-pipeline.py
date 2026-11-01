@@ -250,6 +250,44 @@ def file_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def read_sigmf_timebase(capture_path: Path) -> dict | None:
+    """Read the standardized timebase from a SigMF sidecar, if present (RQ1).
+
+    ``elrs-sigmf-standardize.py`` writes a ``<name>.sigmf-meta`` next to each
+    tracked capture recording the clock/timebase provenance. When one exists,
+    the pipeline can use it in place of explicit ``--sample-rate`` /
+    ``--center-hz`` flags, and can populate ``capture_sha256`` from the
+    sidecar's recorded original-file hash (falling back to a live hash if the
+    sidecar lacks it). Returns ``{"sample_rate", "center_hz", "format",
+    "sha256"}`` or ``None`` when no valid sidecar is found.
+
+    This is read-only: it never modifies the capture or the sidecar.
+    """
+    sidecar = capture_path.with_suffix(capture_path.suffix + ".sigmf-meta")
+    if not sidecar.is_file():
+        return None
+    try:
+        data = json.loads(sidecar.read_text(encoding="utf-8"))
+        g = data["global"]
+        fmt = g["core:datatype"]
+        if fmt not in SAMPLE_FORMATS:
+            return None
+        sample_rate = int(g["core:sample_rate"])
+        center_hz = int(g["core:freq_center"])
+        if sample_rate <= 0 or center_hz <= 0:
+            return None
+        return {
+            "sample_rate": sample_rate,
+            "center_hz": center_hz,
+            "format": fmt,
+            "sha256": g.get("provenance:original_sha256", ""),
+        }
+    except (json.JSONDecodeError, KeyError, ValueError, TypeError, OSError):
+        # A corrupt/non-SigMF sidecar must not crash the pipeline; fall back
+        # to the explicit-flags path.
+        return None
+
+
 # ---------------------------------------------------------------------------
 # ELRS CRC validation
 # ---------------------------------------------------------------------------
@@ -1043,14 +1081,23 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result: PipelineResult | None = None
         if args.capture:
-            if not args.sample_rate or not args.center_hz:
-                parser.error("--sample-rate and --center-hz required with --capture")
+            # RQ1: if a SigMF sidecar exists, read the standardized timebase
+            # from it instead of requiring --sample-rate/--center-hz.
+            sigmf = read_sigmf_timebase(args.capture)
+            sample_rate = args.sample_rate or (sigmf or {}).get("sample_rate")
+            center_hz = args.center_hz or (sigmf or {}).get("center_hz")
+            fmt = sigmf["format"] if (sigmf and not args.format) else args.format
+            if not sample_rate or not center_hz:
+                parser.error(
+                    "--sample-rate and --center-hz required with --capture "
+                    "(or a .sigmf-meta sidecar next to the capture)"
+                )
             print(f"Processing {args.capture}...", file=sys.stderr)
             result = run_pipeline(
                 capture_path=args.capture,
-                sample_rate=args.sample_rate,
-                center_freq_hz=args.center_hz,
-                fmt=args.format,
+                sample_rate=sample_rate,
+                center_freq_hz=center_hz,
+                fmt=fmt,
                 uid=uid,
                 ota_version=args.ota_version,
                 channels=channels,

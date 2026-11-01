@@ -349,17 +349,27 @@ route tests, 53 frontend contract tests, and project validator pass locally.
 - Exclude vendored/generated/archive material. Do not blanket-format the
   repository or install optional hardware stacks in offline validator jobs.
 
-Evidence (2026-11-01): Python 3.13 added to both CI matrix jobs (6-cell:
-Ubuntu/Windows x 3.10/3.12/3.13). New `lint` job runs pinned Ruff 0.8.6 on
-`web/app.py`, `tools/exploit_chains/common.py`, and `web/tests/` with E402
-per-file ignores (sys.path manipulation) and E501 ignored repo-wide.
-`ruff.toml` added. Unused imports removed from `web/app.py` (os),
+Evidence (2026-11-01): Ruff and mypy quality gates added. `ruff.toml` added
+with E402 per-file ignores (sys.path manipulation) and E501 ignored repo-wide.
+Unused imports removed from `web/app.py` (os),
 `tools/exploit_chains/common.py` (time), `web/tests/test_api_routes.py` (time),
-and `web/app.py` (parse_mavlink_packet duplicate import). New `typecheck` job
+and `web/app.py` (parse_mavlink_packet duplicate import). A `typecheck` job
 runs pinned mypy 1.14.1 on `tools/exploit_chains/common.py` with
-`--follow-imports=skip`. `web/app.py` mypy deferred due to internal mypy crash
-on complex Flask app serialization; to be ratcheted when mypy upstream fix
-lands. All local checks pass.
+`--follow-imports=skip`. `web/app.py` mypy deferred due to an internal mypy
+crash on complex Flask app serialization; to be ratcheted when the mypy
+upstream fix lands. All local checks pass.
+
+Correction (2026-11-01, andeds review): the R7 evidence above overstated the
+CI matrix. Python 3.13 was added to the matrix in `e0a8ea2` (#65) but commit
+`5849922` (#68) then reduced the hosted matrix back to Python 3.10/3.12 on
+Ubuntu-only to fit the free-tier Actions quota, and the Windows cells were
+dropped. The live workflow therefore runs a 2-cell matrix, not the 6-cell
+Ubuntu/Windows x 3.10/3.12/3.13 the evidence text described. The Ruff 0.8.6
+`lint` job and a full-tree Ruff 0.11.12 `lint-full` job both exist; the two
+originally shared the `lint:` key, so the first was silently dropped by YAML
+de-duplication — `lint-full` was renamed to restore it. Python 3.13 coverage
+is not currently exercised in hosted CI; restoring it requires an owner
+decision on Actions-minute budget.
 
 ## GATED research pathway queue
 
@@ -445,6 +455,36 @@ with RQ15 for the current Betaflight target or RQ1 for the passive-capture
 family. RQ6 and RQ20 are the next reusable evidence gates; RQ17 follows only if
 the ESC identity is proven. RQ9-RQ14 and RQ16/RQ18/RQ19/RQ21/RQ22 are useful
 conditional expansion paths, not reasons to delay current work.
+
+#### RQ1 progress (andeds, 2026-11-01) — GATED, no active owner; groundwork only
+
+The SigMF standardization groundwork is in place but the row **remains GATED**
+(no owner promotion recorded):
+
+- `tools/elrs-sigmf-standardize.py` writes a SigMF v1.0.0 `.sigmf-meta`
+  sidecar for each tracked `captures/*.iq`, recording `core:datatype`
+  (`sc16le`), `core:sample_rate` (4 Msps), `core:sample_size` (derived from
+  the file size), `core:freq_center` (2441.000 MHz), the capture device, and
+  the original file SHA-256 as `provenance:original_sha256`. The sidecar is
+  flagged `provenance:private: true`. The Oct 16 capture carries the
+  README's documented creation-time anchor, explicitly labelled an estimate of
+  RF sample zero (not an instrument-synchronized timestamp).
+- `tools/tests/test_elrs_sigmf_standardize.py` (15 tests, synthetic sc16le
+  fixture, no private capture) verifies the record invariants, that the
+  provenance SHA-256 matches an independent hash, that the IQ file is left
+  byte-for-byte untouched, idempotency, force-overwrite, non-sc16le rejection,
+  and the `--check` validator accepting a good sidecar and rejecting a
+  tampered one.
+- Both sidecars are generated and pass `--check`; the two `.iq` files still
+  verify against `captures/SHA256SUMS.txt`.
+
+Remaining before RQ1 can be called DONE (and it is not, pending promotion):
+(1) wire the sidecar into `elrs-passive-pipeline.py` so its output stops
+emitting `sample_rate: 0` / `capture_sha256: ""` and instead reads the
+standardized timebase; (2) add the sample-value-equivalence / declared-tolerance
+proof on a sanitized fixture; (3) the Windows/Linux validation is not exercised
+here (no hosted CI in this environment). This groundwork does not activate the
+row, change its evidence target, or authorize any device/RF/serial work.
 
 ### Hardware queue
 

@@ -18,10 +18,21 @@ import sys
 from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parent.parent
+
+# scapy is an optional dependency (used only for pcap I/O in the decoder).
+# Skip the whole module cleanly when it is absent so unittest discovery does
+# not crash on the import — matching the project's optional-dep skip pattern.
+try:
+    import scapy  # noqa: F401
+    _HAS_SCAPY = True
+except ImportError:
+    _HAS_SCAPY = False
+
 spec = importlib.util.spec_from_file_location("wifi_pcap_decoder", TOOLS_DIR / "wifi-pcap-decoder.py")
 mod = importlib.util.module_from_spec(spec)
 sys.modules["wifi_pcap_decoder"] = mod
-spec.loader.exec_module(mod)
+if _HAS_SCAPY:
+    spec.loader.exec_module(mod)
 
 
 class TestOUILookup:
