@@ -84,6 +84,13 @@ def sync_bytes_hex(uid: bytes) -> str:
 # Radiomaster, Jumper, GEPRC, Flywoo, Diatone, SpeedyBee, Foxeer, Matek,
 # TBS), common user patterns, hacker/CTF culture, and password lists.
 BUILTIN_PHRASES = [
+    # ===== Empty / no binding phrase =====
+    # When a user leaves the binding phrase field blank in the ELRS
+    # Configurator, or flashes without setting one at all, the firmware
+    # hashes an empty string. This is surprisingly common on pre-bound
+    # kits and RTF drones where the user never touches the configuration.
+    "",
+
     # ===== ELRS documentation defaults and examples =====
     "default ExpressLRS binding phrase",
     "expresslrs",
