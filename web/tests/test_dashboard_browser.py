@@ -23,8 +23,16 @@ from unittest.mock import patch
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-from playwright.sync_api import expect, sync_playwright
-from werkzeug.serving import WSGIRequestHandler, make_server
+# Optional deps: playwright (browser driver) and werkzeug (WSGI server) are only
+# available in the browser-test CI environment. Guard the imports and the
+# module-level app load so `unittest discover` on a minimal install (no
+# playwright/werkzeug/flask) skips this file cleanly instead of crashing.
+try:
+    from playwright.sync_api import expect, sync_playwright
+    from werkzeug.serving import WSGIRequestHandler, make_server
+    _BROWSER_DEPS_AVAILABLE = True
+except ModuleNotFoundError:  # pragma: no cover - exercised on minimal installs
+    _BROWSER_DEPS_AVAILABLE = False
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WEB_DIR = REPO_ROOT / "web"
@@ -45,10 +53,13 @@ def _load_dashboard_module():
     return module
 
 
-web_app = _load_dashboard_module()
+if _BROWSER_DEPS_AVAILABLE:
+    web_app = _load_dashboard_module()
+else:  # pragma: no cover - minimal install
+    web_app = None
 
 
-class _QuietRequestHandler(WSGIRequestHandler):
+class _QuietRequestHandler(WSGIRequestHandler if _BROWSER_DEPS_AVAILABLE else object):
     """Keep successful browser-test requests out of unittest output."""
 
     def log_request(self, code="-", size="-"):
@@ -60,6 +71,12 @@ class DashboardBrowserTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        if not _BROWSER_DEPS_AVAILABLE:
+            # Minimal install (no playwright/werkzeug/flask): skip the whole
+            # class so `unittest discover` does not error on web_app=None.
+            raise unittest.SkipTest(
+                "browser-test deps (playwright/werkzeug/flask) not available"
+            )
         web_app.app.config.update(TESTING=True)
         state = web_app.get_dashboard_state(web_app.app)
         state.simulate_mode = True

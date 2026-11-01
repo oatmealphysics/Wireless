@@ -516,6 +516,64 @@ risk, does not touch the validated decode path). This groundwork does not
 activate the row, change its evidence target, or authorize any
 receiver-acceptance, transmitter-identity, or RF work.
 
+### Full-review findings and fixes (andeds, 2026-11-01)
+
+A full review of the GitHub update (113 commits, 267 files, +82,944 lines) was
+run: three parallel deep reviewers (ELRS core + passive decoder, exploit-chain
+orchestrators, web dashboard) plus independent self-verification. The headline
+research result reproduced exactly (54 CRC-valid frames across both ranked
+captures), all firmware/capture SHA-256 sums verify, and the CVE analyses are
+accurate and properly hedged. Defects found and **fixed** on this branch:
+
+**Safety (highest value):**
+- `cross_chain_orchestrator.py`: `--arm` was decorative — a bare
+  `... full` (no `--arm`) with no `--dry-run` reached live connect/probe/inject
+  branches because they only tested `state.dry_run`. Now
+  `state.dry_run = args.dry_run or not args.arm` (matches every other chain),
+  so a bare run is always a preview. Regression-locked by
+  `test_cross_chain_arm_gate.py` (5 tests).
+- `wifi_mavlink_chain.py`: the live evil-twin path imported the module but
+  called nothing, then reported `status:"started"` (false success). Now fails
+  closed with `status:"unimplemented"`.
+- `common.py require_arm`: the `getattr(args, "dry_run", True)` default was a
+  foot-gun (a Namespace lacking `dry_run` would allow TX). Now defaults to
+  `False` (fail closed).
+- `cross_chain_orchestrator.py` live inject stages reported unconditional
+  `SUCCESS` although the attack callees return `None` and can't signal
+  per-command success. Now report `ATTEMPTED` (commands sent); `StageStatus`
+  gained `ATTEMPTED`.
+
+**ELRS core (evidence-independent — the 54-frame result is unaffected):**
+- `elrs-passive-pipeline.py _rc_channels`: used `988 + raw10bit` (a wrong
+  affine). Now uses `uint10_to_crsf` — the firmware's exact inverse of
+  `CRSF_to_UINT10(constrain(ch,171,1811))`.
+- `elrs_core/ota.py decode_std` (8-byte hybrid path): the `<<1` unpack was
+  returned raw (doubled / not CRSF). Firmware
+  `UnpackChannelDataHybridCommon` applies `UINT10_to_CRSF(raw >> 1)`. Added
+  `expand_hybrid_channels` and used it in `decode_std`. The 13-byte full-res
+  path is distinct (its 10-bit fields span the full CRSF range) and was already
+  correct — left unchanged. Locked by `TestHybridVsFullChannelExpansion`.
+
+**Web dashboard (no P1 security holes; CSP strict and enforced, all DOM sinks
+escaped):**
+- `app.py`: `import importlib` → `import importlib.util` (the latter is not
+  guaranteed by the former); untyped `action` body field (list/dict → 500) now
+  rejected with 400; SSE `event:` field now newline-sanitized (latent
+  SSE-injection sink).
+
+**Test/provenance/CI (found in first pass, already committed):** missing
+`import tempfile`; scapy/wifi, pytest/playwright browser-test discovery
+crashes now guarded; `PROVENANCE.md` SHA-256s corrected for the ruff-cleaned
+`ota.py`/`fhss.py`; duplicate `lint:` CI job renamed to `lint-full`; R7
+evidence corrected.
+
+**Remaining (not fixed — larger scope, tracked):** orchestrator v3/v4 core
+mismatch on the default `--ota-version 3` RF preview (uses v4 core for a v3
+target); `mavlink_chain.sniff_mavlink` positional target parse (IndexError on
+IPv6 / no-port); duplicated MAVLink constants in `wifi_mavlink_chain.py`;
+elrs_chain `max_power_dbm` dead heuristic; default binding phrase
+`"iloveflying"` foot-gun in sim-only tools.
+
 ### Hardware queue
 
 - **SX1280 receive-only CAD/coexistence profiler:** model thresholds offline;

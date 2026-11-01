@@ -6,17 +6,13 @@ spanning packet type x packet size (std 8-byte / full 13-byte) x OTA version
 (v3 / v4). This is the RQ2 deliverable: "Generate tag-pinned known-answer
 matrices for packet sizes, SYNC fields, CRC, packet-rate, and FHSS semantics."
 
-Known quirk recorded during RQ2 (not a defect in the validated decode path):
-``pack_channels_4x10`` treats its input as raw 10-bit values (``s & 0x3FF``),
-while ``build_rcdata_std`` pre-converts CRSF values with ``crsf_to_uint10``
-before calling it, and ``unpack_channels_4x10`` left-shifts by 1. So the
-build-path channel expansion is not a strict CRSF round-trip. The *decode*
-path (``decode_std`` -> ``unpack_channels_4x10``) is the one the passive
-pipeline uses to recover the 54 CRC-valid frames, and that path is validated;
-this KAT therefore asserts the stable shape (4 channels, type, arm/switch
-fields) and CRC rejection rather than an exact build->decode channel equality.
-A future RQ pass can make the build path a strict inverse without touching the
-validated decode path.
+Known quirk resolved during RQ2: ``decode_std`` (the 8-byte hybrid path) now
+expands the unpacked 10-bit channel fields via ``expand_hybrid_channels``
+(firmware ``UnpackChannelDataHybridCommon``: ``UINT10_to_CRSF(raw >> 1)``),
+so build->decode CRSF round-trips to the 10-bit quantized value. The 13-byte
+full-res path is distinct: its 10-bit fields cover the entire CRSF range and
+the ``<<1`` unpack IS the complete decode (no re-expansion), which
+``decode_full`` already does. See ``TestHybridVsFullChannelExpansion``.
 
 Evidence target: **SYNTHETIC/OFFLINE-TESTED.** All inputs are deterministic
 constants; no capture, UID, or device is involved. The expected byte layouts
@@ -146,17 +142,20 @@ class TestV4RoundTripMatrix(unittest.TestCase):
         self.assertEqual(pkt.sync.fhss_index, FHSS_INDEX)
 
     def test_v4_std_rcdata_round_trip(self):
-        frame = build_rcdata_std(CHANNELS, switch_index=1, switch_value=2,
+        from elrs_core.ota import crsf_to_uint10, uint10_to_crsf
+
+        # Use values in the std CRSF range [171, 1811] so the 10-bit round-trip
+        # is clean. decode_std now expands via expand_hybrid_channels
+        # (firmware UnpackChannelDataHybridCommon), so packed->decoded CRSF
+        # equals the 10-bit quantized round-trip.
+        std_channels = [988, 1500, 1000, 1811]
+        frame = build_rcdata_std(std_channels, switch_index=1, switch_value=2,
                                  is_armed=True, crc_init=self.crc_init)
         pkt = decode_std(frame)
         self.assertIsNotNone(pkt)
         self.assertEqual(pkt.type, PACKET_TYPE_RCDATA)
-        # std (hybrid8) RCDATA carries exactly 4 channels. (The pack/unpack
-        # are not strict 10-bit inverses for arbitrary values, so we assert the
-        # stable shape and the arming/switch fields rather than an exact
-        # channel round-trip; the CRC-rejection test below proves the payload
-        # is covered.)
-        self.assertEqual(len(pkt.channels), 4)
+        expected = [uint10_to_crsf(crsf_to_uint10(c)) for c in std_channels]
+        self.assertEqual(pkt.channels, expected)
         self.assertTrue(pkt.is_armed)
         self.assertEqual(pkt.switch_index, 1)
 
@@ -252,6 +251,54 @@ class TestV3V4Divergence(unittest.TestCase):
         # bind_crc_init(ota_version) must diverge between v3 and v4.
         from elrs_core.ota import bind_crc_init as v4_bind
         self.assertNotEqual(v4_bind(3), v4_bind(4))
+
+
+# ---------------------------------------------------------------------------
+# Hybrid (8-byte) vs full (13-byte) channel expansion — the RQ2 fix
+# ---------------------------------------------------------------------------
+class TestHybridVsFullChannelExpansion(unittest.TestCase):
+    """The 8-byte path re-expands (CRSF range); the 13-byte path does not.
+
+    Firmware ground truth:
+      - Hybrid/Wide (8-byte): UnpackChannelDataHybridCommon does
+        ``UINT10_to_CRSF(raw >> 1)`` after the ``<<1`` unpack.
+      - Full-res (13-byte): UnpackChannelData8ch uses the ``<<1`` unpack
+        directly (10-bit fields already span the full CRSF range).
+    """
+
+    def test_expand_hybrid_matches_firmware(self):
+        from elrs_core.ota import expand_hybrid_channels, uint10_to_crsf
+
+        # raw is the <<1 unpack output; firmware does uint10_to_crsf(raw >> 1).
+        raw = [517 << 1, 829 << 1, 0, 1023 << 1]
+        expanded = expand_hybrid_channels(raw)
+        expected = [uint10_to_crsf(v >> 1) for v in raw]
+        self.assertEqual(expanded, expected)
+
+    def test_std_decode_reexpands_full_decode_does_not(self):
+        from elrs_core.ota import build_rcdata_full, build_rcdata_std
+
+        ci = ota_uid_crc_init(UID)
+        # 8 channels for the full path (4 low + 4 high); first 4 reused for std.
+        full_ch = [988, 1500, 1000, 1811, 1200, 1600, 1400, 1100]
+        std_pkt = decode_std(
+            build_rcdata_std(full_ch, switch_index=0, switch_value=0,
+                             is_armed=False, crc_init=ci)
+        )
+        full_pkt = decode_full(
+            build_rcdata_full(full_ch, uplink_power=4, is_high_aux=False,
+                              is_armed=False, crc_init=ci)
+        )
+        # Both decode to 4 (std) / 8 (full) channels; std's first 4 are the
+        # CRSF-range re-expansion, full's first 4 are the raw <<1 unpack
+        # (full 11-bit CRSF). They differ because the two paths encode
+        # differently — the std values sit in [171, 1811], the full values
+        # span the full CRSF range.
+        self.assertEqual(len(std_pkt.channels), 4)
+        self.assertEqual(len(full_pkt.channels), 8)
+        for v in std_pkt.channels:
+            self.assertGreaterEqual(v, 171)
+            self.assertLessEqual(v, 1811)
 
 
 if __name__ == "__main__":

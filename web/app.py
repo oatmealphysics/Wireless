@@ -422,7 +422,7 @@ def detect_hardware() -> dict[str, Any]:
         }
     except (FileNotFoundError, subprocess.TimeoutExpired):
         try:
-            import importlib
+            import importlib.util
             bleak_spec = importlib.util.find_spec("bleak")
             checks["ble"] = {
                 "available": bleak_spec is not None,
@@ -1676,8 +1676,8 @@ def api_target_action(target_id: str) -> tuple[Response, int] | Response:
 
     body = request.get_json(silent=True)
     action_name = body.get("action") if isinstance(body, dict) else None
-    if not action_name:
-        return jsonify({"error": "No action specified"}), 400
+    if not isinstance(action_name, str) or not action_name:
+        return jsonify({"error": "Action must be a non-empty string"}), 400
 
     if action_name not in target.get("available_actions", []):
         return jsonify({"error": f"Action '{action_name}' not available for this target"}), 400
@@ -1768,7 +1768,12 @@ def api_events() -> Response:
                 ])
             for ev in new_events:
                 local_last = ev["id"]
-                yield f"id: {ev['id']}\nevent: {ev['type']}\ndata: {json.dumps(ev['data'])}\n\n"
+                # Defensive: the event `type` is interpolated into the SSE
+                # `event:` field; strip any newlines so a (currently
+                # server-controlled) dynamic type can never inject a fake SSE
+                # field. `id` is an int and `data` is JSON-serialized.
+                event_type = str(ev["type"]).replace("\r", " ").replace("\n", " ")
+                yield f"id: {ev['id']}\nevent: {event_type}\ndata: {json.dumps(ev['data'])}\n\n"
             time.sleep(0.5)
 
     return Response(generate(), mimetype="text/event-stream",

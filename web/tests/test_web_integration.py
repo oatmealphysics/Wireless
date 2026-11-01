@@ -14,15 +14,38 @@ import time
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-import pytest
+# This is a pytest-style test file (pytest fixtures + bare asserts). It is
+# intended to run under pytest, not `unittest` discovery. Guard the optional
+# imports so `unittest discover` (which also scans this directory) skips the
+# module cleanly instead of crashing on a missing pytest / flask.
+try:
+    import pytest
+except ModuleNotFoundError:  # pragma: no cover - exercised on minimal installs
+    # Minimal shim so the @pytest.fixture decorators below still bind when the
+    # real pytest is absent. The decorated functions become plain no-ops; the
+    # test classes carry no unittest-collectable methods (they use fixtures),
+    # so `unittest discover` finds nothing to run.
+    import types
+
+    pytest = types.ModuleType("pytest_shim")
+
+    def _noop_fixture(*a, **k):
+        def deco(fn):
+            return fn
+        return deco
+
+    pytest.fixture = _noop_fixture
 
 # Ensure tools/ is importable (same path manipulation as app.py)
 TOOLS_DIR = Path(__file__).resolve().parent.parent.parent / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
 sys.path.insert(0, str(TOOLS_DIR / "exploit_chains"))
 
-# Import the app module after path setup
-import web.app as webapp
+# Import the app module after path setup (needs flask).
+try:
+    import web.app as webapp
+except ModuleNotFoundError:  # pragma: no cover - flask not installed
+    webapp = None
 
 
 # ---------------------------------------------------------------------------

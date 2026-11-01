@@ -73,6 +73,7 @@ from elrs_core.ota import (
     PACKET_TYPE_RCDATA,
     PACKET_TYPE_SYNC,
     decode_std,
+    uint10_to_crsf,
 )
 from elrs_core.v3_compat import (
     V3_SYNC_CHANNEL_80,
@@ -596,8 +597,15 @@ def _decode_possibilities(row: dict) -> list[tuple[int, bytes, int]]:
 
 
 def _rc_channels(packet: bytes) -> list[int]:
+    """Map the 4 on-wire 10-bit channel fields back to CRSF µs.
+
+    Uses ``uint10_to_crsf`` — the exact inverse of the firmware's
+    ``CRSF_to_UINT10(constrain(ch, 171, 1811))`` used by ``PackUInt11ToChannels4x10``.
+    (The previous ``988 + raw`` was an incorrect affine approximation.) This is
+    reporting only; the CRC/FHSS/UID evidence is independent of channel decode.
+    """
     packed = int.from_bytes(packet[1:6], "little")
-    return [988 + ((packed >> (10 * channel)) & 1023) for channel in range(4)]
+    return [uint10_to_crsf((packed >> (10 * channel)) & 0x3FF) for channel in range(4)]
 
 
 def decode_ranked_rows(rows: list[dict], uid: bytes | None = None,

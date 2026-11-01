@@ -147,6 +147,23 @@ def unpack_channels_4x10(payload: bytes) -> list[int]:
     return out
 
 
+def expand_hybrid_channels(raw: list[int]) -> list[int]:
+    """Expand hybrid/8-byte unpacked channel fields to CRSF µs.
+
+    Port of the firmware's ``UnpackChannelDataHybridCommon`` (OTA.cpp:350):
+    ``channelData[ch] = UINT10_to_CRSF(rawChannelData[ch] >> 1)`` where
+    ``rawChannelData`` is the ``<<1`` output of ``unpack_channels_4x10``.
+
+    The 8-byte (hybrid) path packs each channel via
+    ``CRSF_to_UINT10(constrain(ch, 171, 1811))`` (a 10-bit CRSF value), so the
+    ``<<1`` unpack is NOT the final value — it must be re-expanded with
+    ``uint10_to_crsf``. This is distinct from the 13-byte full-res path, whose
+    10-bit fields cover the entire CRSF range and where the ``<<1`` unpack IS
+    the complete decode (no re-expansion).
+    """
+    return [uint10_to_crsf(v >> 1) for v in raw]
+
+
 # CRSF 11-bit helpers (crsf_protocol.h)
 CRSF_CHANNEL_VALUE_UNSET = 0x1FFF
 CRSF_CHANNEL_VALUE_RANGEMIN = 171
@@ -344,7 +361,9 @@ def decode_std(raw: bytes, ota_nonce: int = 0) -> ElrsPacket:
     if pkt.type == PACKET_TYPE_SYNC:
         pkt.sync = _decode_sync(raw[1:])
     elif pkt.type == PACKET_TYPE_RCDATA:
-        ch = unpack_channels_4x10(raw[1:6])
+        # Hybrid/8-byte path: the 10-bit fields carry CRSF_to_UINT10 values,
+        # so the <<1 unpack must be re-expanded (firmware UnpackChannelDataHybridCommon).
+        ch = expand_hybrid_channels(unpack_channels_4x10(raw[1:6]))
         pkt.is_armed = bool(_get_bits(raw[6], 7, 1))
         sw = raw[6]
         switch_index = _get_bits(sw, 3, 3)
