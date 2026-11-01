@@ -26,6 +26,33 @@ jobs:
       - run: python -B tools/validate-project.py
       - run: python -B -m unittest discover -s tools/tests -p "test_*.py"
 
+  protocol-tests:
+    name: Protocol conformance (${{ matrix.os }}, py${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.12']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: ELRS core (CRC, OTA, FHSS) conformance
+        run: python -B -m unittest tools.tests.test_elrs_core_validation -v
+      - name: ELRS v3 frame wire format
+        run: python -B -m unittest tools.tests.test_elrs_v3_frame_check -v
+      - name: ELRS v3 FHSS sequence
+        run: python -B -m unittest tools.tests.test_elrs_v3_fhss_check -v
+      - name: Capture forge validation pipeline
+        run: python -B -m unittest tools.tests.test_capture_forge_validate -v
+      - name: Rainbow table schema and loader patterns
+        run: python -B -m unittest tools.tests.test_rainbow_table_schema -v
+
   web-dashboard:
     name: Web dashboard tests (${{ matrix.os }}, Python ${{ matrix.python }})
     strategy:

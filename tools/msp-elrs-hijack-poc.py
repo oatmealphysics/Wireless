@@ -183,10 +183,11 @@ def rainbow_lookup(partial_uid: dict, rainbow_path: str) -> bytes | None:
         return None
 
     for entry in table:
-        uid_hex = entry.get("uid", "")
-        if len(uid_hex) != 12:
+        uid_hex = entry.get("uid_hex", "") or entry.get("uid", "")
+        uid_hex_clean = uid_hex.replace(":", "")
+        if len(uid_hex_clean) != 12:
             continue
-        uid = bytes.fromhex(uid_hex)
+        uid = bytes.fromhex(uid_hex_clean)
         if (uid[3] == partial_uid["uid3"] and
             uid[4] == partial_uid["uid4"] and
             (uid[5] & 0xC0) == (partial_uid["uid5_upper2"] << 6)):

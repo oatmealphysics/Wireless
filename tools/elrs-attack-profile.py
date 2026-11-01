@@ -215,7 +215,7 @@ def uid_from_rainbow_lookup(uid4: int, uid5: int, rainbow_path: str) -> bytes:
     entries = table if isinstance(table, list) else table.get("entries", [])
     matches = []
     for entry in entries:
-        uid_bytes = entry.get("uid", [])
+        uid_bytes = entry.get("uid_bytes") or entry.get("uid", [])
         if len(uid_bytes) >= 6 and uid_bytes[4] == uid4 and uid_bytes[5] == uid5:
             matches.append(entry)
 
