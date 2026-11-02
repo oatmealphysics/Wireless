@@ -56,3 +56,4 @@ cpp/*.o
 
 # --- Scan output (regenerated, ELRS) ---
 scan.jsonl
+captures/
