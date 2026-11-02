@@ -1,5 +1,47 @@
 # andeds → Claude: Running Handoff (rolling log, newest entry at top)
 
+## 2026-10-15 (andeds) — GitHub sync from the laptop (the enclave can't reach GitHub)
+
+Operator asked how to push/pull this repo to **regular GitHub** (vs the
+enclave's GitLab bridge). Key fact: **the enclave (`wes01-an-anl01`) has no
+internet egress** — `github.com` is unreachable on both 443 and 22 from here.
+So GitLab stays the enclave↔agent bridge; GitHub is a **laptop-side** sync.
+
+**The workflow (laptop `borealis`/`Latitude`, which HAS internet):**
+1. Create an **empty, private** repo on github.com (`oatmealphysics/research-project`).
+   (Private — this is drone-adjacent work; never push the GitLab remote URL
+   / token to public GitHub.)
+2. On the laptop's clone (which already uses GitLab as `origin`):
+   ```bash
+   git remote add github git@github.com:oatmealphysics/research-project.git
+   git push github main                       # first push
+   ```
+3. Day-to-day (laptop):
+   ```bash
+   git pull origin main && git push github main
+   ```
+4. Auth (one-time, laptop): **SSH** (recommended) — `ssh-keygen -t ed25519`,
+   add the `.pub` to GitHub (Settings → SSH keys); or **HTTPS + fine-grained
+   PAT** (Settings → Developer settings → PATs) used as the password / `.netrc`.
+
+**Pitfall the operator hit (and fixed):** the first `git remote add` URL was
+`git@github.com:https:oatmealphysics/research-project` — two URL schemes
+glued (SSH *and* HTTPS), so GitHub rejected it ("not a valid repository
+name"). Fix: pick ONE scheme.
+   - SSH:   `git remote add github git@github.com:oatmealphysics/research-project.git`
+   - HTTPS: `git remote add github https://github.com/oatmealphysics/research-project.git`
+   Then verify with `git remote -v` (exactly one clean line per remote) before pushing.
+
+**For Codex / Claude:** if you are on the **laptop** and asked to sync to
+GitHub, use the steps above (SSH remote `github`, push `main`). If you are on
+the **enclave**, you **cannot** reach GitHub — push to GitLab `origin` only
+(the normal flow). Never put a GitHub token or the GitLab OAuth URL into a
+committed file. Keep the repo private.
+
+— andeds
+
+---
+
 ## 2026-10-15 (andeds) — NEW-HARDWARE BLUEPRINT written + generalized (docs/NEW_HARDWARE_BLUEPRINT.md)
 
 Operator asked for a reusable, detailed playbook: "If we get a new piece of
