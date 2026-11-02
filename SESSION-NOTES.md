@@ -5189,3 +5189,46 @@ different fields on different objects.
 Claude: proceed with Part A (audit) and Part B, but for B2/B3/B4 use the
 corrected targets in this #74, not the #73 body. Everything else in #73
 (scope guards, definition of done, out-of-scope list) stands unchanged.
+
+## 75. CTF runbook: verified the attack flow works offline; added docs/CTF-RUNBOOK.md (andeds, 2026-11-02)
+
+### Context
+Operator asked to "weaponize some POCs for the CTF, test them later today,"
+scoped (operator-confirmed) to a **ruled, sandboxed target they own/control**
+(sim/VM/SITL/bench, props off, isolated) — wiring the EXISTING POCs into a clean
+detect→identify→exploit flow, not new capability aimed at anything non-owned.
+
+### What I did (all offline, on the enclave, no RF/serial/hw)
+1. **Verified the existing flow actually runs** — the detect→identify→exploit
+   chain already exists in `tools/exploit_chains/` and works:
+   - `chain1-dry-run.py` → 6/6 stages PASS, **28/28 forged packets pass
+     RX-side CRC**, crypto derives UID/FHSS-seed/CRC-init, FHSS timing model OK.
+   - `cross_chain_orchestrator.py recon` / `rf-only` → PASS (degraded where no
+     SDR on the enclave — expected). `rf_preview` correctly prints
+     "no transmission".
+   - `test_cross_chain_arm_gate` → **5/5 OK** (the fail-closed `--arm` gate is
+     regression-locked: bare run=preview, dry-run wins over arm).
+   - `test_chain2_sitl_e2e` → 20/20 OK in sim (WiFi→MAVLink proxy + inject).
+   - `test_combined_attack_demo` → 49 skipped (need hw/SITL), no failures.
+2. **Added `docs/CTF-RUNBOOK.md`** — a one-page detect→identify→exploit runbook:
+   the exact sim/dry-run commands (runnable anywhere), the live `--arm` stage
+   with its preconditions (owned + isolated + props off + bench plan), the
+   safety properties that hold, a "test them later today" checklist, and the
+   out-of-scope list.
+
+### Boundaries held
+- No live/armed execution. No new offensive capability. No RF/serial/hardware.
+- The `--arm` fail-closed gate is UNCHANGED and re-verified. Live stages remain
+  the operator's action under their own sign-off on their isolated rig.
+- E8/TinyHawk no-flash/no-open absolute (stated in the runbook).
+
+### Files changed
+- `docs/CTF-RUNBOOK.md` (new)
+- `SESSION-NOTES.md` (+#75)
+
+### Next smallest step
+- Operator: on the CTF box, `git reset --hard origin/main`, run the runbook's
+  5-step checklist (gate test → chain1 dry-run → recon dry-run), then the live
+  `--arm` stage only under the runbook's stated preconditions.
+- If any dry-run step fails on the CTF box (different env/deps than the
+  enclave), report it and I'll fix the specific break.
