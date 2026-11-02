@@ -1,5 +1,66 @@
 # andeds → Claude: Running Handoff (rolling log, newest entry at top)
 
+## 2026-10-16 (andeds) — GitHub ↔ GitLab mirror setup (from the laptop) — READ BEFORE ANY PUSH/PULL
+
+Claude set up GitHub/GitLab mirroring from the **laptop** (`borealis`). The
+**laptop's git config is now the reference for any push/pull.** Record of the
+final state (verified by Claude, 2026-10-16):
+
+**Remotes on the laptop clone (the `poc-research` repo, on the laptop):**
+- `origin` — **dual push** (`pushurl`s): pushes to BOTH
+  - `https://github.com/oatmealphysics/research-project.git`
+  - `git@gitlab01.an.dd:user08/poc-research.git`
+  Fetch URL = GitHub (primary). So `git push origin main` → GitHub + GitLab.
+- `github` — (removed; was redundant with origin)
+- `enclave` — GitLab-only remote (`user08/poc-research`), kept for fetching
+  GitLab specifically.
+
+**Commands (laptop):**
+- Push to both: `git push origin main` (dual pushurl).
+- Pull: `git pull` fetches from **GitHub only** (the primary fetch URL).
+- **Get GitLab too / true two-way sync: `git sync`** — a new alias that
+  fetches from ALL remotes and merges. Use `git sync` when either side was
+  pushed to directly.
+
+**What it actually is / is NOT (be precise, don't overclaim):**
+- Push side = **automatic mirror** (laptop `push origin` hits both).
+- Pull side = **manual**: plain `git pull` sees GitHub only; you must run
+  `git sync` to pull GitLab changes into the laptop. It is NOT a live
+  two-way auto-sync in both directions — only the laptop→(both) push is
+  automatic.
+- **The GitLab remote here is `user08/poc-research`, a DIFFERENT repo +
+  author than the enclave's bridge.** The enclave (`wes01`, `andeds-agent`)
+  pushes to `andeds-agent/elrs-sdr-transfer` (its `origin`). The laptop
+  mirrors to `user08/poc-research`. If both are meant to hold the same
+  project, reconcile that — for now they are two GitLab repos; the laptop
+  does not reach `andeds-agent/elrs-sdr-transfer` in this setup.
+
+**Pitfalls Claude hit + fixed (so we don't re-hit them):**
+1. The laptop repo was **stuck mid-interactive-rebase** with a
+   `.gitattributes` conflict, 104–105 commits queued (replaying `main` onto
+   `bba64f5`). Resolved by `git rebase --abort` → restored `main` to full
+   history (217 commits, `3ce4b24`), no loss.
+2. **History divergence** when first mirroring: GitLab's `main` had 1
+   commit the laptop lacked (a 2200-line ELRS-core add) and the laptop had
+   116 commits GitLab lacked; merge base `91ec6c4`. Resolved by a **merge**
+   (single conflict in `SESSION-NOTES.md` — kept both §27 entries). After
+   merge + push, all three (local / GitHub / GitLab) in sync.
+3. **Naming:** the merged notes file is now `SESSION-NOTES.md` on the
+   laptop mirror (a session-log with numbered §N entries). That is the
+   laptop mirror's file, distinct from the `docs/*_NOTES_FOR_BOTH.md`
+   rolling logs used on the enclave GitLab repo. Do not assume they are the
+   same file across the two repos.
+
+**Rule for all agents:** for any **push/pull on the laptop**, follow the
+config above (`push origin` = both; `git sync` = two-way pull). For any
+**push/pull on the enclave**, it reaches **GitLab only** (`andeds-agent/
+elrs-sdr-transfer`); it cannot reach GitHub. Never commit a token or a
+remote URL containing a token into the tree.
+
+— andeds
+
+---
+
 ## 2026-10-15 (andeds) — GitHub sync from the laptop (the enclave can't reach GitHub)
 
 Operator asked how to push/pull this repo to **regular GitHub** (vs the
