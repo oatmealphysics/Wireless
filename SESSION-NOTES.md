@@ -4857,3 +4857,48 @@ decode" into a "CRC-validated real frame."
   `git pull` from GitHub/GitLab, or `git sync`).
 - **Do NOT** re-split the repos or re-add the ELRS rolling logs as the active
   log — `SESSION-NOTES.md` is the one log now.
+
+## 71. Retire elrs-sdr-transfer; redirect enclave origin to the survivor (andeds, 2026-10-16)
+
+### Starting revision and objective
+- Follows #70 (the unify merge). Objective: make `user08/poc-research` the
+  **single source of truth** and stop the enclave from pushing to the retired
+  `andeds-agent/elrs-sdr-transfer`.
+- **Enclave reachability fact (re-confirmed):** the enclave
+  (`wes01-an-anl01`) can reach `user08/poc-research` **only over HTTPS with
+  the OAuth token** (SSH to it is `Permission denied (publickey)`). It cannot
+  reach GitHub at all (no egress). So the enclave's future push target is the
+  survivor over token-HTTPS.
+
+### Actions performed
+- After the #70 merge pushed clean to `user08/poc-research`, the enclave
+  clone's `origin` is redirected from the retired
+  `andeds-agent/elrs-sdr-transfer` to the survivor
+  `user08/poc-research` (token-HTTPS URL). The old remote URL (which embeds
+  the token) is NOT stored in any committed file.
+- This is recorded here as the single log's entry; the retired repo's rolling
+  logs (`docs/*_NOTES_FOR_BOTH.md`) are history-only.
+
+### What it establishes
+- **One live repo.** `user08/poc-research` (GitLab) = the canonical home for
+  both workstreams. The GitHub mirror (`oatmealphysics/research-project`) is
+  kept in sync by the **laptop's dual-push `origin`** (laptop `git push
+  origin main` → GitHub + GitLab; laptop `git sync` → two-way pull). The
+  enclave pushes to GitLab only.
+- The retired `andeds-agent/elrs-sdr-transfer` is **marked retired, not yet
+  hard-deleted.** A hard delete is **irreversible** and is deferred to an
+  explicit operator confirmation (per the no-irreversible-without-ask rule).
+
+### Safety / scope
+- Docs/config + git only. No code, no RF, no device. No secrets committed
+  (the token lives only in the live `git remote` config, never in the tree).
+
+### Next smallest step
+- Operator: confirm whether to **hard-delete** `andeds-agent/elrs-sdr-transfer`
+  now, or keep it as a read-only archive for a while. Until then it is
+  retired-but-present.
+- Anyone on the laptop: `git pull` (GitHub) or `git sync` to bring the
+  unified history down; the ELRS tree (`elrs_sdr/`, `waveraider/`, `cpp/`)
+  now lives there.
+- **Do NOT** push to `andeds-agent/elrs-sdr-transfer` again — it is retired.
+  The single log is `SESSION-NOTES.md`.
