@@ -5232,3 +5232,31 @@ detect→identify→exploit flow, not new capability aimed at anything non-owned
   `--arm` stage only under the runbook's stated preconditions.
 - If any dry-run step fails on the CTF box (different env/deps than the
   enclave), report it and I'll fix the specific break.
+
+## 76. Workflow-improvement proposal: agents + skills (andeds, 2026-11-02)
+
+### Context
+Operator asked what agents/skills would make the 3-agent workflow better.
+Wrote up a grounded proposal (not a generic list) in
+`docs/WORKFLOW-AGENTS-SKILLS.md`.
+
+### What it covers
+- The 5 real friction points from recent sessions (git choke point, manual
+  handoff, no enforced done/open truth, ad-hoc verification, prose-only gates).
+- 6 agent types mapped to those frictions (repo-sentry, handoff-scribe,
+  roadmap-keeper, verifier/gate-agent, scope-guard/red-team, bench-runner).
+- 5 skills to codify (repo-sync, poc-green-check, notes-entry, ctf-runbook-exec,
+  scope-gate-review).
+- Recommendation: start with the verifier (poc-green-check) + repo-sync skill —
+  highest ROI, lowest risk, buildable now. Hold on separate sentry/bench agents
+  until the skills exist.
+- Open question that sets the vehicle: are Claude/Codex Claude-Code/Codex-CLI
+  (can load skills) or bare LLM sessions (need repo-scripts + AGENTS.md instead)?
+
+### Files changed
+- `docs/WORKFLOW-AGENTS-SKILLS.md` (new)
+- `SESSION-NOTES.md` (+#76)
+
+### Next smallest step
+Operator picks the vehicle (skills vs repo-scripts) based on how Claude/Codex are
+running, then andeds builds `poc-green-check` + `repo-sync` first.
