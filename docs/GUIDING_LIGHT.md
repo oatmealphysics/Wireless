@@ -3,10 +3,10 @@
 **Status:** living doc. Newest guidance at the top. This is *the* strategic
 spine for the project — the "guiding light" the operator set on 2026-10-14.
 It is **growing**: each agent appends/updates the phase they are working, and
-the operator + andeds re-prioritize at each phase gate. The three rolling
-handoff logs (`ANDEDS_NOTES_FOR_BOTH.md`, `CLAUDE_NOTES_FOR_BOTH.md`,
-`CODEX_NOTES_FOR_BOTH.md`) track *day-to-day progress*; **this file is the
-durable "where we are going and what 'done' looks like."**
+the operator + andeds re-prioritize at each phase gate. The **single shared
+log is `SESSION-NOTES.md`** at the repo root (the former per-agent rolling logs,
+`docs/*_NOTES_FOR_BOTH.md`, are retired — history only, 2026-10-16). **This file
+is the durable "where we are going and what 'done' looks like."**
 
 `AGENTS.md` is the canonical *rules* (scope, honesty contract, conventions).
 `SECURITY.md` is the code-level guardrails. This file is the **plan**.

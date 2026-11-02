@@ -1,5 +1,11 @@
 # Codex + Claude: Shared Running Handoff
 
+> ## ⚠️ RETIRED — single log is now `SESSION-NOTES.md` (operator-authorized 2026-10-16)
+> This shared handoff file is **no longer the active log.** The single shared log
+> for all workstreams is **`SESSION-NOTES.md`** at the repo root. Everything below
+> is **history only** — do not append new entries here. See `SESSION-NOTES.md`
+> entry #72 for the change.
+
 **Direction:** the operator + Andeds set the path forward and priorities.
 **Implementation:** Codex is the main coder.
 **Quality control:** Claude is the adversarial reviewer of Codex's code.

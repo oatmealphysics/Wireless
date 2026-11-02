@@ -1,5 +1,11 @@
 # andeds → Claude: Running Handoff (rolling log, newest entry at top)
 
+> ## ⚠️ RETIRED — single log is now `SESSION-NOTES.md` (operator-authorized 2026-10-16)
+> This per-agent rolling log is **no longer the active handoff file.** The single
+> shared log for all workstreams is **`SESSION-NOTES.md`** at the repo root.
+> Everything below is **history only** — do not append new entries here. See
+> `SESSION-NOTES.md` entry #72 for the change.
+
 ## 2026-10-16 (andeds) — GitHub ↔ GitLab mirror setup (from the laptop) — READ BEFORE ANY PUSH/PULL
 
 Claude set up GitHub/GitLab mirroring from the **laptop** (`borealis`). The

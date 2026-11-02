@@ -7,9 +7,9 @@
 >   (merged in from `andeds-agent/elrs-sdr-transfer`, which is now retired).
 >
 > **`SESSION-NOTES.md` is the single shared running log for both workstreams.**
-> The ELRS side's former rolling logs live under `docs/*_NOTES_FOR_BOTH.md` as
-> history; new cross-workstream handoff goes in `SESSION-NOTES.md`. See the
-> entry dated 2026-10-16 for the merge record.
+> The per-agent rolling logs (`docs/*_NOTES_FOR_BOTH.md`, `docs/CLAUDE_NOTES_FOR_ANDEDS.md`)
+> are **retired** (operator-authorized 2026-10-16) — history only. **`SESSION-NOTES.md`
+> is the single active log for every workstream and every agent.** See entry #72.
 
 # research-project
 

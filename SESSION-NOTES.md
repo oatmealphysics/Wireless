@@ -4902,3 +4902,59 @@ decode" into a "CRC-validated real frame."
   now lives there.
 - **Do NOT** push to `andeds-agent/elrs-sdr-transfer` again — it is retired.
   The single log is `SESSION-NOTES.md`.
+
+## 72. Single log = SESSION-NOTES.md; per-agent *_NOTES_FOR_BOTH.md retired (andeds, 2026-10-16)
+
+### Starting revision and objective
+- **Objective (operator, 2026-10-16):** "I'm authorizing the change from
+  `*_NOTES_FOR_BOTH.md` to sessions-notes." I.e. formally make
+  **`SESSION-NOTES.md` the one active handoff log** for every agent and
+  workstream, and retire the per-agent rolling logs.
+- This completes the consolidation started in #70/#71 (the unify merge).
+
+### Actions performed
+- **Retired the three per-agent logs** (history preserved, not deleted — the
+  no-rewrite rule):
+  - `docs/ANDEDS_NOTES_FOR_BOTH.md`
+  - `docs/CODEX_NOTES_FOR_BOTH.md`
+  - `docs/CLAUDE_NOTES_FOR_ANDEDS.md`
+  Each now carries a **"⚠️ RETIRED — single log is now SESSION-NOTES.md"**
+  header at the top pointing here (#72). Their prior content is unchanged.
+- **Updated the live convention** so no agent mistakes the old files for the
+  active log:
+  - `AGENTS.md` / `README.md` / `SECURITY.md` — the "Merged repo" banner now
+    states the per-agent logs are **retired (operator-authorized 2026-10-16),
+    history only**, and that `SESSION-NOTES.md` is the single active log for
+    every workstream and every agent. (AGENTS.md rule #7 already said
+    "SESSION-NOTES.md is the single shared running log" — this makes the
+    retirement explicit.)
+  - `docs/GUIDING_LIGHT.md` — its pointer to "the three rolling handoff logs"
+    now points to `SESSION-NOTES.md` instead.
+
+### What it establishes (the convention going forward)
+- **ONE log: `SESSION-NOTES.md`** (repo root, append-only, newest at bottom,
+  numbered `## N.`, dated + agent-attributed). Every agent (andeds / Claude /
+  Codex) appends here. Read its latest entries before work; append a dated
+  entry before handoff (AGENTS.md rule #7 is the format).
+- The per-agent `*_NOTES_FOR_BOTH.md` files are **read-only history.** Do not
+  append to them. If an older entry needs correcting, add a new cross-
+  referenced entry in `SESSION-NOTES.md` (do not rewrite history).
+- **`PROJECT-ROADMAP.md`** remains the single active **backlog** (priority /
+  status / ownership); `SESSION-NOTES.md` is the evidence + handoff log.
+
+### Safety / scope
+- Docs + git only. No code, no RF, no device. History preserved (files
+  retired in place, not removed).
+
+### Files changed
+- `docs/ANDEDS_NOTES_FOR_BOTH.md`, `docs/CODEX_NOTES_FOR_BOTH.md`,
+  `docs/CLAUDE_NOTES_FOR_ANDEDS.md` (RETIRED header prepended)
+- `AGENTS.md`, `README.md`, `SECURITY.md` (banner: retired + single log)
+- `docs/GUIDING_LIGHT.md` (log pointer)
+- `SESSION-NOTES.md` (+#72)
+
+### Next smallest step
+- All agents: from now on, append handoffs to **`SESSION-NOTES.md`** only.
+  The next entry after this one is #73. The retired files stay for reference;
+  if the operator ever wants them physically removed (not just retired), that
+  is a separate explicit ask.

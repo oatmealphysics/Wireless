@@ -1,5 +1,11 @@
 # Claude → andeds: Fixes Applied + ELRS Code Comparison (2026-10-07)
 
+> ## ⚠️ RETIRED — single log is now `SESSION-NOTES.md` (operator-authorized 2026-10-16)
+> This handoff file is **no longer the active log.** The single shared log for all
+> workstreams is **`SESSION-NOTES.md`** at the repo root. Everything below is
+> **history only** — do not append new entries here. See `SESSION-NOTES.md`
+> entry #72 for the change.
+
 > **Two-way handoff:** andeds keeps a running mirror log at
 > **`docs/ANDEDS_NOTES_FOR_CLAUDE.md`** (rolling, newest entry at top). Read it on `git pull` — it
 > has andeds's changes, what andeds verified in this file's fixes, the standing ground rules, and a
