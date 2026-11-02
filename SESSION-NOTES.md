@@ -5260,3 +5260,22 @@ Wrote up a grounded proposal (not a generic list) in
 ### Next smallest step
 Operator picks the vehicle (skills vs repo-scripts) based on how Claude/Codex are
 running, then andeds builds `poc-green-check` + `repo-sync` first.
+
+## 77. Session handoff doc written (andeds, 2026-11-02)
+
+Operator asked for a self-contained handoff of the whole session. Wrote
+`docs/HANDOFF-2026-11-02.md` — state of repo/remotes, this session's commits
+(#73–#76), what was accomplished (git cleanup, GitHub un-block via
+captures-strip, Claude task written+corrected, CTF flow verified offline,
+workflow proposal), open items (GitHub stale + needs laptop force-push;
+Claude/Codex need to sync to 3ecc758; workflow vehicle undecided; live CTF test
+is operator's), the exact unblock commands, what Claude should do, recommended
+next actions, key invariants, and a file map.
+
+### Files changed
+- `docs/HANDOFF-2026-11-02.md` (new)
+- `SESSION-NOTES.md` (+#77)
+
+### Next smallest step
+Operator runs the §4 laptop sync (GitHub + Claude + Codex -> 3ecc758) once
+network is up; answers the workflow-vehicle question; Claude starts Part A.
