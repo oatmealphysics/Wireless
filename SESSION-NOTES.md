@@ -5117,3 +5117,75 @@ Claude: start at Part A (read-only), post the audit entry, then take Part B
 one item at a time (B1→B5). If any Part B item turns out to be larger than
 expected or to touch a gate, STOP and record the blockage in `SESSION-NOTES.md`
 rather than expanding scope. andeds (orchestrator) reviews on your handoff.
+
+## 74. Correction to #73 Part B (B2/B3/B4) — precise targets after reading the code (andeds, 2026-11-02)
+
+#73's Part B descriptions for B2, B3, and B4 were written from the review's
+"Remaining" list without re-reading each site. I've now read the code. B1 and
+B5 are accurate as written. **B2, B3, B4 need these corrections — use THESE,
+not the #73 text, for those three items.** B1 and B5 stand.
+
+### B2 — corrected scope (smaller and safer than #73 implied)
+#73 said "import from the single source of truth." **There is no single shared
+MAVLink module** — `MAVLINK_V2_MAGIC = 0xFD` is copy-pasted across six files
+(`wifi_mavlink_chain.py`, `mavlink-signing-enforcer.py`, `mavlink-mitm-proxy.py`,
+`mavlink-signing-replay.py`, etc.), and the `MAV_CMD_*` names differ per file.
+Creating a shared constants module + migrating all six is **out of scope** for
+this handoff.
+- **Do ONLY this:** stop `tools/exploit_chains/wifi_mavlink_chain.py` from
+  *redefining* the `MAV_CMD_*` / magic constants that `tools/exploit_chains/
+  mavlink_chain.py` already exports. `mavlink_chain.py` is the natural source
+  (the test suite already does `from mavlink_chain import build_command_long,
+  MSG_COMMAND_LONG, MAV_CMD_ARM_DISARM`). Import from `mavlink_chain` where the
+  names match; leave any `wifi_mavlink_chain`-specific names that have no
+  `mavlink_chain` equivalent in place.
+- **Do NOT** refactor the other five files. **Do NOT** create a new shared
+  module. Note the broader 6-file duplication as a *tracked* follow-up in
+  `PROJECT-ROADMAP.md` (one line), don't fix it here.
+- Test: assert the `wifi_mavlink_chain` names now resolve to `mavlink_chain`'s
+  values (no local redefinition drift).
+
+### B3 — corrected framing (parameter-branch completeness, not "swap the core")
+#73 said "a v3 target is previewed with the v4 core / select the v3 core."
+That's imprecise. The orchestrator uses the **single `elrs_core`** for both
+versions and varies behavior by `ota_ver`. The real defect is **inconsistent
+v3/v4 parameter branching** across the two forge paths:
+- `cross_chain_orchestrator.py` RC path correctly branches: `ota_nonce = nonce
+  if ota_ver == 4 else 0` (line ~372), `crc_init ^= (ota_ver if ota_ver == 3
+  else ota_ver << 8)` (line ~290).
+- But the **SYNC** path hardcodes `rf_rate_enum=4` (line ~355) and does not
+  clearly branch v3-vs-v4 the way the RC path does.
+- **Fix:** make the SYNC and RC forge paths both derive their version-specific
+  parameters from `state.ota_version` consistently (v3 → v3 params, v4 → v4
+  params). No "core swap" — same `elrs_core`, correct per-version inputs.
+- Test: with `--ota-version 3`, assert the SYNC + RC packets use the v3
+  parameter set (e.g. the v3 `crc_init`/nonce semantics), and that a v4 target
+  is unchanged.
+
+### B4 — corrected (confirm the reader, then fix elrs_chain only)
+`elrs_chain.py:185` `max_power_dbm` is dead (`float.__log10__` doesn't exist →
+always `0`). **Important:** there is a *separate, correct* `max_power_dbm` in
+`tools/bench-controller.py` (uses a real `MAX_POWER_DBM` constant, read at
+lines ~420/431, asserted in `test_bench_controller.py:104`). Those are
+different fields on different objects.
+- **Confirm** nothing reads *elrs_chain's* `rf_parameters["max_power_dbm"]`
+  (the bench-controller reader uses bench-controller's own field, not
+  elrs_chain's). If truly unread → either compute it properly
+  (`10*math.log10(max_p)` with a `max_p <= 0` guard) or drop the dead key.
+- **Do NOT touch `bench-controller.py`** — its `max_power_dbm` is correct and
+  tested.
+- Test: pin whichever behavior you choose for the elrs_chain field; assert
+  bench-controller's value is unchanged.
+
+### B1 and B5 — unchanged, as written in #73
+- B1 (`sniff_mavlink` IPv6/no-port IndexError at `mavlink_chain.py` ~250-253,
+  `target.split(":")` + `parts[1]/parts[2]`): accurate. Failing test + robust
+  host/port parse.
+- B5 (`msp-injection-sim.py` `--phrase` default `"iloveflying"`, line ~633,
+  display-only → `show_ota_encapsulation`): accurate. Make the default
+  explicit-safe (require `--phrase` or placeholder+warning). Sim-only; no TX.
+
+### Net
+Claude: proceed with Part A (audit) and Part B, but for B2/B3/B4 use the
+corrected targets in this #74, not the #73 body. Everything else in #73
+(scope guards, definition of done, out-of-scope list) stands unchanged.
