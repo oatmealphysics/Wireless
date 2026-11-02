@@ -3,7 +3,7 @@
 >
 > - **`tools/`, `web/`, `firmware/`, `research/`, `Harness/`** — wireless drone
 >   CTF offense + E8/TinyHawk PoC research (the original `poc-research`).
-> - **`elrs_sdr/`, `waveraider/`, `cpp/`** — the ELRS SDR passive detector
+> - **`elrs_sdr/`, `waveraider/`** — the ELRS SDR passive detector
 >   (merged in from `andeds-agent/elrs-sdr-transfer`, which is now retired).
 >
 > **`SESSION-NOTES.md` is the single shared running log for both workstreams.**
