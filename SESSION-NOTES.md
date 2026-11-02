@@ -4958,3 +4958,162 @@ decode" into a "CRC-validated real frame."
   The next entry after this one is #73. The retired files stay for reference;
   if the operator ever wants them physically removed (not just retired), that
   is a separate explicit ask.
+
+## 73. Claude handoff: retrospective audit of 2026-11-01 fixes + clear the tracked "Remaining" debt (andeds, 2026-11-02)
+
+### Starting revision and objective
+- **Base:** post-unify repo, `main`. GitLab `2bb67c2`; GitHub `282f46a`
+  (lean history — big RF-capture blobs removed from GitHub; full captures
+  remain on GitLab + laptop disk). Local/laptop clone should be fast-forwarded
+  to the newest before starting.
+- **Objective:** Two-part handoff for Claude (its assigned role per the
+  2026-10-28/29 owner decisions = independent review + named implementation
+  lanes):
+  1. **PART A — Retrospective audit (READ-ONLY):** independently verify the
+     2026-11-01 review fixes actually hold and did not regress anything.
+     No edits to audited surfaces — findings reported only.
+  2. **PART B — Implement the tracked "Remaining (not fixed)" debt** from the
+     2026-11-01 full-review section of `PROJECT-ROADMAP.md`, offline, each
+     with a failing-first test.
+
+### Authority / scope (must stay within)
+- **Offline application engineering only.** Tracked fixtures, passive
+  captures already in the repo, deterministic simulation, local files,
+  loopback tests. **No RF transmission, no serial, no hardware, no firmware,
+  no external targets, no state-changing network actions.**
+- The E8 / TinyHawk **no-flash / no-open rule is absolute.**
+- **Do NOT** activate any GATED RQ research pathway (needs an explicit owner
+  decision + roadmap change first). **Do NOT** touch the ELRS passive decoder
+  core or the 54-frame evidence (evidence-locked; audit observes, never
+  rewrites it).
+- Code + notes in the same commit. Append a dated entry to `SESSION-NOTES.md`
+  at each handoff (this file is the single log; the per-agent `*_NOTES_FOR_
+  BOTH.md` files are retired/history).
+- TX / live-inject code paths: keep them **fail-closed**. A plan or tool is
+  never authorization. Nothing here authorizes transmission.
+
+---
+
+## PART A — Retrospective audit (READ-ONLY, findings reported only)
+
+Independently re-verify, from source + by running the tests, that each
+2026-11-01 fix holds. For each, state HOLD / REGRESSED / COULD-NOT-VERIFY
+with the specific evidence (test name + result, or the offending line).
+
+1. **cross-chain `--arm` gate** — `tools/exploit_chains/cross_chain_orchestrator.py`:
+   confirm `state.dry_run = args.dry_run or not args.arm` so a bare
+   `... full` (no `--arm`, no `--dry-run`) is a preview, not live. Confirm
+   `test_cross_chain_arm_gate.py` (5 tests) still passes and actually covers
+   the no-arm path.
+2. **wifi-mavlink fail-closed** — `tools/exploit_chains/wifi_mavlink_chain.py`:
+   confirm the live evil-twin path reports `status:"unimplemented"` (fail
+   closed) and does NOT report `status:"started"` without doing the work.
+3. **`require_arm` default** — `tools/exploit_chains/common.py`: confirm
+   `require_arm` defaults the `dry_run` getattr to `False` (fail closed), not
+   `True`.
+4. **`ATTEMPTED` status** — orchestrator live-inject stages report `ATTEMPTED`
+   (commands sent), not unconditional `SUCCESS`; `StageStatus` has `ATTEMPTED`.
+5. **ELRS `_rc_channels`** — `tools/elrs-passive-pipeline.py`: uses
+   `uint10_to_crsf` (firmware's exact inverse of
+   `CRSF_to_UINT10(constrain(ch,171,1811))`), not the old `988 + raw10bit`.
+6. **ELRS hybrid expansion** — `tools/elrs_core/ota.py`: 8-byte hybrid path
+   applies `UINT10_to_CRSF(raw >> 1)` via `expand_hybrid_channels`; the
+   13-byte full-res path is distinct and unchanged. Confirm
+   `TestHybridVsFullChannelExpansion` passes.
+7. **Headline reproduction** — run the passive pipeline on the two tracked
+   captures and confirm the 54 CRC-valid frames still reproduce byte-for-byte
+   across the two decoders. (Observe only; do not modify captures or decoder.)
+8. **Missed-defect sweep** — while in these files, flag anything the 2026-11-01
+   review plausibly missed in the SAME surfaces (import hygiene, fail-open
+   defaults, false-success status strings). Report; do not fix in Part A.
+
+**Part A deliverable:** a dated `SESSION-NOTES.md` entry (this becomes the
+audit record) listing each of 1–8 as HOLD / REGRESSED / COULD-NOT-VERIFY with
+evidence, plus a shortlist of any missed defects. **No code changes in Part A.**
+
+---
+
+## PART B — Implement the tracked "Remaining" debt (offline, RED-GREEN-REFACTOR)
+
+Take these from the "Remaining (not fixed — larger scope, tracked)" list in
+`PROJECT-ROADMAP.md`. Each: write a failing test first, make it pass, keep the
+change minimal, same commit as the test. All offline.
+
+**B1. `sniff_mavlink` target parse (correctness/robustness).**
+`tools/exploit_chains/mavlink_chain.py` → `def sniff_mavlink`. The positional
+target parse raises IndexError on IPv6 addresses or a missing port.
+- Failing test: pass `"[::1]"` (IPv6, no port) and `"10.0.0.5"` (no port) and
+  the current behavior must not IndexError; define the intended behavior
+  (e.g. default port, or a clean typed error) and lock it.
+- Fix the parse to be robust (split host/port safely, handle brackets for
+  IPv6, apply a documented default port or raise a clear `ValueError`).
+
+**B2. Dedupe MAVLink constants in `wifi_mavlink_chain.py`.**
+`tools/exploit_chains/wifi_mavlink_chain.py` redefines MAVLink constants that
+already live in a shared module.
+- Identify the duplicated constants and import them from the single source of
+  truth instead (do not delete the shared definitions).
+- Failing test (or import/consistency check): assert the local names resolve
+  to the shared values (no drift).
+
+**B3. Orchestrator v3/v4 core mismatch on default `--ota-version 3`.**
+`tools/exploit_chains/cross_chain_orchestrator.py` (see `--ota-version`
+default=3 at ~line 901; `state.ota_version` used at ~286/344). A v3 target is
+being previewed with the v4 core.
+- Failing test: with `--ota-version 3`, the RF preview path must select the v3
+  core/decoder (assert which core object is chosen).
+- Fix the selection so the core follows `state.ota_version` (3→v3 core,
+  4→v4 core). Do not change the v4 path's behavior for a v4 target.
+
+**B4. `max_power_dbm` dead heuristic.**
+`tools/exploit_chains/elrs_chain.py` ~line 185:
+`"max_power_dbm": 10 * (max_p + 1e-12).__log10__() if hasattr(float,
+'__log10__') else 0` — `float.__log10__` doesn't exist, so this is always `0`
+(dead).
+- Decide intent: either compute the real value (`10*math.log10(max_p)` with a
+  floor/guard for `max_p <= 0`) or, if the field is genuinely unused downstream,
+  mark it explicitly and remove the dead branch. Failing test pins whichever
+  behavior you choose. Prefer the real computation if anything reads the field.
+
+**B5. `"iloveflying"` default binding-phrase foot-gun (sim-only tools).**
+`tools/msp-injection-sim.py` ~line 633 (`--phrase` default `"iloveflying"`).
+This is a sim/display tool, but a real-world default phrase is a foot-gun.
+- Make the default explicit-safe: require `--phrase` to be passed (no silent
+  default) OR default to a clearly-placeholder value and log a warning that it
+  is a placeholder, not a real binding phrase. Failing test: running without
+  `--phrase` must not silently proceed with the real default.
+- Keep it sim-only; this does not authorize any TX.
+
+**Part B deliverable:** five small commits (or one well-structured commit per
+item), each RED-GREEN-REFACTOR with the test in the same commit, all offline,
+plus a `SESSION-NOTES.md` entry summarizing each fix + test. Update the
+"Remaining (not fixed)" list in `PROJECT-ROADMAP.md` to reflect what is now
+done (move the fixed items to done/tracked-done, keep any genuinely-open ones
+honestly listed).
+
+---
+
+### Definition of done (whole handoff)
+- Part A: audit entry in `SESSION-NOTES.md` (items 1–8 each HOLD / REGRESSED /
+  COULD-NOT-VERIFY with evidence) + missed-defect shortlist. No code changes.
+- Part B: B1–B5 implemented, each with a passing test in the same commit;
+  `PROJECT-ROADMAP.md` "Remaining" list updated to truth.
+- Full offline test suite green (the existing web API route tests, frontend
+  contract tests, project validator, and the new tests). No RF/serial/hardware
+  touched. No secrets or raw captures committed (private identifiers/captures
+  stay under ignored `work/`).
+- Final `SESSION-NOTES.md` handoff entry naming what's done, what's left, and
+  the next smallest step.
+
+### Explicitly out of scope (do NOT start)
+- Any GATED RQ research pathway (needs owner decision first).
+- RF transmission, serial, hardware, firmware, bootloader, external targets.
+- Editing the ELRS passive decoder core or the 54-frame evidence.
+- Rewriting/force-pushing history, or any git operation beyond normal
+  commit/push of your work branch.
+
+### Handoff
+Claude: start at Part A (read-only), post the audit entry, then take Part B
+one item at a time (B1→B5). If any Part B item turns out to be larger than
+expected or to touch a gate, STOP and record the blockage in `SESSION-NOTES.md`
+rather than expanding scope. andeds (orchestrator) reviews on your handoff.
