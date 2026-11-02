@@ -4777,3 +4777,83 @@ Run the real-capture packet-byte validation (entry #26 way-forward #6): a
 bench capture -> `identify.py` burst-location -> `lora`/`gfsk` demod ->
 `ota`/`crc` CRC check. That is the thing that turns the "self-consistent
 decode" into a "CRC-validated real frame."
+
+## 70. Unify the two repos: merge elrs-sdr-transfer into poc-research (andeds, 2026-10-16)
+
+### Starting revision and objective
+- **Objective (operator, 2026-10-16):** "merge elrs into poc research, then
+  delete elrs research, never to be used again, so there's only one repo."
+  Plus: "switch to only using the sessions notes md so everyone can read
+  those and know everything."
+- **Before:** two separate GitLab repos on `gitlab01.an.dd`:
+  - `user08/poc-research` (survivor, canonical) — drone-CTF offense +
+    E8/TinyHawk PoC. `main` tip `a4a74e4` (219 commits). Single shared log
+    `SESSION-NOTES.md`.
+  - `andeds-agent/elrs-sdr-transfer` (retired) — the ELRS SDR passive
+    detector. `main` tip `c4f9196` (376 commits). Rolling logs
+    `docs/{ANDEDS,CLAUDE,CODEX}_NOTES_FOR_BOTH.md` + `docs/GUIDING_LIGHT.md`.
+- **Relationship found:** the two `main` branches are **disjoint** (no common
+  ancestor in their main chains). The PoC tip `a4a74e4` is a merge of
+  `3ce4b24` (PoC) + `bba64f5` (an *earlier* enclave state) — it does NOT
+  include the newer ELRS commits (b09becd..c4f9196). So this is a
+  **two-root unify** (`--allow-unrelated-histories`), not a fast-forward.
+
+### Actions performed
+1. Cloned `user08/poc-research` to the enclave (scratch, via HTTPS+token —
+   the enclave cannot SSH to it, only `andeds-agent/elrs-sdr-transfer` over
+   SSH is absent; token HTTPS is the path).
+2. Added `elrs` remote → `andeds-agent/elrs-sdr-transfer`, fetched full
+   `main` (large — 7.2 GB objects; slow over the enclave link).
+3. `git merge elrs/main --allow-unrelated-histories --no-ff --no-commit`.
+   **5 add/add conflicts** (the two trees share only 4 top-level docs +
+   `.gitignore`); every other file is disjoint, so both trees came in intact:
+   ELRS side (`elrs_sdr/` 29 py, `waveraider/` 86 py, `cpp/`, `docs/`), PoC
+   side (`firmware/`, `Harness/`, `research/`, `web/`, `tools/`) all present.
+4. **Conflict resolutions (deliberate, not "theirs"):**
+   - `.gitignore` — **union** of both lists (PoC: `work/`, IDA, ardupilot/
+     tello tarballs; ELRS: raw IQ `captures/`, C++ build, `.cdif`/`.complex8`).
+   - `pyproject.toml` — **unified**: `[project]` = `elrs-sdr` package
+     (setuptools, `elrs-sdr` console script, numpy dep); ruff section kept
+     from PoC scoped to `tools`/`web` (the PoC tooling). One file, both
+     workstreams.
+   - `AGENTS.md` / `README.md` / `SECURITY.md` — **PoC version kept as base**
+     (the surviving repo's docs) + a short **"Merged repo (2026-10-16)"**
+     banner at top of each: names both workstreams, says the ELRS side came
+     from the now-retired `elrs-sdr-transfer`, and points to `SESSION-NOTES.md`
+     as the single shared log.
+5. Appended this entry (#70) to `SESSION-NOTES.md` (the single log).
+
+### What worked / what it establishes
+- **One repo** now holds both workstreams with **two roots** preserved
+  (no history rewritten). `elrs-sdr` package + `elrs-sdr` CLI and the CTF
+  `tools/`/`web/` both live in the same tree; `pyproject.toml` + `.gitignore`
+  cover both.
+- **`SESSION-NOTES.md` is now the single cross-workstream log.** The ELRS
+  side's `docs/*_NOTES_FOR_BOTH.md` are kept as **history only**; new
+  cross-workstream handoff goes here. (Per operator: "everyone reads those
+  and knows everything.")
+
+### Safety / scope
+- No code executed, no RF, no device touched. Docs/config + git only.
+- The retired repo `andeds-agent/elrs-sdr-transfer` is **not yet deleted** —
+  it is marked retired here and in the notes; the operator will confirm a
+  hard delete separately (irreversible). The enclave `origin` will be
+  redirected to point at `poc-research` so future enclave pushes land in the
+  survivor.
+
+### Files changed
+- `.gitignore` (union), `pyproject.toml` (unified), `AGENTS.md` / `README.md`
+  / `SECURITY.md` (PoC base + merged-repo banner), `SESSION-NOTES.md` (+#70).
+- **Entire ELRS tree added** by the merge: `elrs_sdr/`, `waveraider/`, `cpp/`,
+  `docs/GUIDING_LIGHT.md`, `docs/*_NOTES_FOR_BOTH.md` (history), `references/`,
+  `scripts/`, `apps/`, `tools/` (ELRS tools), etc.
+
+### Next smallest step
+- Push this merge to `user08/poc-research` (GitLab) — the survivor becomes the
+  single source of truth. Then redirect the enclave `origin` to
+  `user08/poc-research` and record that, so the agent stops pushing to the
+  retired repo. Confirm the GitHub mirror (`oatmealphysics/research-project`)
+  picks it up via the laptop's dual-push `origin` (laptop does
+  `git pull` from GitHub/GitLab, or `git sync`).
+- **Do NOT** re-split the repos or re-add the ELRS rolling logs as the active
+  log — `SESSION-NOTES.md` is the one log now.

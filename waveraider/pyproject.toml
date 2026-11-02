@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "waveraider"
+version = "0.6.3"
+description = "Offline UAS detection platform in development: recorded Remote ID decoding and drone-band RF inspection"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Skippy Dinglechalk" }]
+dependencies = ["scapy>=2.5.0", "textual>=0.60.0", "numpy>=1.24"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0"]
+# Compatibility extra: DSP dependencies are now included in every install.
+sdr = ["numpy>=1.24"]
+
+[project.scripts]
+wr = "waveraider.cli:main"
+
+[tool.setuptools]
+packages = ["waveraider", "waveraider.protocols", "waveraider.samples"]
+
+[tool.setuptools.package-data]
+"waveraider" = ["spectrum_display.js", "inspect_rf.js", "inspect_rf.css", "monitor.html", "settings.html", "brand/*.png"]
+"waveraider.samples" = ["*.pcap", "*.txt"]

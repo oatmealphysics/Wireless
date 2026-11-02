@@ -1,0 +1,4 @@
+# Classification core — deterministic, offline.
+scapy>=2.5.0
+# GUI
+textual>=0.60.0

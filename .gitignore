@@ -1,14 +1,24 @@
-# Local analysis and captures; original corpus artifacts remain tracked.
-/work/
+# ============================================================================
+# .gitignore — merged (2026-10-16) from elrs-sdr-transfer + poc-research.
+# Union of both lists; both workstreams' artifacts stay ignored.
+# ============================================================================
+
+# --- Python (both) ---
+.venv/
 __pycache__/
 *.pyc
+*.egg-info/
+build/
+dist/
 .pytest_cache/
 
+# --- PoC: local analysis / IDA ---
+# Local analysis and captures; original corpus artifacts remain tracked.
+/work/
 # Large source tarballs kept locally (re-download from tagged release)
 firmware/src/ardupilot-Copter-4.7.2.tar.gz
 # Full SDK archives kept locally (protocol files extracted into firmware/tello/dji-sdk-protocol/)
 firmware/tello/dji-tello-python-sdk.tar.gz
-
 # IDA analysis artifacts
 *.id0
 *.id1
@@ -16,3 +26,33 @@ firmware/tello/dji-tello-python-sdk.tar.gz
 *.til
 *.i64
 *.idc
+
+# --- ELRS SDR: raw IQ captures ---
+# SDR sweeps (ELRS Find) save to captures/elrs_find_*/. Capture policy (both
+# repos agree): the captures/ subtree is UNTRACKED — raw IQ (.complex8/.cf32/
+# .iq), metadata, and GB-scale .cdif wideband grabs are ignored. To share a
+# specific capture, `git add -f captures/<file>` overrides the ignore.
+*.iq
+*.complex8
+*.cf32
+*.jsonl
+*.cdif
+*.sigmf-data
+*.cfile
+captures/
+
+# --- ELRS SDR: C++ build artifacts (cpp/build.sh) ---
+cpp/elrs_intercept
+cpp/tests/test_elrs_decode
+cpp/tests/test_lora_demod
+cpp/test_elrs_decode
+cpp/test_lora_demod
+cpp/*.bin
+cpp/*.o
+
+# --- Tarballs / archives — never commit (ELRS) ---
+*.tgz
+*.tar.gz
+
+# --- Scan output (regenerated, ELRS) ---
+scan.jsonl

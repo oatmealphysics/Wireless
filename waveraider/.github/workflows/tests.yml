@@ -1,0 +1,34 @@
+name: Tests
+
+on:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Python and JavaScript tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      WAVERAIDER_TARGETS: /tmp/wr-ci/targets.json
+      WAVERAIDER_MONITORING: /tmp/wr-ci/monitoring.json
+      WAVERAIDER_SESSIONS: /tmp/wr-ci/sessions
+      WAVERAIDER_IQ_FIXTURES: /tmp/wr-ci/iq
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install test dependencies
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install '.[dev]'
+          node --version
+      - name: Fetch and verify the licensed recording
+        run: .venv/bin/python tools/fetch_droneid_fixture.py "$WAVERAIDER_IQ_FIXTURES"
+      - name: Run the full suite including recorded DroneID
+        run: .venv/bin/python -m pytest -q -p no:cacheprovider

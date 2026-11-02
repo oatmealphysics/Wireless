@@ -1,3 +1,16 @@
+> **Merged repo (2026-10-16).** This repository now holds **two workstreams**
+> that were previously separate GitLab repos:
+>
+> - **`tools/`, `web/`, `firmware/`, `research/`, `Harness/`** — wireless drone
+>   CTF offense + E8/TinyHawk PoC research (the original `poc-research`).
+> - **`elrs_sdr/`, `waveraider/`, `cpp/`** — the ELRS SDR passive detector
+>   (merged in from `andeds-agent/elrs-sdr-transfer`, which is now retired).
+>
+> **`SESSION-NOTES.md` is the single shared running log for both workstreams.**
+> The ELRS side's former rolling logs live under `docs/*_NOTES_FOR_BOTH.md` as
+> history; new cross-workstream handoff goes in `SESSION-NOTES.md`. See the
+> entry dated 2026-10-16 for the merge record.
+
 # research-project
 
 Wireless security research toolkit for drone CTF competition. Covers reconnaissance, protocol analysis, exploit development, and defensive detection across WiFi, BLE, MAVLink, ExpressLRS, and CRSF protocols.

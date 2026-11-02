@@ -1,0 +1,956 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WaveRaider Monitor</title>
+<link rel="icon" type="image/png" href="/brand/icon.png">
+<script id="theme-script">
+// Apply before paint; blocked browser storage must not prevent using the GUI.
+(()=>{
+  const key='waveraider-theme', modes=['system','dark','light'];
+  const media=window.matchMedia('(prefers-color-scheme: dark)');
+  let preference='system';
+  try{const saved=localStorage.getItem(key);if(modes.includes(saved))preference=saved;}catch(e){}
+  function apply(){
+    document.documentElement.dataset.theme=preference==='system'?(media.matches?'dark':'light'):preference;
+    const select=document.getElementById('themeSelect');if(select)select.value=preference;
+    if(typeof drawSpectrum==='function'&&typeof specLast!=='undefined'&&specLast)drawSpectrum(specLast);
+  }
+  apply();
+  media.addEventListener('change',apply);
+  document.addEventListener('DOMContentLoaded',()=>{
+    const select=document.getElementById('themeSelect');select.value=preference;
+    select.addEventListener('change',()=>{
+      preference=modes.includes(select.value)?select.value:'system';
+      try{localStorage.setItem(key,preference);}catch(e){}
+      apply();
+    });
+  });
+  window.addEventListener('storage',event=>{
+    if(event.key===key||event.key===null){preference=modes.includes(event.newValue)?event.newValue:'system';apply();}
+  });
+})();
+</script>
+<style>
+
+/* Quiet Precision: local assets, shared tokens, clear evidence hierarchy. */
+:root{--bg:#111820;--panel:#1a2530;--raise:#24313d;--line:#364754;--line2:#718599;--ink:#e6edf3;--soft:#aab8c5;--muted:#aab8c5;--dim:#aab8c5;--accent:#8bcbff;--ok:#8dd6b0;--warn:#f2c66d;--crit:#ff9a9a;--sel:#24313d;--violet:#c7b9ed;--onaccent:#111820;--hover:#b5deff;--warnbg:#292317;--critbg:#302025;--lightbg:#f2f5f8;--lightpanel:#ffffff;--lightraise:#e8eef4;--lightline:#ccd6df;--lightline2:#687c8e;--lightink:#172633;--lightsoft:#465c6e;--lightmuted:#465c6e;--lightdim:#465c6e;--lightaccent:#005c97;--lightok:#236440;--lightwarn:#795000;--lightcrit:#a82735;--lightsel:#dceaf5;--lightviolet:#694497;--lightonaccent:#ffffff;--lighthover:#004b7b;--lightwarnbg:#fff3d6;--lightcritbg:#ffeaed;color-scheme:dark}
+:root[data-theme="light"]{--bg:var(--lightbg);--panel:var(--lightpanel);--raise:var(--lightraise);--line:var(--lightline);--line2:var(--lightline2);--ink:var(--lightink);--soft:var(--lightsoft);--muted:var(--lightmuted);--dim:var(--lightdim);--accent:var(--lightaccent);--ok:var(--lightok);--warn:var(--lightwarn);--crit:var(--lightcrit);--sel:var(--lightsel);--violet:var(--lightviolet);--onaccent:var(--lightonaccent);--hover:var(--lighthover);--warnbg:var(--lightwarnbg);--critbg:var(--lightcritbg);color-scheme:light}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;min-height:100vh;font:16px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--ink)}
+button,input,select{font:inherit;accent-color:var(--accent)}
+a{color:var(--accent);text-underline-offset:3px}
+button,.btn,.tab,input[type=text],input[type=number],select{min-height:40px;border-radius:8px}
+button,.btn,.tab{transition:border-color 140ms;color:var(--ink)}
+button:active,.btn:active{background:var(--sel)}
+button:disabled,.btn[disabled]{opacity:.65;cursor:not-allowed}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.top{display:flex;align-items:center;gap:28px;min-height:76px;padding:14px 32px;border-bottom:1px solid var(--line);background:var(--panel)}
+.brand{display:inline-flex;align-items:center;gap:10px;font-size:21px;font-weight:650;letter-spacing:-.5px;white-space:nowrap}
+.brand img{display:block;width:32px;height:32px;flex:none;border-radius:6px}
+.tabs{display:flex;gap:6px}
+.tab{display:inline-flex;align-items:center;justify-content:center;padding:8px 18px;font-size:14px;font-weight:500;text-decoration:none;border:1px solid transparent}
+.tab.on{background:var(--sel);color:var(--ink);box-shadow:inset 0 -2px 0 var(--accent);font-weight:600}
+.tab:hover,.btn:hover{background:var(--raise);border-color:var(--line2)}
+.grow{flex:1}
+.theme-control{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--soft)}
+.theme-control select{min-height:44px;max-width:120px;padding:8px;border:1px solid var(--line2);background:var(--bg);color:var(--ink);border-radius:8px}
+.toast{font-size:14px;color:var(--ok)}
+.toast:empty{display:none}
+.toast.err{color:var(--crit)}
+.ok{color:var(--ok)}
+.warn{color:var(--warn)}
+.crit{color:var(--crit)}
+.dim,.soft,.muted{color:var(--muted)}
+.chip{display:inline-flex;align-items:center;padding:3px 9px;border:1px solid var(--line);border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap;background:var(--bg)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 14px;border:1px solid var(--line2);background:var(--raise);font-size:14px;line-height:1.5;font-weight:500;cursor:pointer;text-decoration:none}
+.btn.primary{background:var(--accent);color:var(--onaccent);border-color:var(--accent);font-weight:650}
+.btn.primary:hover{background:var(--hover);border-color:var(--hover)}
+h1{font-size:30px;line-height:1.2;font-weight:650;letter-spacing:-.8px;margin:0}
+.title{font-size:24px;line-height:1.3;font-weight:600;letter-spacing:-.4px;overflow-wrap:anywhere}
+h2,.h{font-size:15px;line-height:1.4;font-weight:600;color:var(--ink);margin:8px 0 0;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.note,.sub,.caveat,.empty{font-size:14px;color:var(--soft)}
+.note{margin:0;max-width:80ch}
+.eyebrow{font-size:12px;font-weight:600;color:var(--accent);letter-spacing:.04em}
+.caveat{padding:10px 14px;border-left:2px solid var(--warn);border-radius:0 6px 6px 0;background:var(--bg)}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:12px;font-weight:600;color:var(--soft);padding:12px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+td{font-size:14px;padding:16px;vertical-align:top;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+tr:hover td{background:var(--raise)}
+dl{display:grid;grid-template-columns:8.5em minmax(0,1fr);gap:10px 16px;font-size:14px;margin:0}
+dt{color:var(--dim)}
+dd{margin:0;overflow-wrap:anywhere}
+.disclosure{border:1px solid var(--line);border-radius:10px;background:var(--panel);overflow:hidden}
+.disclosure summary{padding:14px 18px;cursor:pointer;color:var(--ink);font-size:14px;font-weight:600}
+.disclosure summary:hover{background:var(--raise)}
+.disclosure[open] summary{border-bottom:1px solid var(--line)}
+.disclosure-body{display:grid;gap:12px;padding:16px 18px}
+@media(max-width:760px){.top{padding:12px 16px;gap:12px;flex-wrap:wrap}.brand{font-size:20px}.top .tabs{margin-left:auto}.tab{padding:8px 14px;min-height:44px}.grow{display:none}.btn,input[type=text],input[type=number],select{min-height:44px}h1{font-size:26px}td,th{padding:12px}dl{grid-template-columns:minmax(0,1fr);gap:4px}dd{margin-bottom:10px}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;scroll-behavior:auto!important}}
+
+.session-tools{margin-left:auto;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#clock{font-size:12px;font-variant-numeric:tabular-nums}
+.workspace{width:100%;max-width:1600px;margin:0 auto;padding:28px 32px 40px;display:grid;gap:20px}
+.page-heading{display:flex;align-items:end;justify-content:space-between;gap:16px}
+.page-heading p{margin:8px 0 0;color:var(--soft);font-size:14px}
+.page-heading a{font-size:14px;white-space:nowrap}
+.banner{padding:12px 16px;border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:8px;background:var(--warnbg);color:var(--warn);font-size:14px}
+.banner.crit{background:var(--critbg);color:var(--crit);border-left-color:var(--crit)}
+.banner b{font-weight:600}
+.receiver-status summary{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.receiver-status summary::before{content:"＋";color:var(--accent)}
+.receiver-status[open] summary::before{content:"−"}
+.receiver-status summary .soft{margin-left:auto;font-size:12px;font-weight:400}
+.recv{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));padding:18px;gap:20px}
+.cell{display:grid;gap:4px;border-left:2px solid var(--line2);padding-left:14px;font-size:14px}
+.cell.s-ok{border-left-color:var(--ok)}
+.cell.s-warn{border-left-color:var(--warn)}
+.cell.s-crit{border-left-color:var(--crit)}
+.k{font-size:13px;color:var(--soft)}
+.cover{display:grid;gap:8px;padding:14px 18px;border-top:1px solid var(--line);font-size:13px;color:var(--muted)}
+.main{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(340px,1fr);gap:20px;align-items:start;min-width:0}
+.list{display:flex;flex-direction:column;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.lh{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:18px 20px;border-bottom:1px solid var(--line)}
+.lh b{font-size:16px;font-weight:600}
+.diag{border:0;background:none;color:var(--warn);cursor:pointer;font-size:13px}
+.diagpanel{display:grid;gap:10px;padding:16px 20px;border-bottom:1px solid var(--line);background:var(--bg);color:var(--soft);font-size:14px}
+.diagpanel ul{margin:4px 0 0;padding-left:18px}
+.scroll{overflow:auto;min-height:240px}
+.scroll th{position:sticky;top:0}
+.scroll td{overflow-wrap:anywhere}
+tbody tr[data-key]{cursor:pointer}
+tr.stale td{color:var(--dim)}
+tr.sel td{background:var(--sel)}
+tr.sel td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+tr.sel:hover td{background:var(--sel)}
+tr.group th{padding-top:20px;color:var(--dim)}
+.ev{display:inline-block;padding:2px 6px;border:1px solid var(--line2);border-radius:5px;font-size:11px;white-space:nowrap}
+.ev.rid{color:var(--accent);border-color:var(--accent)}
+.ev.did{color:var(--violet);border-color:var(--violet)}
+.ev.rf{color:var(--soft)}
+.samp{display:block;font-size:12px;color:var(--warn);margin-top:4px}
+.watch{display:inline-block;margin-top:4px;padding:1px 6px;border:1px solid var(--crit);border-radius:4px;font-size:12px;color:var(--crit)}
+.empty{padding:24px;line-height:1.7}
+.empty b{color:var(--ink)}
+.detail{display:grid;align-content:start;gap:16px;min-width:0;padding:24px;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto}
+.detail .title{white-space:pre-wrap}
+.detail .disclosure{background:var(--bg)}
+.actions{display:flex;flex-wrap:wrap;gap:8px}
+.placeholder{display:grid;gap:10px;padding:36px 0;color:var(--muted);font-size:14px}
+.placeholder b{font-size:20px;color:var(--ink)}
+.irf-backdrop{position:fixed;inset:0;z-index:20;background:rgba(5,7,9,.62)}
+.irf-drawer{position:fixed;top:0;right:0;bottom:0;z-index:21;width:min(960px,100vw);display:flex;flex-direction:column;border-left:1px solid var(--line2);background:var(--panel);box-shadow:-8px 0 24px #0003}
+.irf-head{display:flex;align-items:center;gap:10px;padding:16px 24px;border-bottom:1px solid var(--line)}
+.irf-head .btn{flex-shrink:0;margin-left:auto}
+.irf-context{display:grid;gap:8px;padding:16px 24px;border-bottom:1px solid var(--line);font-size:14px}
+.irf-body{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain}
+#irfView .chip{font-size:inherit;letter-spacing:normal;text-transform:none;font-weight:inherit;white-space:normal}
+@media(max-width:1100px){.main{grid-template-columns:minmax(0,1fr)}.session-tools{gap:8px}.top{gap:16px}.detail{max-width:none}}
+@media(max-width:760px){.workspace{padding:20px 16px 32px;gap:16px}.session-tools{width:100%;margin-left:0}.session-tools .btn{margin-left:auto}.session-tools .toast{width:100%}.page-heading{align-items:start}.page-heading a{display:none}.receiver-status summary .soft{width:100%;margin-left:25%}.lh{padding:16px}.detail{padding:18px}.scroll table{min-width:560px}.irf-head,.irf-context{padding:16px}.irf-drawer{padding-bottom:env(safe-area-inset-bottom)}}
+/* Live Detections table: a running table of carriers currently seen. Rows are
+   keyed by frequency (hysteresis), so a wobbling signal stays one row. Lapsed
+   rows (not seen in the last few sweeps) fade out rather than vanish, so you can
+   watch an item appear and disappear. The protocol cell is the headline: it shows
+   the ELRS Net ID / DroneID when known, "Unidentified" otherwise. */
+#liveDet .lh{align-items:center}
+#liveDet .lh .grow{flex:1}
+.ld-row{display:grid;grid-template-columns:7.5em 6.5em 6em 9em minmax(0,1fr) 7em 7em 6em;gap:10px;align-items:center;padding:10px 18px;border-bottom:1px solid var(--line);font-size:13px;font-variant-numeric:tabular-nums}
+.ld-row.head{font-size:12px;font-weight:600;color:var(--soft);background:var(--panel);position:sticky;top:0}
+.ld-row{cursor:pointer}
+.ld-row:hover{background:var(--raise)}
+.ld-row.lapsed{opacity:.45}
+.ld-f{font-weight:600}
+.ld-p{color:var(--soft)}
+.ld-band{color:var(--accent)}
+.ld-proto{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ld-proto .id{font-weight:650}
+.ld-proto .id.elrs{color:var(--ok)}
+.ld-proto .id.drone{color:var(--violet)}
+.ld-proto .id.unknown{color:var(--muted);font-weight:400}
+.ld-dur{color:var(--soft)}
+.ld-seen{color:var(--dim)}
+.ld-protocell{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ld-detail{font-size:11px}
+.ld-row.pinned{background:var(--raise)}
+#liveDet .in{padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:inherit;font:inherit;font-size:12px;min-width:0}
+@media(max-width:1100px){.ld-row{grid-template-columns:7em 6em 5.5em 8em minmax(0,1fr) 6em 6em 5em;gap:8px;padding:10px 12px;font-size:12px}}
+@media(max-width:760px){.ld-row{grid-template-columns:1fr 1fr;gap:4px 12px}.ld-row.head{display:none}}
+</style>
+<link rel="stylesheet" href="/inspect-rf.css">
+</head>
+<body>
+<header class="top">
+  <span class="brand"><img src="/brand/icon.png" alt="" width="40" height="40">WaveRaider</span>
+  <nav class="tabs" aria-label="Main">
+    <a class="tab on" href="/monitor" aria-current="page">Monitor</a>
+    <a class="tab" href="/settings">Settings</a>
+  </nav>
+  <span class="grow"></span>
+  <label class="theme-control">Theme <select id="themeSelect"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
+  <div class="session-tools">
+  <span id="toast" class="toast" role="status"></span>
+  <span id="sourceChip" class="chip dim">Idle</span>
+  <span id="clock" class="muted"></span>
+  <button id="elrsFindBtn" class="btn" type="button" title="Sweep the 2.4 GHz band and classify what ELRS PHY is transmitting (LoRa vs GFSK/FLRC) — no rate assumed.">ELRS Find</button>
+  <button id="sessionBtn" class="btn primary" type="button" data-action="start">Start sample session</button>
+  </div>
+</header>
+<main class="workspace">
+<div class="page-heading"><div><div class="eyebrow">RECORDED EVIDENCE</div><h1>Monitor</h1><p>Explore Remote ID reports from a bundled sample. Not live reception.</p></div><a href="/settings#data">Session history &amp; exports ↗</a></div>
+<div id="banner" class="banner" hidden></div>
+<!-- Drones nearby: a prominent, always-visible, real-time table that shows only
+     likely-drone radio links by default (ELRS/LoRa chirp carriers, DroneID
+     candidates, and anything identified). The full carrier list (Wi-Fi, BT,
+     noise) is one toggle away. Keyed by frequency with hysteresis so a wobbling
+     signal stays one row; tracks first/last-seen + count. A sweep alone can't
+     decode a protocol, so a row is only an identified LINK after a seed-confirmed
+     hop fingerprint (Identify). None of this names an aircraft, and an empty
+     table does not establish that nothing is present. -->
+<section class="list" aria-label="Drones nearby" id="liveDet">
+  <div class="lh">
+    <b>Drones nearby</b>
+    <span class="muted" id="liveDetCount"></span>
+    <span class="grow"></span>
+    <input id="liveDetSeed" class="in" type="text" inputmode="numeric" size="10" placeholder="FHSS seed"
+           title="A recovered ELRS FHSS seed (decimal, e.g. 1120344). Entering one lights sync-band carriers as candidates, and Identify confirms it live against the hop sequence. Discovery of an unknown seed is a separate offline sweep.">
+    <button id="liveDetIdentify" class="btn" type="button" title="Pause the stream and run the validated hop fingerprint on the sync channel (~20 s warm, up to ~90 s on a session's first dwell). Confirms a seed into a Net ID, or reports a present-but-unconfirmed ELRS link. Discards the IQ (keep=0).">📡 Identify ELRS link</button>
+    <button id="liveDetShowAll" class="btn" type="button" data-on="0" title="Toggle between likely-drone links only (default) and every carrier above the noise floor (Wi-Fi, Bluetooth, noise included).">Show all carriers</button>
+    <button id="liveDetToggle" class="btn" type="button" data-action="stop" title="Stream the spectrum every ~1.5 s and update this table. Uses the same radio as the Inspect RF drawer and Identify; closing the drawer or toggling this off releases it.">⏸ Stop streaming</button>
+    <button id="liveDetClear" class="btn" type="button" title="Forget every row (reset first-seen / seen-count) and the identified link">Clear</button>
+  </div>
+  <div id="liveDetNote" class="diagpanel" hidden></div>
+  <div id="liveDetList" class="scroll"></div>
+</section>
+<details class="disclosure" id="elrsFindPanel" hidden>
+<summary>ELRS Find — what's on the 2.4 GHz band <span class="soft" id="elrsFindStatus"></span></summary>
+<div id="elrsFindBody" class="cover">Sweeping… (this takes a few seconds: 80 channels × dwell)</div>
+</details>
+<details class="disclosure receiver-status" id="receiverInfo"><summary>Receiver status &amp; coverage <span class="soft" id="receiverSummary">Live Remote ID unavailable</span></summary>
+<section id="receivers" class="recv" aria-label="Receivers"><div class="cell"><span class="sub">Checking receivers…</span></div></section>
+<div id="coverage" class="cover"></div>
+</details>
+<details class="disclosure receiver-status" id="nodeInfo">
+<summary>Sensor nodes <span class="soft" id="nodeSummary">Checking node reporting…</span></summary>
+<div class="cover">Node health is separate from the sample observations below. Device access does not confirm RF reception. GPS positions describe sensors, not aircraft. Timing and localization are unavailable.</div>
+<section id="nodes" class="recv" aria-label="Sensor node health"></section>
+<div id="nodeRecordings" class="cover" aria-label="Recent recording summaries"></div>
+</details>
+<div class="main">
+  <section class="list" aria-label="Observations">
+    <div class="lh">
+      <b id="obsCount">Observations</b>
+      <button id="diagBtn" class="diag" type="button" aria-expanded="false" aria-controls="diagPanel" hidden></button>
+    </div>
+    <div id="diagPanel" class="diagpanel" hidden></div>
+    <div id="obsList" class="scroll"></div>
+  </section>
+  <aside id="detail" class="detail" aria-label="Observation detail" tabindex="-1"></aside>
+</div>
+</main>
+<div id="irfBackdrop" class="irf-backdrop" hidden></div>
+<aside id="irfDrawer" class="irf-drawer" role="dialog" aria-modal="true" aria-labelledby="irfTitle" hidden>
+  <div class="irf-head"><span id="irfTitle" class="title">Inspect RF</span><span class="grow"></span>
+  <label class="theme-control">Theme <select id="themeSelect"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
+    <button id="irfClose" class="btn" type="button">Close ×</button></div>
+  <div id="irfContext" class="irf-context"></div>
+  <div class="irf-body"><div id="irfView" class="irf"></div></div>
+</aside>
+<script src="/spectrum-display.js"></script>
+<script src="/inspect-rf.js"></script>
+<script>
+/* ---- pure renderers ---- */
+function esc(t){return (t==null?"":String(t)).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function ago(sec){
+  if(sec==null||!isFinite(sec))return "—";
+  sec=Math.max(0,Math.round(sec));
+  if(sec<60)return sec+" s ago";
+  const m=Math.floor(sec/60); if(m<60)return m+" min ago";
+  return Math.floor(m/60)+" h "+(m%60)+" min ago";
+}
+function hms(sec){sec=Math.max(0,Math.floor(sec||0));return [Math.floor(sec/3600),Math.floor(sec%3600/60),sec%60].map(n=>String(n).padStart(2,"0")).join(":");}
+function coord(v,d){return (v<0?"−":"")+Math.abs(v).toFixed(d);}
+function fmtPos(p,d){return p?coord(p[0],d)+", "+coord(p[1],d):'<span class="dim">Not reported</span>';}
+function utc(ts){return ts==null?"—":new Date(ts*1000).toISOString().replace("T"," ").slice(0,19)+" UTC";}
+function stripe(state){return ({ready:"ok",unavailable:"crit",not_set_up:"warn",not_ready:"warn"})[state]||"dim";}
+function renderReceivers(r){
+  const cells=(r&&r.receivers||[]).map(x=>{const s=stripe(x.state);
+    const role=x.role&&String(x.name||"").indexOf(x.role)<0?' · '+esc(x.role):'';   // skip a role the name already states
+    return '<div class="cell s-'+s+'"><span class="k">'+esc(x.name)+'</span><span class="'+s+'">'+esc(x.state_label)+role+
+      '</span><span class="sub">'+esc(x.note||"")+'</span></div>';}).join("");
+  const err=r&&r.error?'<div class="cell s-crit"><span class="k">Radios</span><span class="crit">Check failed</span><span class="sub">'+esc(r.error)+'</span></div>':"";
+  return cells+err||'<div class="cell"><span class="sub">No receiver information.</span></div>';
+}
+function renderCoverage(c){
+  c=c||{};
+  const notCovered='<span><span class="dim">Not covered:</span> '+esc((c.not_covered||[]).join(" · "))+'</span>';
+  if(c.active)return '<span><span class="dim">Covered now:</span> '+esc((c.covered||[]).join(" · "))+'</span>'+notCovered;
+  if(c.retained&&c.retained.length)return '<span><span class="dim">Not monitoring.</span> Rows retained from: '+esc(c.retained.join(" · "))+'</span>'+notCovered;
+  return '<span class="dim">Not monitoring.</span>'+notCovered;
+}
+function gapText(s){
+  s=Math.round(s); const m=Math.floor(s/60), r=s%60;
+  return m?(m+" min"+(r?" "+r+" s":"")):(s+" s");
+}
+// Ages and gaps describe updates arriving on this computer (today: sample replay). The words stay neutral on
+// purpose: nothing here may read as an aircraft leaving or returning, or as live reception.
+const LIFECYCLE_NOTE="These ages and gaps describe sample replay updates on this computer. Replay pauses can create gaps. "+
+  "They do not show live reception or establish that an aircraft left or returned, and are not an alert or detection policy.";
+function gapsText(o){
+  const g=o.update_gaps; if(!g||!g.count||g.last_gap_s==null)return "";
+  const a=gapText(g.last_gap_s), art=/^(8|11|18)/.test(a)?"an ":"a ";
+  return (o.sample?"Sample observation updated after ":"Updated after ")+art+a+" gap; "+g.count+(g.count===1?" gap":" gaps")+" recorded";
+}
+function ageSuffix(o){return o.lifecycle==="lapsed"?" · past the age threshold":(o.stale?" · stale":"");}
+function renderRows(obs,now,selected){
+  const cols=5, lapsed=obs.filter(o=>o.lifecycle==="lapsed"), current=obs.filter(o=>o.lifecycle!=="lapsed");
+  const row=o=>{
+    const cls=[o.key===selected?"sel":"",o.stale?"stale":""].filter(Boolean).join(" ");
+    const gaps=gapsText(o);
+    return '<tr'+(cls?' class="'+cls+'"':'')+' data-key="'+esc(o.key)+'" tabindex="0">'+
+      '<td><span class="ev rid">Remote ID</span>'+(o.sample?'<span class="samp">sample</span>':'')+'</td>'+
+      '<td>'+esc(o.transmitter)+'<div class="dim">'+esc(o.transport_label)+'</div></td>'+
+      '<td>'+(o.identity?esc(o.identity):'<span class="soft">Identity not reported</span>')+
+        '<div class="dim">'+esc(o.ua_type_label||"Type not reported")+'</div>'+
+        (o.watchlist&&o.watchlist.length?'<div class="watch">Matches watchlist</div>':'')+'</td>'+
+      '<td>'+fmtPos(o.position,5)+'</td>'+
+      '<td>'+ago(now-o.last_seen)+ageSuffix(o)+(gaps?'<div class="dim">'+esc(gaps)+'</div>':'')+'</td></tr>';};
+  // Nothing is removed: observations past the age threshold get their own row group, still selectable and exportable.
+  const heading=(lapsed.every(o=>o.sample)?"Older sample observations":"Older observations")+" ("+lapsed.length+")";
+  return '<table><thead><tr><th scope="col">Evidence</th><th scope="col">Transmitter</th><th scope="col">Reported identity</th>'+
+    '<th scope="col">Reported position</th><th scope="col">Last heard</th></tr></thead><tbody>'+current.map(row).join("")+'</tbody>'+
+    (lapsed.length?'<tbody><tr class="group"><th scope="rowgroup" colspan="'+cols+'" title="'+esc(LIFECYCLE_NOTE)+'">'+esc(heading)+'</th></tr>'+lapsed.map(row).join("")+'</tbody>':'')+'</table>';
+}
+function emptyState(s){
+  if(!s||s.state==="idle")return '<div class="empty"><b>Not monitoring.</b> Live Remote ID capture isn’t supported yet, so no receiver is listening. Start a sample session to see how Monitor works with recorded data.</div>';
+  if(s.state==="running")return '<div class="empty">Replaying the sample. No Remote ID reports decoded yet.</div>';
+  return '<div class="empty">Session stopped. No Remote ID reports were decoded.</div>';
+}
+function diagLabel(d,open){
+  if(!d||!d.total)return "";
+  return d.total+(d.total===1?" diagnostic issue":" diagnostic issues")+(open?" ▾":" ›");
+}
+function renderDiagnostics(d){
+  if(!d||!d.total)return "";
+  const group=(kind,title,explain)=>{
+    const rs=(d.reasons||[]).filter(r=>r.kind===kind); if(!rs.length)return "";
+    return '<div><b>'+title+'</b> <span class="dim">'+explain+'</span><ul>'+
+      rs.map(r=>'<li>'+esc(r.reason)+' — '+r.count+'</li>').join("")+'</ul></div>';};
+  return group("rejected","Rejected inputs","Nothing from these was used. They never create or refresh an observation.")+
+    group("partial","Fields left out","An invalid field or unsupported message was left out. The rest of that report was kept.");
+}
+function watchToast(res){
+  const shown=JSON.stringify(res.value);
+  return res.matched?{msg:"Added "+shown+" to the watchlist.",error:false}:
+    {msg:"Saved "+shown+", but it doesn’t match this observation.",error:true};
+}
+function renderDetail(o,now){
+  if(!o)return '<div class="placeholder"><b>Observation details</b><span>Select an observation to see its evidence.</span></div>';
+  const nr='<span class="dim">Not reported</span>', f=(k,v)=>'<dt>'+k+'</dt><dd>'+v+'</dd>';
+  const ids=(o.basic_ids||[]).map(b=>esc(b.id_type_label)+': '+(b.text!=null?esc(b.text):'<span class="dim">no usable text</span>')+
+    ' <span class="dim">· raw '+esc(String(b.raw||"").slice(0,18))+'…</span>').join("<br>")||nr;
+  const op=o.operator?fmtPos([o.operator.lat,o.operator.lon],7)+' <span class="warn">('+esc(o.operator.type)+(o.operator.type==="takeoff"?" location":"")+')</span>':nr;
+  let h='<div class="eyebrow">Remote ID broadcast · '+esc(o.transport_label)+(o.sample?' · sample':'')+'</div>'+
+    '<div class="title">'+(o.identity?esc(o.identity):"Identity not reported")+'</div>'+
+    '<div class="sub">Transmitter '+esc(o.transmitter)+' · protocol version '+esc(o.protocol_version==null?"—":o.protocol_version)+
+      ' · '+o.messages+(o.messages===1?" message":" messages")+'</div>';
+  if(o.watchlist&&o.watchlist.length)h+='<div><span class="watch">Matches watchlist: '+esc(o.watchlist.join(", "))+'</span></div>';
+  h+='<p class="note">Reported values are not authenticated. One transmitter isn’t proof of one aircraft.</p>';
+  h+='<div class="h">Reported</div><dl>'+f("Basic ID",ids)+f("UA type",o.ua_type_label?esc(o.ua_type_label):nr)+
+    f("Drone position",o.position?fmtPos(o.position,7):nr)+f("Altitude",o.alt_m!=null?o.alt_m.toFixed(1)+" m geodetic":nr)+
+    f("Operator",op)+f("Operator ID",o.operator_id?esc(o.operator_id):nr)+'</dl>';
+  h+='<div class="h">Time</div><dl>'+f("First heard",utc(o.first_seen))+
+    f("Last heard",utc(o.last_seen)+' <span class="dim">· '+ago(now-o.last_seen)+ageSuffix(o)+'</span>')+
+    (o.update_gaps&&o.update_gaps.count?f("Latest recorded sequence",utc(o.sequence_started)+' to '+utc(o.last_seen)+
+      ' <span class="dim">· '+esc(gapsText(o))+'. A new sequence begins only when an update follows a gap longer than the stale threshold.</span>'):"")+
+    f("Claimed time",o.claimed_time_s!=null?o.claimed_time_s.toFixed(1)+' s after the hour <span class="dim">(from the drone)</span>':nr)+'</dl>';
+  if(o.lifecycle==="lapsed"||(o.update_gaps&&o.update_gaps.count))
+    h+='<p class="note">'+esc(o.sample?LIFECYCLE_NOTE:LIFECYCLE_NOTE.replace("sample replay updates","updates received"))+'</p>';
+  h+='<div class="actions"><button class="btn" type="button" data-act="watch">Add to watchlist</button>'+
+    '<a class="btn" data-act="export" href="/api/export?format=json&amp;key='+encodeURIComponent(o.key)+'" download>Export evidence</a>'+
+    '<button class="btn" type="button" data-act="inspect">Inspect RF…</button></div>';
+  h+='<details class="disclosure" data-disclosure="evidence"><summary data-act="evidence-notes">How to read this evidence</summary><div class="disclosure-body">';
+  h+='<div class="caveat">Values are what the transmitter broadcasts. They’re not authenticated, and one transmitter isn’t proof of one aircraft.</div>';
+  if(o.sample)h+='<div class="caveat">Sample data replayed from a bundled capture. Received times are when this session replayed each frame, not the original capture times.</div>';
+  h+='</div></details>';
+  return h;
+}
+function historyNote(h){
+  h=h||{};                                   // an id alone is not a saved record: only the reported state counts
+  if(h.state==="pending")return ' Saving its record to history…';
+  if(h.state==="saved")return ' It was saved to session history, under <a href="/settings#data">Settings › Data &amp; export</a>.';
+  if(h.state==="failed")return ' '+esc(h.error||"This session wasn’t saved to history.");
+  return '';
+}
+function sessionView(s,now){
+  const sample=s.source==="sample";
+  if(s.state==="running")return {chip:sample?"Sample data":"Live",chipClass:sample?"warn":"ok",action:"stop",button:"Stop session",
+    clock:"Session "+hms(now-s.started_at),bannerCrit:false,
+    banner:sample?'<b>Sample replay is running.</b> Recorded data, not live reception.':null};
+  if(s.state==="stopped")return {chip:sample?"Stopped · sample":"Stopped",chipClass:"dim",action:"start",button:"Start sample session",
+    clock:s.stopped_at?"Stopped "+ago(now-s.stopped_at):"",bannerCrit:!!s.error,
+    banner:s.error?'<b>The sample replay stopped unexpectedly.</b> '+esc(s.error)+historyNote(s.history):
+      (sample?'<b>Session stopped.</b> Sample observations are retained and continue to age.'+historyNote(s.history):null)};
+  return {chip:"Idle",chipClass:"dim",action:"start",button:"Start sample session",clock:"",banner:null,bannerCrit:false};
+}
+function inspectTarget(hash){
+  // "#inspect" or "#inspect=<radio usb id>", the link Settings › Receivers uses; null for anything else
+  const m=/^#inspect(?:=(.*))?$/.exec(String(hash||"")); if(!m)return null;
+  let device=""; try{device=m[1]?decodeURIComponent(m[1]):"";}catch(e){}
+  return {device:device};
+}
+function inspectContext(o,device){
+  let h=o?'<div class="sub">Opened from '+(o.identity?esc(o.identity):"an observation with no reported identity")+
+      ' · transmitter '+esc(o.transmitter)+' · '+esc(o.transport_label)+'</div>':
+    '<div class="sub">Opened from Settings › Receivers'+(device?' for radio '+esc(device):'')+'.</div>';
+  h+='<div class="caveat">Shows what the selected radio receives now. '+(o?'It doesn’t show that this transmitter is on any frequency. ':'')+
+    'A peak or RF profile hint isn’t a detection.</div>';
+  if(o&&o.sample)h+='<div class="caveat">This observation is replayed sample data, so its transmitter isn’t on the air here.</div>';
+  return h+'<div class="sub">Closing this drawer stops live capture and releases the radio.</div>';
+}
+function renderNodes(data){
+  if(data.state==="not_configured")return '<div class="cell"><b>Node reporting not connected</b><span class="sub">Enable the local coordinator view during server setup. Sample replay remains available.</span></div>';
+  if(data.state!=="available")return '<div class="cell s-crit"><b>Node status unavailable</b><span class="sub">'+esc(data.error||"Could not read coordinator status.")+'</span></div>';
+  const labels={accessible:"Device accessible · RF untested",not_probed:"Receiver not probed",unavailable:"Receiver unavailable",not_ready:"Receiver not ready",unsupported:"Receiver unsupported",unknown:"Receiver status unknown"};
+  return data.nodes.map(n=>'<div class="cell '+(n.link_state==="recent"&&n.health_state==="recent"?'':'s-warn')+'"><b>'+esc(n.node_id)+(n.simulated?' · SIMULATED':'')+'</b>'+
+    '<span>Link '+esc(n.link_state)+' · last receipt '+ago(n.seconds_since_receipt)+'</span>'+
+    '<span>Heartbeat age '+ago(n.heartbeat_age_s)+' · based on sender clock</span>'+
+    '<span>'+esc(labels[n.receiver_state]||"Receiver status unknown")+'</span><span class="sub">'+esc(n.receiver_detail)+'</span>'+
+    '<span>GPS '+esc(({not_configured:"not configured",no_fix:"no fix",valid:"valid fix",stale:"stale",unavailable:"unavailable",disconnected:"disconnected"})[n.position.state]||"unknown")+(n.position.age_s==null?'':' · fix age '+ago(n.position.age_s))+'</span>'+
+    '<span>Queue losses '+esc(n.outbox_dropped_total==null?'unknown':n.outbox_dropped_total)+' · sequence gaps '+esc(n.sequence_gaps)+'</span></div>').join('')||'<div class="cell">No node reports received yet.</div>';
+}
+function renderNodeRecordings(data){
+  if(data.state!=="available")return '';
+  const rows=data.recordings.slice(0,8).map(r=>'<div><b>'+esc(r.node_id)+(r.simulated?' · SIMULATED':' · recorded IQ')+'</b> — '+esc(r.operator_label)+
+    ' · '+esc(r.sample_count)+' samples · overruns '+esc(r.overruns)+' · discontinuities '+esc(r.discontinuities)+
+    '<br><span class="sub">Capture '+esc(r.capture_id)+' · '+esc(r.created_at)+' · IQ remains on sensor</span></div>');
+  return '<b>Recent recording summaries</b>'+ (rows.join('')||'<span>No retained recording summaries.</span>');
+}
+// ---- "Drones nearby" table: filter + protocol cell + confirmed-link detail ----
+// A spectrum sweep gives freq + bandwidth + band, not a decoded protocol, so a
+// row is only shown in the drones-only view when there is real drone evidence.
+// `seedSet` is whether the operator has entered a known FHSS seed (it lights the
+// sync-band "candidate" state); it is NOT per-row — one seed for the session.
+function isDroneRow(row, seedSet){
+  // confirmed/present ELRS link, or a DroneID candidate (kept for future DJI)
+  if(row.elrs_net_id || row.elrs_link || row.droneid) return true;
+  // the chirp detector flagged a likely ELRS/LoRa carrier (a PHY hint)
+  const cands=row.rf_candidates||[];
+  if(cands.some(c=>/ELRS|LoRa/i.test(c))) return true;
+  // a carrier in the ELRS 2.4 GHz sync band, once a seed is set, is a candidate
+  const mhz=row.freq_hz/1e6;
+  if(seedSet && mhz>=2435 && mhz<=2445) return true;
+  return false;
+}
+// The protocol cell — the row's headline. Honest in every state: an identifier
+// for a radio LINK (never an aircraft), and a PHY hint is never a confirmed ID.
+function protoCell(row, seedSet){
+  const mhz=row.freq_hz/1e6;
+  if(row.elrs_net_id){
+    return '<span class="ld-proto"><span class="id elrs" title="ELRS FHSS LCG seed, confirmed against this link. An identifier for a radio LINK — not an aircraft, not a hardware serial.">\u{1F4E1} ELRS · Net ID '+esc(row.elrs_net_id)+'</span></span>';
+  }
+  if(row.elrs_link){
+    return '<span class="ld-proto"><span class="id elrs" title="A hopping ELRS link read off the air by the hop fingerprint. Present and SELF-CONSISTENT, but unconfirmed — no seed has matched it yet. A radio link, not an aircraft.">\u{1F4E1} ELRS link (present)</span></span>';
+  }
+  if(row.droneid){
+    return '<span class="ld-proto"><span class="id drone" title="DJI DroneID candidate (pilot pair). A pilot-pair candidate, not a confirmed identity.">\u{1F6F0} DroneID</span></span>';
+  }
+  if(seedSet && mhz>=2435 && mhz<=2445){
+    return '<span class="ld-proto"><span class="id unknown" title="In the ELRS 2.4 GHz band near the sync channel, with a seed set. Likely the ELRS link; press Identify to confirm it with the hop fingerprint.">ELRS candidate (unconfirmed)</span></span>';
+  }
+  const cands=row.rf_candidates||[];
+  if(cands.some(c=>/ELRS|LoRa|lora/i.test(c))){
+    return '<span class="ld-proto"><span class="id unknown" title="Chirp detector flagged this carrier as a likely ELRS/LoRa signal (elrs_hint). A PHY hint, not a confirmed identity. Press Identify to read the hop sequence.">ELRS/LoRa (chirp hint)</span></span>';
+  }
+  const candsStr=cands.length?'<span class="muted" title="'+esc(row.identification_note||"")+'">~ '+esc(cands.slice(0,2).join(', '))+'</span>':'';
+  return '<span class="ld-proto"><span class="id unknown" title="'+esc(row.identification_note||"Frequency and bandwidth only; no drone-specific evidence.")+'">Unidentified</span>'+candsStr+'</span>';
+}
+// The second line under an identified/present ELRS link: the corroboration the
+// hop dwell produced. The Net ID itself lives in the protocol cell above, so it
+// is not repeated here; a seedless dwell admits "net_id unconfirmed".
+function elrsLinkDetail(link){
+  if(!link) return "";
+  const bits=[];
+  if(!link.net_id) bits.push("net_id unconfirmed");
+  if(link.elrs_generation) bits.push(esc(link.elrs_generation));
+  if(link.hop_interval_ms) bits.push("~"+Number(link.hop_interval_ms).toFixed(1)+" ms hop");
+  if(link.evidence) bits.push(esc(link.evidence));
+  return '<span class="ld-detail muted" title="An identifier for a radio LINK, not an aircraft, and not a hardware serial.">'+bits.join(" · ")+'</span>';
+}
+/* ---- end pure renderers ---- */
+
+const state={session:null,obs:[],skew:0,selected:null,diag:{total:0,reasons:[]},diagOpen:false,error:null,inspect:{open:false,fromHash:false}};
+const $=id=>document.getElementById(id);
+const serverNow=()=>Date.now()/1000-state.skew;
+async function getJSON(url,opts){
+  let r;
+  try{r=await fetch(url,opts);}catch(e){throw new Error("The WaveRaider server didn’t respond.");}
+  let body={}; try{body=await r.json();}catch(e){}
+  if(!r.ok)throw new Error(body.error||"Request failed ("+r.status+").");
+  return body;
+}
+let toastTimer=null;
+function toast(msg,isError){const t=$("toast");t.textContent=msg;t.className="toast"+(isError?" err":"");
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>{t.textContent="";},6000);}
+function setBanner(html,crit){const b=$("banner");b.hidden=!html;b.className="banner"+(crit?" crit":"");b.innerHTML=html||"";}
+
+function paint(){
+  const s=state.session;
+  if(state.error)setBanner('<b>Can’t reach the WaveRaider server.</b> '+esc(state.error)+' Check that it’s still running, then reload.',true);
+  if(!s)return;
+  const now=serverNow(), v=sessionView(s,now);
+  if(!state.error)setBanner(v.banner,v.bannerCrit);
+  const chip=$("sourceChip"); chip.textContent=v.chip; chip.className="chip "+v.chipClass;
+  $("clock").textContent=v.clock;
+  const btn=$("sessionBtn"); btn.textContent=v.button; btn.dataset.action=v.action;
+  $("coverage").innerHTML=renderCoverage(s.coverage);
+  $("obsCount").textContent="Observations ("+state.obs.length+")";
+
+  const focusKey=document.activeElement&&document.activeElement.dataset?document.activeElement.dataset.key:null;
+  let html;
+  if(state.obs.length)html=renderRows(state.obs,now,state.selected);
+  else html=emptyState(s);
+  $("obsList").innerHTML=html;
+  // restore focus after the redraw without scrolling: a plain focus() pulled the page back to this row every second
+  if(focusKey){const row=[...document.querySelectorAll("#obsList tr[data-key]")].find(tr=>tr.dataset.key===focusKey);if(row)row.focus({preventScroll:true});}
+
+  const d=state.diag, db=$("diagBtn");
+  db.hidden=!d.total;
+  db.textContent=diagLabel(d,state.diagOpen);
+  db.setAttribute("aria-expanded",String(state.diagOpen&&!!d.total));
+  const dp=$("diagPanel"); dp.hidden=!(state.diagOpen&&d.total); dp.innerHTML=renderDiagnostics(d);
+
+  const detail=$("detail"), focusAct=detail.contains(document.activeElement)?document.activeElement.dataset.act:null;
+  const expanded=[...detail.querySelectorAll("details[open][data-disclosure]")].map(x=>x.dataset.disclosure);
+  detail.innerHTML=renderDetail(state.obs.find(o=>o.key===state.selected)||null,now);
+  detail.querySelectorAll("details[data-disclosure]").forEach(x=>{x.open=expanded.includes(x.dataset.disclosure);});
+  if(focusAct){const el=detail.querySelector('[data-act="'+focusAct+'"]');if(el)el.focus({preventScroll:true});}
+}
+
+async function refresh(){
+  try{
+    const [s,o,d]=await Promise.all([getJSON("/api/session"),getJSON("/api/observations"),getJSON("/api/diagnostics")]);
+    state.session=s; state.obs=o.observations; state.skew=Date.now()/1000-o.now; state.diag=d; state.error=null;
+    if(state.selected&&!state.obs.some(x=>x.key===state.selected))state.selected=null;
+    if(!state.selected&&state.obs.length)state.selected=state.obs[0].key;
+  }catch(e){state.error=e.message;}
+  paint();
+}
+async function refreshNodes(){
+  let data;
+  try{data=await getJSON("/api/nodes");}catch(e){data={state:"unavailable",error:e.message};}
+  $("nodes").innerHTML=renderNodes(data);
+  $("nodeRecordings").innerHTML=renderNodeRecordings(data);
+  const stale=data.state==="available"&&data.nodes.some(n=>n.link_state!=="recent"||n.health_state!=="recent");
+  $("nodeSummary").textContent=data.state==="available"?data.nodes.length+" node(s)"+(stale?" · stale reports":""):data.state==="not_configured"?"Not connected":"Status unavailable";
+}
+async function refreshReceivers(force){
+  try{const r=await getJSON("/api/receivers"+(force?"?refresh=1":""));$("receivers").innerHTML=renderReceivers(r);$("receiverSummary").textContent=r.error?"Receiver check failed · view details":"Live Remote ID unavailable";}
+  catch(e){$("receivers").innerHTML=renderReceivers({receivers:[],error:e.message});$("receiverSummary").textContent="Receiver check failed · view details";}
+}
+
+$("sessionBtn").addEventListener("click",async()=>{
+  const btn=$("sessionBtn"), stopping=btn.dataset.action==="stop";
+  btn.disabled=true;
+  try{
+    await getJSON("/api/session",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(stopping?{action:"stop"}:{action:"start",source:"sample"})});
+    if(!stopping)state.selected=null;
+    toast(stopping?"Session stopped.":"Sample session started.");
+    await refresh();
+  }catch(e){toast(e.message,true);}
+  finally{btn.disabled=false;}
+});
+// ---- ELRS Find: modulation-agnostic 2.4 GHz PHY sweep (no rate assumed) ----
+function renderElrsFind(data){
+  const panel=$("elrsFindPanel"), body=$("elrsFindBody"), status=$("elrsFindStatus");
+  panel.hidden=false;
+  const chs=data.channels||[];
+  if(!chs.length){
+    status.textContent="nothing found";
+    body.className="cover";
+    body.innerHTML=(data.interpretation||["No energy on the swept channels."]).map(esc).join("<br>");
+    return;
+  }
+  status.textContent=chs.length+" channel(s) with energy";
+  let h='<table><thead><tr><th>Ch</th><th>MHz</th><th>Power (dB)</th><th>PHY</th><th>LoRa</th><th>GFSK</th><th>Detail</th></tr></thead><tbody>';
+  for(const r of chs){
+    const phyCls=r.phy==="gfsk"?"ok":r.phy==="lora"?"warn":"dim";
+    const detail=[];
+    if(r.lora_rate)detail.push("LoRa rate "+esc(r.lora_rate));
+    if(r.gfsk_sync_starts&&r.gfsk_sync_starts.length)detail.push("GFSK sync @ "+r.gfsk_sync_starts.slice(0,3).join(", "));
+    h+='<tr><td>'+r.channel+'</td><td>'+r.freq_mhz.toFixed(1)+'</td><td>'+r.power_db+'</td>'
+      +'<td class="'+phyCls+'">'+esc(r.phy)+'</td><td>'+r.lora_score+'</td><td>'+r.gfsk_score+'</td>'
+      +'<td class="muted">'+detail.map(esc).join(" · ")+'</td></tr>';
+  }
+  h+='</tbody></table>';
+  if(data.interpretation&&data.interpretation.length){
+    h+='<div class="muted" style="margin-top:10px"><b>Interpretation:</b><br>'+data.interpretation.map(esc).join("<br>")+'</div>';
+  }
+  h+='<div class="muted" style="margin-top:10px;font-size:13px">srate '+(data.srate/1e6).toFixed(1)+' MS/s · UID '+(data.uid||"default")
+    +'</div>';
+  if(data.saved_dir){
+    h+='<div class="muted" style="margin-top:6px;font-size:13px"><b>Capture saved:</b> '
+      + esc(data.saved_dir) +' <span class="soft">(' + data.saved_files + ' IQ file(s) + manifest.json — upload this dir for offline analysis)</span></div>';
+  }
+  body.className="";
+  body.innerHTML=h;
+}
+$("elrsFindBtn").addEventListener("click",async()=>{
+  const btn=$("elrsFindBtn");
+  btn.disabled=true;
+  const panel=$("elrsFindPanel");
+  panel.hidden=false;
+  $("elrsFindStatus").textContent="sweeping…";
+  // Live progress: the body shows a % + a thin bar + the current channel/freq,
+  // updated from the SSE stream as each channel is classified.
+  const body=$("elrsFindBody");
+  body.className="";
+  body.innerHTML='<div style="font-size:13px">Sweeping 80 channels… (50 ms dwell)<div id="elrsFindPct" class="muted" style="margin-top:4px">0%</div><div style="height:6px;background:var(--panel,#222);border-radius:3px;overflow:hidden;margin-top:4px"><div id="elrsFindBar" style="height:100%;width:0%;background:#4caf50;transition:width .2s"></div></div><div id="elrsFindCur" class="muted" style="margin-top:4px;font-size:12px"></div></div>';
+  const pctEl=$("elrsFindPct"), barEl=$("elrsFindBar"), curEl=$("elrsFindCur");
+  toast("ELRS Find: sweeping the 2.4 GHz band…");
+  try{
+    // Read the SSE stream (the blocking /api/elrs would give no progress mid-sweep).
+    // /api/elrs/progress is in RF_GET_ROUTES, so the X-WaveRaider-Request header is
+    // required (same anti-cross-site-radio guard as specApi in inspect_rf.js).
+    const resp=await fetch("/api/elrs/progress?srate=10000000&gain=40&dwell_ms=50&channels=80",
+      {headers:{"X-WaveRaider-Request":"1"}});
+    if(!resp.ok||!resp.body){throw new Error("ELRS Find failed: "+(await resp.text()));}
+    const reader=resp.body.getReader();
+    const dec=new TextDecoder();
+    let buf="";
+    while(true){
+      const {value,done}=await reader.read();
+      if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      // SSE frames are `data: {json}\n\n` — split on the blank-line boundary.
+      let idx;
+      while((idx=buf.indexOf("\n\n"))>=0){
+        const frame=buf.slice(0,idx); buf=buf.slice(idx+2);
+        const line=frame.replace(/^data:\s*/m,"").trim();
+        if(!line)continue;
+        let ev; try{ev=JSON.parse(line);}catch(_){continue;}
+        if(ev.type==="progress"){
+          const pct=Math.round(100*ev.done/ev.total);
+          pctEl.textContent=pct+"%  ("+ev.done+"/"+ev.total+")";
+          barEl.style.width=pct+"%";
+          curEl.textContent=ev.freq_mhz+" MHz → "+ev.phy;
+        }else if(ev.type==="result"){
+          renderElrsFind(ev);   // ev has channels/interpretation/saved_dir/…
+          return;
+        }else if(ev.type==="error"){
+          throw new Error(ev.error||"sweep error");
+        }
+      }
+    }
+    throw new Error("ELRS Find stream ended without a result.");
+  }catch(e){
+    $("elrsFindPanel").hidden=false;
+    $("elrsFindStatus").textContent="error";
+    body.className="cover";
+    body.textContent=e.message;
+    toast(e.message,true);
+  }finally{btn.disabled=false;}
+});
+function selectObservation(key){
+  state.selected=key;paint();
+  // On stacked layouts bring the selected evidence into view; keep desktop scanning in place.
+  if(window.matchMedia&&window.matchMedia("(max-width:1100px)").matches){
+    $("detail").scrollIntoView({block:"start"});$("detail").focus({preventScroll:true});
+  }
+}
+$("obsList").addEventListener("click",e=>{const tr=e.target.closest("tr[data-key]");if(tr)selectObservation(tr.dataset.key);});
+$("obsList").addEventListener("keydown",e=>{
+  if((e.key==="Enter"||e.key===" ")&&e.target.matches("tr[data-key]")){e.preventDefault();selectObservation(e.target.dataset.key);}
+});
+$("diagBtn").addEventListener("click",()=>{state.diagOpen=!state.diagOpen;paint();});
+$("detail").addEventListener("click",async e=>{
+  if(e.target.closest('button[data-act="inspect"]')){const o=state.obs.find(x=>x.key===state.selected);if(o)openInspect(o,"");return;}
+  const b=e.target.closest('button[data-act="watch"]'); if(!b||!state.selected)return;
+  try{
+    const res=await getJSON("/api/monitor/watch",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({key:state.selected})});
+    const t=watchToast(res); toast(t.msg,t.error); await refresh();
+  }catch(err){toast(err.message,true);}
+});
+
+/* ---- Inspect RF drawer ---- */
+const INSPECT_BACKGROUND=["header.top",".workspace","#banner","#receivers","#coverage",".main"];
+specUseHost({active:()=>state.inspect.open, view:()=>$("irfView")});
+function setBackgroundInert(on){INSPECT_BACKGROUND.forEach(sel=>{const el=document.querySelector(sel);if(el)el.inert=on;});}
+function teardownInspect(){                              // shared by closing and by switching radios from a link
+  if(!state.inspect.open)return false;
+  specUnmount();                                        // stop live capture, drop in-flight sweeps, release the radio
+  state.inspect={open:false,fromHash:false};
+  $("irfView").innerHTML=""; $("irfContext").innerHTML="";
+  $("irfDrawer").hidden=true; $("irfBackdrop").hidden=true; setBackgroundInert(false);
+  return true;
+}
+function openInspect(o,device,fromHash){
+  teardownInspect();
+  state.inspect={open:true,fromHash:!!fromHash};
+  if(device)specDevice=device;
+  $("irfContext").innerHTML=inspectContext(o,device);
+  $("irfBackdrop").hidden=false; $("irfDrawer").hidden=false; setBackgroundInert(true);
+  $("irfClose").focus({preventScroll:true});
+  specMount();
+}
+function closeInspect(restoreFocus){
+  if(!teardownInspect())return;
+  if(inspectTarget(location.hash))history.replaceState(null,"",location.pathname+location.search);
+  // with nothing selected there's no observation button to go back to, so fall back to a visible control
+  if(restoreFocus!==false){const b=document.querySelector('#detail [data-act="inspect"]')||$("sessionBtn");if(b)b.focus({preventScroll:true});}
+}
+function inspectFromHash(){
+  const t=inspectTarget(location.hash);
+  if(!t){if(state.inspect.open&&state.inspect.fromHash)closeInspect();return;}   // navigated away from the link
+  if(!state.inspect.open){openInspect(null,t.device,true);return;}
+  if(t.device&&t.device!==specDevice)openInspect(null,t.device,true);            // the link now names another radio
+}
+$("irfClose").addEventListener("click",()=>closeInspect());
+$("irfBackdrop").addEventListener("click",()=>closeInspect());
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&state.inspect.open){e.preventDefault();closeInspect();}});
+window.addEventListener("hashchange",inspectFromHash);
+inspectFromHash();
+
+refreshReceivers(false);
+setInterval(()=>refreshReceivers(false),15000);
+(async function nodeLoop(){await refreshNodes();setTimeout(nodeLoop,5000);})();
+(async function loop(){await refresh();setTimeout(loop,1000);})();
+
+/* ---- Live Detections: a running table of carriers currently seen ----
+   Polls /api/spectrum every ~1.5 s (the same endpoint the Inspect RF drawer uses).
+   Maintains a map keyed by frequency (with hysteresis: a signal that wobbles
+   ±15 kHz stays the same row). Tracks first_seen / last_seen / seen_count so you
+   watch items appear and disappear. Rows not seen in the last ~4 s go "lapsed"
+   (faded) rather than vanishing, so a fleeting signal is still visible for a moment.
+   The protocol cell is the headline: ELRS Net ID (when a seed is set + the carrier
+   is near the 2.4 GHz sync channel), DroneID (when the carrier is in a DJI band and
+   a row-click runs a scan), or "Unidentified" (a sweep alone doesn't decode a
+   protocol). Clicking a row opens the Inspect RF drawer tuned to that frequency. */
+(function(){
+  const HYS_HZ=15000;        // frequency hysteresis: a signal within this of a known row is the same row
+  const LAPSE_S=4.0;         // a row not seen in this many seconds goes lapsed (faded)
+  const PURGE_S=20.0;        // a lapsed row older than this is removed entirely
+  const SWEEP_MS=1500;       // poll cadence
+  const det={rows:new Map(),streaming:false,timer:null,lastSweep:0,
+             seed:"",showAll:false,elrsLink:null,identifying:false};
+  const elList=$("liveDetList"), elCount=$("liveDetCount"), elNote=$("liveDetNote"),
+        btnToggle=$("liveDetToggle"), btnClear=$("liveDetClear"),
+        elSeed=$("liveDetSeed"), btnIdentify=$("liveDetIdentify"), btnShowAll=$("liveDetShowAll");
+  if(!elList)return;
+  // protoCell / isDroneRow / elrsLinkDetail live in the pure-renderers block above
+  // (node-tested). The seed is per-session, not per-row: `!!det.seed` is passed in.
+
+  // A carrier's stable key: the nearest existing row within hysteresis, else its own freq.
+  function keyFor(freq_hz){
+    let best=null,bestD=HYS_HZ;
+    for(const k of det.rows.keys()){const d=Math.abs(k-freq_hz);if(d<bestD){bestD=d;best=k;}}
+    return best!==null?best:Math.round(freq_hz/1000)*1000;
+  }
+  function durStr(row){
+    const s=(det.lastSweep-row.first_seen)/1000;
+    if(s<60)return s.toFixed(0)+" s";
+    const m=Math.floor(s/60);return m+" m "+Math.round(s%60)+" s";
+  }
+  // One rendered row (the pinned ELRS link uses the same shape, freq -> sync channel).
+  function rowHtml(r){
+    const lapsed=!r.pinned&&(det.lastSweep-r.last_seen)>LAPSE_S*1000;
+    const seedSet=!!det.seed;
+    const detail=(r.elrs_net_id||r.elrs_link)?elrsLinkDetail(r):"";
+    return '<div class="ld-row'+(lapsed?' lapsed':'')+(r.pinned?' pinned':'')+'" data-freq="'+r.freq_hz+'" title="Click to open Inspect RF tuned to '+ (r.freq_hz/1e6).toFixed(3) +' MHz">'+
+      '<span class="ld-f">'+(r.freq_hz/1e6).toFixed(3)+' MHz</span>'+
+      '<span class="ld-p">'+(r.db==null?'—':r.db+' dB')+'</span>'+
+      '<span class="ld-p">'+(r.bw_khz?r.bw_khz+' kHz':'—')+'</span>'+
+      '<span class="ld-band">'+esc(r.band)+'</span>'+
+      '<span class="ld-protocell">'+protoCell(r,seedSet)+detail+'</span>'+
+      '<span class="ld-dur" title="First seen">'+ago(det.lastSweep/1000-r.first_seen/1000)+'</span>'+
+      '<span class="ld-dur" title="Last seen">'+ago(det.lastSweep/1000-r.last_seen/1000)+'</span>'+
+      '<span class="ld-seen">'+(r.pinned?'link':r.seen_count)+'</span>'+
+      '</div>';
+  }
+  function render(){
+    const seedSet=!!det.seed;
+    // Carrier rows, strongest first, lapsed last; filtered to likely-drone unless "show all".
+    let carriers=[...det.rows.values()];
+    if(!det.showAll) carriers=carriers.filter(r=>isDroneRow(r,seedSet));
+    carriers.sort((a,b)=>{
+      const la=(det.lastSweep-a.last_seen)>LAPSE_S*1000, lb=(det.lastSweep-b.last_seen)>LAPSE_S*1000;
+      if(la!==lb)return la?1:-1;
+      return b.db-a.db;
+    });
+    // The identified/present ELRS link is pinned on top (it hops, so it is not a carrier row).
+    const arr=det.elrsLink?[det.elrsLink,...carriers]:carriers;
+    if(!arr.length){
+      const what=det.showAll?'carriers above the noise floor':'drone links';
+      const hint=det.showAll
+        ? 'Every carrier appears here with its frequency, power and band.'
+        : 'A likely-drone carrier (ELRS/LoRa chirp) will appear here; enter a seed and press Identify to confirm a known link. Use “Show all carriers” to see Wi-Fi/BT/noise too.';
+      elList.innerHTML='<div class="empty"><b>No '+what+' '+(det.streaming?'right now':'(streaming stopped)')+'.</b><br>'+
+        'This does not establish that nothing is present. '+hint+'</div>';
+      elCount.textContent="";
+      return;
+    }
+    let h='<div class="ld-row head"><span>Freq</span><span>Power</span><span>BW</span><span>Band</span><span>Protocol</span><span>First seen</span><span>Last seen</span><span>Seen</span></div>';
+    for(const r of arr) h+=rowHtml(r);
+    elList.innerHTML=h;
+    const active=carriers.filter(r=>(det.lastSweep-r.last_seen)<=LAPSE_S*1000).length;
+    const mode=det.showAll?'all carriers':'drones only';
+    elCount.textContent=(det.elrsLink?'1 link · ':'')+active+' active · '+arr.length+' shown ('+mode+')';
+  }
+  async function sweep(){
+    if(!det.streaming)return;
+    let d;
+    try{
+      // The spectrum endpoint needs the X-WaveRaider-Request header (anti-cross-site-radio guard).
+      // elrs_hint=1 makes the sweep probe the strongest carriers with the chirp detector
+      // and tag a likely ELRS/LoRa carrier in rf_candidates (so the protocol cell can show it).
+      const r=await fetch("/api/spectrum?center=2440400000&span=20000000&bins=256&owner=liveDet&elrs_hint=1",
+        {headers:{"X-WaveRaider-Request":"1"}});
+      if(!r.ok)throw new Error("spectrum "+r.status);
+      d=await r.json();
+      // The radio is held by another session (e.g. the Inspect RF drawer is open).
+      // Don't stop streaming — just note it + retry on the next tick.
+      if(d.error==="busy"){
+        elNote.hidden=false;
+        elNote.textContent="Drones nearby: the radio is held by "+esc(d.held_by||"another session")+". Waiting for it to be released (close the Inspect RF drawer or stop the other session).";
+        if(det.streaming)det.timer=setTimeout(sweep,SWEEP_MS);
+        return;
+      }
+      if(d.error)throw new Error(d.error);
+    }catch(e){
+      det.streaming=false;updateBtn();
+      elNote.hidden=false;elNote.textContent="Drones nearby: "+e.message+" — streaming stopped.";
+      return;
+    }
+    det.lastSweep=Date.now();
+    // Merge this sweep's signals into the running map (hysteresis keying).
+    const seen=new Set();
+    for(const s of (d.signals||[])){
+      const k=keyFor(s.freq_hz);
+      const existing=det.rows.get(k);
+      if(existing){
+        existing.freq_hz=s.freq_hz;      // track the wobble
+        existing.db=s.db;
+        existing.bw_khz=s.bw_khz;
+        existing.band=s.band;
+        existing.rf_candidates=s.rf_candidates;
+        existing.identification_note=s.identification_note;
+        existing.last_seen=det.lastSweep;
+        existing.seen_count++;
+      }else{
+        det.rows.set(k,{freq_hz:s.freq_hz,db:s.db,bw_khz:s.bw_khz,band:s.band,
+          rf_candidates:s.rf_candidates,identification_note:s.identification_note,
+          first_seen:det.lastSweep,last_seen:det.lastSweep,seen_count:1,
+          elrs_net_id:null,droneid:false});
+      }
+      seen.add(k);
+    }
+    // Purge rows not seen in a long time (the lapsed ones fade in render; this removes them).
+    for(const k of [...det.rows.keys()]){
+      if(!seen.has(k)&&(det.lastSweep-det.rows.get(k).last_seen)>PURGE_S*1000)det.rows.delete(k);
+    }
+    render();
+    if(det.streaming)det.timer=setTimeout(sweep,SWEEP_MS);
+  }
+  function updateBtn(){
+    btnToggle.textContent=det.streaming?"⏸ Stop streaming":"▶ Stream live";
+    btnToggle.dataset.action=det.streaming?"stop":"start";
+  }
+  function start(){
+    if(det.streaming)return;
+    det.streaming=true;det.lastSweep=Date.now();updateBtn();
+    elNote.hidden=true;
+    sweep();
+  }
+  function stop(){
+    det.streaming=false;
+    if(det.timer){clearTimeout(det.timer);det.timer=null;}
+    updateBtn();
+  }
+  // Build the pinned ELRS-link row from an /api/elrs/fhss result. `confirmed`
+  // means a seed matched, so a Net ID is honest; otherwise the link is only
+  // "present" and its net_id stays null (never shown).
+  function linkFromResult(d,confirmed){
+    const sync=d.sync||{};
+    const fhz=(sync.channel!=null)?2400400000+1000000*sync.channel
+             :(d.center_freq_hz||2440400000);
+    const now=Date.now();
+    return {freq_hz:fhz,band:"2.4 GHz ELRS",pinned:true,elrs_link:true,
+      elrs_net_id:confirmed?d.net_id:null, net_id:confirmed?d.net_id:null,
+      elrs_generation:sync.elrs_generation||null,
+      hop_interval_ms:(d.hop_interval_ms!=null)?d.hop_interval_ms:null,
+      evidence:d.evidence||null, db:null,
+      first_seen:now,last_seen:now,seen_count:d.n_positions||0};
+  }
+  // Identify: pause the stream (the dwell needs the radio), run the validated
+  // hop fingerprint on the sync channel, then resume. keep=0 so a press doesn't
+  // leave ~480 MB in git. A seed confirms into a Net ID; without one, or with a
+  // seed that doesn't match, the link is reported present-but-unconfirmed.
+  async function identify(){
+    if(det.identifying)return;
+    det.identifying=true; btnIdentify.disabled=true;
+    const wasStreaming=det.streaming;
+    if(wasStreaming)stop();
+    const seed=(det.seed||"").trim();
+    elNote.hidden=false;
+    elNote.textContent="Identifying ELRS link — dwelling on the sync channel (~20 s once the radio is warm, up to ~90 s on a session's first dwell)…";
+    try{
+      let url="/api/elrs/fhss?dwell_s=18&keep=0";
+      if(seed)url+="&seed="+encodeURIComponent(seed);
+      const r=await fetch(url,{headers:{"X-WaveRaider-Request":"1"}});
+      if(!r.ok)throw new Error("HTTP "+r.status+" "+(await r.text()).slice(0,160));
+      const d=await r.json();
+      if(d.error)throw new Error(d.error);
+      if(!d.n_bursts){
+        elNote.textContent="No ELRS hopping link found in this dwell. This does not establish that nothing is present — try a longer dwell, or check the antenna and gain.";
+      }else if(seed && !d.net_id){
+        det.elrsLink=linkFromResult(d,false);
+        elNote.textContent="Seed "+esc(seed)+" did NOT confirm against this link (evidence "+esc(d.evidence||"?")+"). Wrong seed, wrong link, or a noisier dwell — the link is present but unconfirmed.";
+      }else{
+        det.elrsLink=linkFromResult(d,!!d.net_id);
+        elNote.textContent=d.net_id
+          ? "ELRS link identified — Net ID "+esc(d.net_id)+" (evidence "+esc(d.evidence||"?")+"). An identifier for a radio link, not an aircraft."
+          : "ELRS hopping link present (evidence "+esc(d.evidence||"?")+"); no seed confirmed its Net ID. Enter the recovered seed and Identify again to confirm it.";
+      }
+    }catch(e){
+      elNote.textContent="Identify failed: "+e.message;
+    }finally{
+      btnIdentify.disabled=false; det.identifying=false;
+      if(wasStreaming){start();} else {det.lastSweep=Date.now();render();}
+    }
+  }
+  btnToggle.addEventListener("click",()=>{det.streaming?stop():start();});
+  btnClear.addEventListener("click",()=>{det.rows.clear();det.elrsLink=null;render();});
+  btnShowAll.addEventListener("click",()=>{
+    det.showAll=!det.showAll;
+    btnShowAll.dataset.on=det.showAll?"1":"0";
+    btnShowAll.textContent=det.showAll?"Show drones only":"Show all carriers";
+    render();
+  });
+  btnIdentify.addEventListener("click",identify);
+  elSeed.addEventListener("input",()=>{det.seed=elSeed.value.trim();render();});
+  // Click a row -> open the Inspect RF drawer tuned to that frequency.
+  elList.addEventListener("click",e=>{
+    const row=e.target.closest(".ld-row[data-freq]");if(!row)return;
+    const freq=parseFloat(row.dataset.freq);
+    // Reuse the drawer's specPreset if available (it's loaded from inspect-rf.js).
+    if(typeof specPreset==="function"){
+      const mhz=freq/1e6;
+      // Open the drawer first (it's hidden by default), then tune.
+      if(typeof openInspect==="function")openInspect(null,"");
+      specPreset(mhz,10);
+    }
+  });
+  // NOT auto-started: grabbing the radio on page load would conflict with the
+  // Monitor's other functions + the Inspect RF drawer. The operator presses
+  // "▶ Stream live" to start (like the drawer's ▶ Live button). The table shows
+  // an empty state until then.
+  updateBtn();
+  render();
+})();
+</script>
+</body>
+</html>

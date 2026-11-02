@@ -1,0 +1,50 @@
+{
+  "retrieved_date": "2026-10-14",
+  "exact_e8_elrs_device_firmware": "not obtained; no verified download found in checked vendor pages or upstream targets",
+  "artifacts": [
+    {
+      "path": "downloads/emax_e8_configurator_support.html",
+      "source_url": "https://emaxusa2.freshdesk.com/support/solutions/articles/19000157264-expresslrs-e8-transmitter-custom-configurator",
+      "final_url": "https://emaxusa2.freshdesk.com/support/solutions/articles/19000157264-expresslrs-e8-transmitter-custom-configurator",
+      "classification": "vendor_support_page",
+      "bytes": 22655,
+      "sha256": "8706b54bceeb3fbd4b763434ff8abea0c15c61a1d87655ba8601ecefde9a02c5"
+    },
+    {
+      "path": "downloads/tinyhawk_iii_plus_rtf_manual.pdf",
+      "source_url": "https://drive.google.com/uc?export=download&id=1DsdtDBGKg_Vd2tmrJGKlA2txRFqFKkt4",
+      "final_url": "https://drive.usercontent.google.com/download?id=1DsdtDBGKg_Vd2tmrJGKlA2txRFqFKkt4&export=download",
+      "classification": "vendor_linked_manual",
+      "bytes": 3877622,
+      "sha256": "ab9417f3deb700f3b7dfef257a06ee9039ca8bab862000da02997036a536f058"
+    },
+    {
+      "path": "downloads/EMAX E8 ELRS Configurator.exe",
+      "source": "existing local unpacked vendor package",
+      "vendor_download_page": "https://emaxusa2.freshdesk.com/support/solutions/articles/19000157264-expresslrs-e8-transmitter-custom-configurator",
+      "classification": "Windows host tool, NOT controller firmware",
+      "bytes": 115712,
+      "sha256": "02c74aaaf8809c5c7c3e0268d98b8bed071454902b474f9b64bdd28edd5771b8"
+    },
+    {
+      "path": "downloads/serial_bootloader.exe",
+      "source": "existing local unpacked vendor package",
+      "vendor_download_page": "https://emaxusa2.freshdesk.com/support/solutions/articles/19000157264-expresslrs-e8-transmitter-custom-configurator",
+      "classification": "Windows host tool, NOT controller firmware",
+      "bytes": 115712,
+      "sha256": "d463118507ef8fa75bb29e67ab7c7b088210fd278759dd2627257e71bdc80a36"
+    },
+    {
+      "path": "upstream/expresslrs-targets",
+      "source_url": "https://github.com/ExpressLRS/targets.git",
+      "commit": "51a697b3220f069baf3adf2c5353b710df70bbe0",
+      "classification": "upstream comparison source; E8 compatibility unconfirmed"
+    },
+    {
+      "path": "upstream/expresslrs-source",
+      "source_url": "https://github.com/ExpressLRS/ExpressLRS.git",
+      "commit": "dd96654519249798707f011b7c79236350f246f8",
+      "classification": "upstream comparison source; E8 compatibility unconfirmed"
+    }
+  ]
+}
