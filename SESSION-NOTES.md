@@ -4711,3 +4711,69 @@ resize/persistence, observable connection state with `Retry now`, and the
 post-extraction theme; Codex performs the independent browser/integration
 review. Research implementation remains dormant until an explicit promotion
 moves R6 out of NOW and satisfies the selected row's evidence and safety gates.
+
+---
+
+## 27b. Vendor the ELRS PHY + measurement layer into tools/elrs_core (andeds, 2026-10-16)
+
+### Objective and starting state
+
+The operator directed a focus shift to `poc-research` (firmware/PoC) and asked
+what in the companion `elrs-sdr-transfer` repo could help. Assessment: the
+Phase-1 protocol layer (crc/ota/fhss) was already vendored (PROVENANCE.md,
+commit 7936602), and the E8 protocol reconstruction was already present
+(`research/e8-protocol-reconstruction.md`). The **gap** was the **Phase-2 PHY
++ measurement layer** - `lora.py`, `gfsk.py`, `lora_payload.py`,
+`lora_sync.py`, `identify.py` - which is not anywhere in this repo. That layer
+is what the active ELRS thread (the "real-capture packet-byte validation" from
+entry #26's way-forward #6) needs: it demods a capture down to packet bytes,
+which the Phase-1 frame layer then CRC-checks. Without it, the
+"self-consistent decode -> CRC-validated real-frame" gap can only be closed by
+synthetic round-trips, not a real capture.
+
+### Actions
+
+Vendored the 5 Phase-2 modules as **exact copies** from `elrs-sdr-transfer` at
+commit `ed891b488efd88d378b64327f29ba834564b119c`, into `tools/elrs_core/`
+(the existing package, same relative-import convention). Updated
+`PROVENANCE.md` (new "Phase 2" files table with full SHA-256s + the
+evidence-class note) and `__init__.py` (Phase-2 module list).
+
+| File | SHA-256 | Lines |
+|---|---|---|
+| `lora.py` | `da558eef3e9976c2b37552041b15bd52e71bcca12b6918666cdf13b43e5721ee` | 343 |
+| `gfsk.py` | `54851091c929f50f94e9680196ac482fffbb4d271956212444a87aa3b1d3c383` | 456 |
+| `lora_payload.py` | `1ff453e26cdb7fae14184b50f1de0d089f69ffde7f83a72a07417a0e91cba550` | 476 |
+| `lora_sync.py` | `e7b0aa1503fe9622ed8a436755903eb753fb6ec305ce0fc6f3f0066e78f96400` | 242 |
+| `identify.py` | `47f2615318844680d9830b28b4dfac78b2641f17b6224fdc7c1e8336378a4faf` | 581 |
+
+### Validation
+
+- All 8 `elrs_core` modules (3 Phase-1 + 5 Phase-2) import cleanly as a
+  package.
+- The existing Phase-1 selftest (`tools/tests/test_elrs_v3_frame_check.py`)
+  still passes (5/5) - no regression in the frame layer.
+- All 5 vendored files are **byte-identical** to the source at the pinned
+  commit (SHA-256 verified against the companion repo).
+
+### Evidence class + limit
+
+The Phase-2 layer is **SELF-CONSISTENT** (round-trips our own encode/decode),
+not yet **VALIDATED** against a real capture. That is the next step: take a
+real bench capture, run `identify.py` to locate + isolate the burst, demod it
+with `lora`/`gfsk`, and CRC-check the resulting packet bytes with
+`ota`/`crc`. No RF TX, no device write - this is offline capture analysis.
+
+### Files changed
+
+- `tools/elrs_core/` new: lora.py, gfsk.py, lora_payload.py, lora_sync.py,
+  identify.py (exact copies)
+- `tools/elrs_core/PROVENANCE.md` (Phase-2 files table + evidence note)
+- `tools/elrs_core/__init__.py` (Phase-2 module list)
+
+### Next smallest step
+
+Run the real-capture packet-byte validation (entry #26 way-forward #6): a
+bench capture -> `identify.py` burst-location -> `lora`/`gfsk` demod ->
+`ota`/`crc` CRC check. That is the thing that turns the "self-consistent
+decode" into a "CRC-validated real frame."
