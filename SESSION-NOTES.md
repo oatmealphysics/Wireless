@@ -5345,3 +5345,62 @@ on round 5 (live-E8 integration) and/or entering WiFi mode (button/vendor-tool)
 to reach the firmware-upload RCE sink. Both (b) decisions are gated and recorded
 before any device interaction.
 
+## 79. GitLab<->GitHub mirror divergence reconciled on GitLab side; GitHub push BLOCKED (andeds, 2026-11-03)
+**State after this entry:**
+- **GitLab `main` (canonical): `293c84a`** = "reconcile: adopt GitLab history,
+  keep GitLab tree" (laptop merge, `-s ours` against `origin/main` 282f46a).
+  Tree is **byte-identical to `d5bf17f`** (verified: `rev-parse ...^{tree}`
+  matches) — the merge added zero content, only lineage: parents
+  `d5bf17f` (GitLab) + `282f46a` (GitHub lean).
+- **GitHub `main`: `282f46a`** (lean, captures stripped) — still 1+ commits
+  behind; the laptop's `git push origin main` was **rejected by GitHub**
+  (RPC curl 65 / connection reset) because the `-s ours` merge makes
+  *both* lineages reachable, so the push payload is the full GitLab history
+  (~5.43 GiB including 3.2 GB `.cdif` + 1.2 GB `.complex8` captures) — over
+  GitHub's HTTP push limit. **Do NOT retry that push.**
+- **Laptop local `main`: `293c84a`** (== GitLab). Laptop remotes:
+  `origin` = GitHub (fetch+push) **plus** GitLab as push-url (so
+  `git push origin main` dual-pushes); `enclave` = GitLab ssh [blob:none];
+  `pushurl` = GitLab ssh. The old post-push mirror hook is GONE from the
+  laptop (git-lfs reinstalled hooks) — dual-push via origin push-url is now
+  the only sync mechanism, and it is stuck until GitHub is resolved.
+- **Enclave clone:** `~/repos/poc-research`, `origin` = GitLab HTTPS
+  (token `~/.gitlab-token` id6; SSH blocked: `terminal.gateway.deny`).
+  Local `main` is at `d5bf17f` until `git pull` picks up `293c84a`.
+
+**Why the divergence existed:** the lean-history rework
+(`git filter-branch --index-filter 'git rm -r --cached captures/'` on the
+laptop, tip `282f46a`) was pushed to GitHub, while GitLab's `main` kept
+growing on the un-rewritten lineage (`41df45b`..`d5bf17f`). Both remotes
+share content history but diverge in SHAs after the "ignore captures/"
+commit, so plain fast-forward pushes to GitHub were always going to be
+rejected once GitLab moved ahead.
+
+**Fix options for GitHub (operator decision — do NOT run unilaterally):**
+1. **Re-run the lean rework on the new tip** (recommended — keeps the
+   established "GitHub = lean mirror" design):
+   ```
+   git branch -f lean-sync d5bf17f
+   git filter-branch -f --index-filter 'git rm -r --cached --ignore-unmatch captures/' -- --all (on lean-sync)
+   git push origin lean-sync:main --force
+   ```
+   Takes minutes (filter-branch + `gc --prune=now`); resulting push is small.
+   NOTE: this discards the `293c84a` merge lineage on GitHub (fine — it was
+   only created to unblock the push; GitLab keeps it as canonical record).
+2. **Abandon the GitHub mirror** and treat GitLab as the only remote
+   (simplest; GitHub becomes a stale snapshot at 282f46a).
+3. **Force-push full history to GitHub** — NOT viable: 5.43 GiB > GitHub
+   limit; that is exactly what failed.
+
+**Do NOT** run `git push origin main` from the laptop again until option 1 or
+2 is chosen — it will fail the same way (dual-push: GitLab leg succeeds
+"up-to-date", GitHub leg resets).
+
+### Files changed
+- (none in repo — this entry only)
+
+### Next smallest step
+Operator picks fix option 1 or 2 for GitHub. Until then: all GitLab work
+proceeds normally (enclave + laptop both push to GitLab fine); GitHub is
+frozen at 282f46a and no one should rely on it.
+
