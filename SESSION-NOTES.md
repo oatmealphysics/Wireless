@@ -5279,3 +5279,69 @@ next actions, key invariants, and a file map.
 ### Next smallest step
 Operator runs the §4 laptop sync (GitHub + Claude + Codex -> 3ecc758) once
 network is up; answers the workflow-vehicle question; Claude starts Part A.
+
+## 78. E8 TX command surface mapped for "issue commands to the controller" (andeds, 2026-11-03)
+
+### Context
+Operator set the wireless PoC objective to **issue commands to the E8 controller**
+(reverse of the existing RX-side frame-forging tools). Mapped the E8 TX command
+surface from the version-matched ELRS 4.1.0 source (offline only) and registered
+the PoC as a GATED roadmap row.
+
+### Finding (the key asymmetry)
+- The E8's **USB CDC port is an unauthenticated CRSF/MSP command endpoint**
+  (`tx_main.cpp:1131 HandleUARTin` → `crsfParser.processBytes` / `ParseMSPData`).
+  The EMAX vendor tool is just one user of this path; a generic CRSF/MSP sender
+  is another. This is the most practically reachable command path — always
+  present, no auth, no RF, no WiFi-mode entry needed.
+- The **TX-side MSP handler is narrow** (`tx_main.cpp:1056 ProcessMSPPacket`):
+  only power-cal get/set, VTX config, backpack ptr. It does **not** dispatch to
+  a general `processMspPacket` (no flight controller on the TX), so the RX-side
+  "broad MSP → FC" attack surface does **not** apply to the controller. The
+  controller command primitive is **T2 (bounded command injection), not T1 (RCE)**.
+- The **WiFi webserver is the broadest surface** (reboot, factory reset, config
+  write, **unsigned firmware upload** = the RCE lane) but is **not wirelessly
+  reachable** in the integrated E8: auto-WiFi triggers on *absence of CRSF*,
+  which never happens (internal bus always active — `rf-disruption-feasibility.md`
+  conclusion). Reaching it requires entering WiFi mode (button hold / vendor
+  tool / handset command), a separate gated decision.
+- The **over-air uplink (RX→TX)** reaches only the narrow MSP sinks; reaching
+  them requires the bound-RX position or frame forgery accepted by the TX's
+  uplink parser (UID + nonce + channel).
+
+### What this means for the PoC
+The practical "issue commands to the controller" PoC is **CRSF RC-channel
+injection over USB CDC** (rank 1 in the doc's table): send
+`CRSF_FRAMETYPE_RC_CHANNELS_PACKED` (0x16) with attacker stick values over
+`/dev/ttyACM0`; the TX accepts them (no origin check) and transmits them over the
+ELRS link, overriding the pilot's sticks on the air link. Plus CRSF command/
+parameter frames (0x32/0x2C/0x2D) for recon, config exfil, bind disruption.
+
+### PoC round decomposition (GATED)
+- Rounds 1-4 (offline, authorized now): USB-CDC reachability probe design,
+  CRSF RC-channel frame constructor, CRSF command/param frame constructor,
+  MSP-over-USB frame constructor. All validated offline against the pinned CRSF
+  spec and `msptypes.h`.
+- **Round 5 (integration against the live owned E8) is GATED** on explicit
+  operator sign-off: bench-only, owned grounded E8, no RF TX, no flashing, no
+  TinyHawk interaction.
+
+### Boundaries held
+- All offline. No device interaction, no RF transmission, no flashing.
+- E8/TinyHawk no-flash/no-open absolute — not relaxed by this finding.
+- The WiFi firmware-upload RCE lane is documented as an analysis target, not an
+  authorized operation.
+
+### Files changed
+- `research/e8-tx-command-surface.md` (new — command-surface map + PoC
+  decomposition + RCE gate verdict)
+- `PROJECT-ROADMAP.md` (+#RQ23 GATED row)
+- `SESSION-NOTES.md` (+#78)
+
+### Next smallest step
+Operator decides: (a) promote RQ23 rounds 1-4 (offline frame constructors) —
+safe, no sign-off needed beyond the existing offline scope; (b) separately decide
+on round 5 (live-E8 integration) and/or entering WiFi mode (button/vendor-tool)
+to reach the firmware-upload RCE sink. Both (b) decisions are gated and recorded
+before any device interaction.
+
