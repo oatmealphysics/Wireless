@@ -5485,3 +5485,55 @@ Coordinate and independently review the Gate 0 clean-history migration runbook.
 Do not publish the spec/tickets to stale GitHub or begin Pack 1 implementation
 before that migration and the bounded truth-restoration sprint.
 
+## 81. ANDEDS capability-pathway brief; Gate 0 remains unexecuted (Codex, 2026-11-04)
+
+### Starting state and objective
+- Started from clean GitLab-canonical revision
+  `92f3ae33dab9807c4526e66c0e4a4258a1c009cf`; `git pull --ff-only enclave
+  main` was already up to date.
+- The operator approved the proposed Capability Pack test seam and requested
+  operational instructions for ANDEDS that fit the settled pathway, then
+  explicitly requested that the instructions be pushed to GitLab.
+
+### Gate 0 status
+- Prepared an ignored local rollback archive containing a verified complete
+  94-ref Git bundle, independent LFS objects, and the current capture set.
+- Prepared and validated an ignored clean-history candidate: historical
+  `captures/` removed, curated metadata restored, non-capture blob inventory
+  preserved, and packed Git history reduced from about 5.68 GiB to 252 MiB.
+- Local validation of that candidate passed the project validator (581 files),
+  810 tool tests (444 optional skips), and 80 web tests (1 optional skip).
+- Restored authenticated GitHub CLI access for `oatmealphysics`.
+- The operator interrupted the proposed `git push --mirror origin` before it
+  changed the remote. Read-only verification afterwards showed GitHub `main`
+  still at `40044e1` and GitLab `main` still at `92f3ae3`. Gate 0 therefore
+  remains **unexecuted**; the ignored staging clone is not an active branch or
+  authorization for ANDEDS to resume the rewrite.
+
+### Published instruction scope
+- Added `docs/ANDEDS-CAPABILITY-PATHWAY.md`, an execution brief with explicit
+  completion criteria for synchronization/task selection, Gate 0 behavior,
+  bounded truth restoration, the minimal Capability Pack contract, ELRS Pack
+  1, review, and handoff.
+- The brief preserves dynamic ownership: ANDEDS may write an activated slice
+  but never reviews; Claude or Codex must independently review before `DONE`.
+- It preserves the one-active-lane rule, external raw-capture policy, global
+  no-flashing constraint, and separate approval for every live hardware/RF
+  action.
+
+### Evidence and safety boundaries
+- No RF, serial, device, firmware, configuration, reset, or live-target action
+  occurred.
+- No remote history was rewritten and no remote branch was deleted.
+- No credential, private identifier, or raw capture was added to tracked Git.
+
+### Files changed
+- `docs/ANDEDS-CAPABILITY-PATHWAY.md` (new).
+- `SESSION-NOTES.md` (+#81).
+
+### Validation and next step
+- Run Markdown/diff hygiene and the project validator, commit both files, and
+  push the ordinary fast-forward commit to GitLab `enclave/main`.
+- ANDEDS should read the brief from that pushed commit. Gate 0 still precedes
+  truth-restoration implementation.
+
