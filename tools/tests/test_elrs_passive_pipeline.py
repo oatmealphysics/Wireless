@@ -834,8 +834,8 @@ class TestCaptureValidatedPipeline(unittest.TestCase):
                 "e8_tinyhawk_pair_on_2026-10-15_2441MHz_4Msps_rx2_sc16.iq",
                 "tinyhawk_rc_pair_20261016_retry_2441MHz_4Msps_sc16.iq"):
             path = ROOT / "captures" / filename
-            if path.stat().st_size < 1_000_000:
-                continue  # Git LFS pointer in a minimal checkout
+            if not path.exists() or path.stat().st_size < 1_000_000:
+                continue  # External artifact or LFS pointer in a minimal checkout
             self.assertEqual(self.mod["file_sha256"](path), expected[filename])
             checked += 1
         if checked == 0:
