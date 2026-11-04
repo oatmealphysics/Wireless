@@ -5404,3 +5404,84 @@ Operator picks fix option 1 or 2 for GitHub. Until then: all GitLab work
 proceeds normally (enclave + laptop both push to GitLab fine); GitHub is
 frozen at 282f46a and no one should rely on it.
 
+## 80. Roadmap grilling completed; exhaustive capability-program handoff written (Codex, 2026-11-04)
+
+### Starting state and objective
+- Started from clean revision `c5ad259f7cd366152c0adfa84f38f6a36fbb061e`.
+- Pulled `enclave/main` before editing; it was already up to date.
+- Operator asked for an extremely detailed handoff of the complete roadmap
+  grilling session with no decisions omitted.
+
+### What the grilling settled
+- Reframed the project around reusable **Capability Packs** that begin with a
+  wireless delivery path and end in a verified useful effect against a stock
+  wireless target. Scripts, decoders, dashboards, and research are components,
+  not completed capabilities.
+- Adopted the evidence ladder `CANDIDATE` -> `OFFLINE-VALIDATED` ->
+  `PASSIVE-VALIDATED` -> `BENCH-VALIDATED` -> `FIELD-READY`; only the last two
+  count as completed offensive capability.
+- Adopted truthful executor states `PREVIEWED` -> `ATTEMPTED` -> `TRANSMITTED`
+  -> `TARGET_ACCEPTED` -> `EFFECT_CONFIRMED`.
+- Established Gate 0 (clean-history repository migration), NOW (bounded truth
+  restoration), NEXT 1 (minimal UI/pack contract), NEXT 2 (ELRS Pack 1), then
+  an operator-supplied second stock wireless target.
+- GitHub is the desired primary/write repository; GitLab is to become its exact
+  one-for-one deterministic mirror after a coordinated, archived, independently
+  reviewed history cleanup. Raw captures move outside active Git history.
+- Globally prohibited flashing any target. Destructive effects remain possible
+  only through the exposed attack surface on an explicitly designated
+  sacrificial target.
+- Selected ELRS 2.4 GHz OTA v3 receiver-side injection as Pack 1, with the
+  E8/TinyHawk pair as a proving fixture rather than a presumed competition
+  target. Pack v1 completes after one effect becomes field-ready; additional
+  effects move to backlog/background work.
+- Factual audits found the bounded RC canary is the strongest first receiver-
+  acceptance hypothesis, sustained RC displacement is the leading operational
+  effect, the current SDR TX path is untimed/inadequate, and power-off/permanent
+  disable are not established by current ELRS evidence.
+- Factual B2xx comparison selected B205mini as primary portable implementation
+  target and B210 as lab reference/fallback, subject to measurement.
+- Web UI remains loopback-only on port 10101 and becomes a control plane over
+  reviewed, independently testable packs and isolated live workers, with
+  per-target/per-action arming and append-only evidence.
+- Review policy: nobody reviews their own work; ANDEDS may write but never
+  review; Claude reviews ANDEDS/Codex; Codex reviews ANDEDS/Claude. Task
+  ownership is dynamic based on access, context, tools, and token capacity.
+- Time boxes are review checkpoints, not promises.
+
+### Skills/tooling state
+- Installed the official Matt Pocock skills plugins from `mattpocock/skills`:
+  Codex `mattpocock-skills` 1.3.2 and Claude plugin 1.3.1.
+- Verified `grill-with-docs`, `to-spec`, `to-tickets`, `grilling`, and
+  `domain-modeling` are present in both environments.
+- The grilling is complete, but no glossary, ADR, spec, or tickets have been
+  published. GitHub CLI authentication is invalid, the clean-history migration
+  is pending, tracker setup has not run, and the proposed Capability Pack test
+  seam still needs explicit operator approval.
+
+### Evidence and boundaries
+- All project/hardware audits in the grilling were read-only.
+- No RF transmission, serial/device access, firmware operation, configuration
+  write, reset, live target action, or destructive test occurred.
+- No private UID, credential, token, or raw capture was added.
+- The handoff is planning evidence, not authorization for any gated operation.
+
+### Files changed
+- `handoffs/2026-11-04-roadmap-grilling-handoff.md` (new; exhaustive Q1-Q64
+  decision register, factual audits, final roadmap, rejected interpretations,
+  open gates, exact next actions, and suggested skills).
+- `SESSION-NOTES.md` (+#80).
+
+### Validation
+- Markdown heading structure and repository diff whitespace checks pass.
+- `python3 tools/validate-project.py` passes all syntax, JSON, corpus
+  hash/provenance, rainbow-data, CVE-coverage, and local-link checks across 583
+  files.
+- No runtime code was changed, so the documentation validator and diff hygiene
+  are the proportionate acceptance checks for this handoff.
+
+### Next smallest step
+Coordinate and independently review the Gate 0 clean-history migration runbook.
+Do not publish the spec/tickets to stale GitHub or begin Pack 1 implementation
+before that migration and the bounded truth-restoration sprint.
+
