@@ -1,0 +1,25 @@
+{
+  "global": {
+    "core:version": "1.0.0",
+    "core:datatype": "sc16le",
+    "core:sample_rate": 4000000,
+    "core:sample_start": 0,
+    "core:sample_size": 80000000,
+    "core:freq_center": 2441000000.0,
+    "authored": "andeds (poc-research RQ1)",
+    "provenance:original_sha256": "5faf27cb6b8c7261950ebf38a67034bee9223c290c49dc6f47c4f5e93f0fee2f",
+    "provenance:capture_device": "Ettus B205mini RX2",
+    "provenance:private": true
+  },
+  "annotations": [
+    {
+      "core:start": 0,
+      "core:length": 80000000,
+      "core:freq_center": 2441000000.0,
+      "core:sample_rate": 4000000,
+      "core:extends": "global",
+      "sigmf:label": "ELRS 2.4 GHz passive capture",
+      "sigmf:description": "Ettus B205mini RX2, 2441.000 MHz center, 4 Msps complex, sc16le. 20.000 s / 80,000,000 samples. Passive receive-only capture of the owned E8-TinyHawk ELRS pair; no RF transmitted, no flash."
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "global": {
+    "core:version": "1.0.0",
+    "core:datatype": "sc16le",
+    "core:sample_rate": 4000000,
+    "core:sample_start": 0,
+    "core:sample_size": 60010000,
+    "core:freq_center": 2441000000.0,
+    "authored": "andeds (poc-research RQ1)",
+    "provenance:original_sha256": "b5898512f0d07c370b1249db870899400c309c7449e36debecf8843c513b96b5",
+    "provenance:capture_device": "Ettus B205mini RX2",
+    "provenance:private": true
+  },
+  "annotations": [
+    {
+      "core:start": 0,
+      "core:length": 60010000,
+      "core:freq_center": 2441000000.0,
+      "core:sample_rate": 4000000,
+      "core:extends": "global",
+      "sigmf:label": "ELRS 2.4 GHz passive capture",
+      "sigmf:description": "Ettus B205mini RX2, 2441.000 MHz center, 4 Msps complex, sc16le. 15.0025 s / 60,010,000 samples. Passive receive-only capture while the owner moved the right stick left/right; no RF transmitted, no flash. creation_time is an estimate of RF sample zero, not an instrument-synchronized timestamp.",
+      "sigmf:creation_time_estimate": "2026-10-16T17:45:37.014895Z",
+      "sigmf:timebase_note": "creation_time is an estimate of RF sample zero, not an instrument-synchronized timestamp"
+    }
+  ]
+}
