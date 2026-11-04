@@ -247,3 +247,20 @@ target remains a planning horizon, not evidence that any stage is operational.
 - E8 installed firmware version and radio details remain unconfirmed; no
   WiFi capability is assumed for this benchmark
 - (plus Q2, Q3, Q6, Q8, Q9 in SESSION-NOTES §4)
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specifications are tracked in GitHub Issues. See
+`docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The repository uses the canonical five-label triage vocabulary. See
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+The repository uses a single-context glossary and system-wide ADR layout. See
+`docs/agents/domain.md`.
