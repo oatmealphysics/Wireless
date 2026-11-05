@@ -128,6 +128,19 @@ git push --force-with-lease=main:6838bebd5c08f229da0753ae8bcc1cb224e5b55f \
   mirror main:main
 ```
 
+Actual execution on 2026-11-05 preserved GitLab's protection: GitLab accepted
+and unpacked the candidate, then rejected the force update because `main` was
+protected. The initialization commit was fetched and joined as the second
+parent of an `ours` merge. The tree hash before and after that join was
+identical. GitHub and GitLab then accepted the join as ordinary fast-forwards;
+no branch protection was disabled.
+
+After both new remotes matched, every push URL in the legacy
+`/home/borealis/poc-research` checkout was replaced with
+`disabled://legacy-archive`. Its fetch URLs and local archival material remain
+available, but the checkout can no longer update either legacy service by
+accident.
+
 The internal GitLab service cannot pull from GitHub and the browser settings
 surface is not available from the workstation automation host. Deterministic
 replication is therefore repository-owned: after the initial replacement,

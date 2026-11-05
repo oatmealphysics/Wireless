@@ -23,11 +23,17 @@ fi
 
 mapfile -t origin_push_urls < <(git remote get-url --all --push origin)
 mapfile -t mirror_push_urls < <(git remote get-url --all --push mirror)
-if [[ "${#origin_push_urls[@]}" -ne 1 ||
-      "${origin_push_urls[0]}" != "git@github.com:oatmealphysics/Wireless.git" ]]; then
-  echo "error: origin must have exactly one GitHub SSH push URL" >&2
+if [[ "${#origin_push_urls[@]}" -ne 1 ]]; then
+  echo "error: origin must have exactly one GitHub push URL" >&2
   exit 1
 fi
+case "${origin_push_urls[0]}" in
+  git@github.com:oatmealphysics/Wireless.git|https://github.com/oatmealphysics/Wireless.git) ;;
+  *)
+    echo "error: origin must target oatmealphysics/Wireless on GitHub" >&2
+    exit 1
+    ;;
+esac
 if [[ "${#mirror_push_urls[@]}" -ne 1 ||
       "${mirror_push_urls[0]}" != "git@gitlab01.an.dd:user08/Wireless.git" ]]; then
   echo "error: mirror must have exactly one GitLab SSH push URL" >&2

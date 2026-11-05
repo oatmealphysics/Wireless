@@ -95,7 +95,7 @@ FHSS agreement, or operational takeover.
 
 ### NOW — G0: exact GitHub/GitLab repository migration
 
-**Status:** IN PROGRESS — locally prepared, remote replacement not executed
+**Status:** AWAITING INDEPENDENT REVIEW — technical migration complete
 
 **Primary:** Codex
 
@@ -112,31 +112,41 @@ authority and GitLab as its deterministic one-directional mirror.
 
 Current facts:
 
-- GitLab remains the temporary write authority and includes ANDEDS verification
-  entry #83; GitHub `main` was last verified divergent at `40044e1`.
-- GitHub CLI authentication has been restored.
-- A complete 94-ref bundle plus LFS/capture archive was verified locally.
-- A 252 MiB cleaned candidate was validated, but it predates `b64c9cf`,
-  `b105d33`, `b9ff37b`, and this roadmap update. It is now a rehearsal artifact
-  and must not be pushed as the final history.
-- The proposed remote push was interrupted before either remote changed.
+- GitHub and GitLab expose the same cleaned `main` graph, tip, and tree. The
+  protected GitLab initialization commit is retained as the second parent of
+  an unchanged-tree join commit, so both services advanced without weakening
+  branch protection.
+- GitHub CLI authentication is restored; the canonical triage labels exist;
+  GitHub `main` blocks force pushes and deletion with admin enforcement.
+- A complete 94-ref bundle, a frozen-tip incremental bundle, and the original
+  LFS/capture archive were verified locally.
+- Raw captures and Git-LFS objects are absent from reachable active history;
+  the cleaned pack is about 252 MiB and its largest reachable blob is below
+  GitHub's 100 MiB limit.
+- `origin` has one GitHub push URL and `mirror` has one GitLab push URL.
+  `scripts/git/publish-main.sh` publishes GitHub first, then performs and
+  verifies a non-forced fast-forward of the exact tip to GitLab.
+- Codex fresh-clone and local-gate verification is complete. Claude's required
+  independent review and ANDEDS's post-acceptance re-clone remain pending.
 
 Execution steps:
 
-1. Codex records the exact current refs, archive hashes, clean rules, intended
+1. **Complete:** Codex recorded the exact refs, archive hashes, clean rules, intended
    surviving refs, rollback procedure, and fresh-clone verification commands in
    a reversible migration runbook.
-2. Codex rebuilds the candidate from the writer-frozen current GitLab tip,
+2. **Complete:** Codex rebuilt the candidate from the writer-frozen current GitLab tip,
    removing raw capture history and restoring only approved metadata.
-3. Claude independently verifies the archive, clean rules, current-tree
+3. **Pending:** Claude independently verifies the archive, clean rules, current-tree
    preservation, object-size result, runbook, and rollback path without writing
    the candidate.
-4. The operator approves the reviewed maintenance-window command set.
-5. Codex performs the one-time remote replacement and configures the
+4. **Complete:** The operator approved the maintenance-window execution and
+   explicitly authorized the actions required to complete Gate 0.
+5. **Complete:** Codex performed the one-time remote migration and configured the
    one-directional mirror.
-6. Claude verifies fresh clones from GitHub and GitLab. ANDEDS then discards the
+6. **Pending reviewer/operator checks:** Claude verifies fresh clones from
+   GitHub and GitLab. ANDEDS then discards the
    old checkout and re-clones the announced GitLab mirror.
-7. Codex publishes the GitHub issue-tracker setup, canonical label vocabulary,
+7. **Complete:** Codex published the GitHub issue-tracker setup, canonical label vocabulary,
    `GLOSSARY.md`, and qualifying ADRs on the cleaned history.
 
 Completion criteria:

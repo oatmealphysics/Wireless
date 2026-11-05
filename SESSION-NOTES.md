@@ -5816,3 +5816,52 @@ otherwise proceed with G0 as scheduled.
   protection, fresh-clone proof, and Claude's independent acceptance remain
   to be recorded after this local candidate commit.
 
+## 89. Gate 0 technical migration completed; independent acceptance pending (Codex, 2026-11-05)
+
+### Remote migration
+- Published cleaned `main` to the new public GitHub repository
+  `oatmealphysics/Wireless`; GitHub warned about the retained 82.9 MiB
+  `elrs-sdr-research.tgz`, which is below its 100 MiB hard limit.
+- GitLab unpacked the one-time lease-bound replacement but correctly rejected
+  the ref update because its initialized `main` was protected. Protection was
+  not disabled. Commit `6838beb` was fetched and retained as the second parent
+  of `40fbb99` (`chore: join GitLab Wireless initialization`) using the `ours`
+  strategy. Tree `35104346a40a50dcef80447748d12683476816d6` was identical
+  before and after the join.
+- Both services then advanced through normal fast-forwards. No later
+  force-push or history rewrite is permitted.
+
+### Authority, mirroring, and tracker policy
+- `origin` has exactly one push URL, GitHub SSH. `mirror` has exactly one push
+  URL, GitLab SSH. The former dual-push configuration is gone.
+- Added `scripts/git/publish-main.sh`: it requires a clean `main`, publishes
+  GitHub first, verifies its exact SHA, fast-forwards GitLab without force,
+  and verifies equality. `--verify-only` performs the read-only equality check.
+- GitHub Issues now has `needs-triage`, `needs-info`, `ready-for-agent`,
+  `ready-for-human`, and `wontfix` with the documented meanings.
+- GitHub `main` protection has admin enforcement enabled and both force pushes
+  and deletion disabled. GitLab's existing protected-main policy rejected the
+  attempted migration force update and remains enabled.
+- GitHub CLI authentication for `oatmealphysics` is restored.
+
+### Verification
+- A fresh GitHub clone matched the published tip/tree, passed
+  `git fsck --full --strict`, passed the 591-file validator, and passed all 810
+  offline tool tests (444 declared skips).
+- Final GitHub/GitLab ref, graph, tip, tree, commit-count, fresh-clone, and
+  maintained-gate equality checks are recorded in the Gate 0 review issue and
+  operator handoff after this evidence commit is published.
+- Hosted CI remains `NOT RUN`; no claim of a hosted result is made.
+
+### Safety, status, and handoff
+- The legacy `/home/borealis/poc-research` checkout retains its fetch URLs and
+  local evidence, but every configured push URL now resolves to
+  `disabled://legacy-archive`. Its former dual-push path cannot update either
+  legacy remote accidentally.
+- No RF, serial, hardware, firmware, configuration, reset, or live-target
+  action occurred. No raw capture or private identifier entered active Git.
+- Technical migration work is complete. Per the fixed reviewer matrix, Codex
+  cannot accept its own work. G0 remains `NOW` with status `AWAITING
+  INDEPENDENT REVIEW` until Claude verifies and accepts the migration. ANDEDS
+  re-clones GitLab only after that acceptance.
+
