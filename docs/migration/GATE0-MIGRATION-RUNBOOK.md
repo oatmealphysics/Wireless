@@ -128,10 +128,13 @@ git push --force-with-lease=main:6838bebd5c08f229da0753ae8bcc1cb224e5b55f \
   mirror main:main
 ```
 
-Configure GitLab repository mirroring to pull `main` from the GitHub primary.
-Do not configure GitHub as a push mirror to GitLab and do not add GitLab as a
-second `origin` push URL. After the initial replacement, all replication must
-be fast-forward-only.
+The internal GitLab service cannot pull from GitHub and the browser settings
+surface is not available from the workstation automation host. Deterministic
+replication is therefore repository-owned: after the initial replacement,
+use `scripts/git/publish-main.sh`. It pushes `main` to GitHub first, verifies
+the exact GitHub tip, then performs a non-forced fast-forward of that same tip
+to the separate `mirror` remote and verifies equality. Do not add GitLab as a
+second `origin` push URL. All later replication is fast-forward-only.
 
 ## Fresh-clone verification
 

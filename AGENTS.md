@@ -25,7 +25,9 @@ This repo is co-edited by **Claude Code** and **Codex**, back and forth. Both ag
 
 1. **Always `git pull` before editing.** The other agent may have pushed changes since your last session.
 2. **Read files fresh** — never rely on cached state from a prior session or context summary.
-3. **Commit and push after making changes** so the other agent picks up your work.
+3. **Commit and publish after making changes** with
+   `scripts/git/publish-main.sh`. It pushes `main` to the GitHub authority,
+   verifies the exact remote tip, then fast-forwards the GitLab mirror.
 4. **Watch for new sections, restructured content, or corrections** the other agent may have introduced.
 5. **Never force-push or rewrite history.** Both agents work on `main`.
 6. **Serialize access to the connected E8.** See `research/E8-COLLABORATION.md`.
