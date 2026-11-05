@@ -14,7 +14,7 @@
 > [CVE evidence audit](research/CVE-AUDIT.md). E8-specific identity and USB CRSF
 > support remain unconfirmed. Corpus checksums pass with byte-preserving Git rules.
 
-> **ELRS reuse recommendations (2026-10-15):** [Section 23](#23-selective-reuse-from-the-elrs-sdr-project) records the comparison with the separate `elrs-sdr-transfer` repository, prioritized candidates, validation limits, and a planning-only continuation prompt. No source-project code, captures, or artifacts have been imported. Read it alongside the [October 15 tool review](Harness_DIFFERENTIAL_REVIEW_2026-10-15.md); older tool-state descriptions and the original Section 22 prompt are historical.
+> **ELRS reuse recommendations (2026-10-15):** [Section 23](#23-selective-reuse-from-the-elrs-sdr-project) records the comparison with the separate `elrs-sdr-transfer` repository, prioritized candidates, validation limits, and a planning-only continuation prompt. No source-project code, captures, or artifacts have been imported. Read it alongside the [October 15 tool review](docs/Harness_DIFFERENTIAL_REVIEW_2026-10-15.md); older tool-state descriptions and the original Section 22 prompt are historical.
 
 ## Navigation
 
@@ -72,8 +72,8 @@ Read these files in this order:
 1. [AGENTS.md](AGENTS.md): collaboration rules and project context.
 2. This handoff: observed state, caveats, and restart instructions.
 3. [firmware/README.md](firmware/README.md): corpus overview and source pointers.
-4. [attack-research-plan.md](attack-research-plan.md): broader competition research plan.
-5. [drone-wireless-vuln-reference.md](drone-wireless-vuln-reference.md): chipset/protocol vulnerability lookup reference.
+4. [attack-research-plan.md](research/attack-research-plan.md): broader competition research plan.
+5. [drone-wireless-vuln-reference.md](research/drone-wireless-vuln-reference.md): chipset/protocol vulnerability lookup reference.
 
 If the E8 is unavailable at home, begin with source analysis and artifact provenance. If it is available, identify the actual USB device path again before using any serial tool. `/dev/ttyACM0` was an earlier observation, not a portable device identity.
 
@@ -147,8 +147,8 @@ research-project/
 ├── AGENTS.md
 ├── HOME-LAB-HANDOFF.md
 ├── README.md
-├── drone-wireless-vuln-reference.md
-├── attack-research-plan.md
+├── research/drone-wireless-vuln-reference.md
+├── research/attack-research-plan.md
 ├── firmware/
 │   ├── README.md
 │   ├── SHA256SUMS
@@ -1012,8 +1012,8 @@ Next highest-value task:
 ### Project files
 
 - [Collaboration and project context](AGENTS.md).
-- [Wireless vulnerability reference](drone-wireless-vuln-reference.md).
-- [Research and implementation plan](attack-research-plan.md).
+- [Wireless vulnerability reference](research/drone-wireless-vuln-reference.md).
+- [Research and implementation plan](research/attack-research-plan.md).
 - [Firmware inventory and source notes](firmware/README.md).
 - [Corpus integrity manifest](firmware/SHA256SUMS).
 - [Claude's companion session report](SESSION-NOTES.md), including reported serial attempts and lab tool installations.
@@ -1104,7 +1104,7 @@ The strongest immediate contribution is a better passive capture and protocol fo
 
 ### 23.3 Why these candidates matter to the current review
 
-The [CTF tool review](Harness_DIFFERENTIAL_REVIEW_2026-10-15.md) found that the current ELRS analyzer reads packet type and SYNC identity from incorrect positions, and that SDR receive/transmit prototypes lack demonstrated compatible PHY processing. The source repository contains a more useful starting point for the protocol and capture layers than duplicating those models in additional scripts.
+The [CTF tool review](docs/Harness_DIFFERENTIAL_REVIEW_2026-10-15.md) found that the current ELRS analyzer reads packet type and SYNC identity from incorrect positions, and that SDR receive/transmit prototypes lack demonstrated compatible PHY processing. The source repository contains a more useful starting point for the protocol and capture layers than duplicating those models in additional scripts.
 
 The suggested first architectural step is one reusable protocol module with thin adapters for the current command-line tools. An illustrative data path is:
 

@@ -87,7 +87,7 @@ def check_tables(root):
 
 
 def check_cve_coverage(root):
-    text = (root / "drone-wireless-vuln-reference.md").read_text(encoding="utf-8")
+    text = (root / "research" / "drone-wireless-vuln-reference.md").read_text(encoding="utf-8")
     cited = set(re.findall(r"CVE-\d{4}-\d{4,}", text))
     index = json.loads((root / "research/cve-record-index.json").read_text(encoding="utf-8"))
     entries = index["entries"]

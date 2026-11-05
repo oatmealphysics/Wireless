@@ -70,8 +70,8 @@ under `SECURITY.md`; the no-flashing rule cannot be bypassed by that gate.
 
 ```
 Harness/
-├── drone-wireless-vuln-reference.md   # ~1500-line vulnerability reference (CVEs, chipsets, attack techniques)
-├── attack-research-plan.md            # 7-phase attack research plan with lab exercises
+├── research/drone-wireless-vuln-reference.md   # ~1500-line vulnerability reference (CVEs, chipsets, attack techniques)
+├── research/attack-research-plan.md            # 7-phase attack research plan with lab exercises
 ├── firmware/                          # Firmware corpus for offline analysis
 │   ├── README.md                      # Hardware→chipset mapping and attack surface analysis
 │   ├── betaflight/                    # Betaflight firmware binaries and unified target configs

@@ -205,8 +205,8 @@ See [SECURITY.md](SECURITY.md) for the full review requirements.
 
 - [Current project roadmap](PROJECT-ROADMAP.md)
 - [Security and safety guardrails](SECURITY.md)
-- [Wireless vulnerability reference](drone-wireless-vuln-reference.md)
-- [Research plan](attack-research-plan.md)
+- [Wireless vulnerability reference](research/drone-wireless-vuln-reference.md)
+- [Research plan](research/attack-research-plan.md)
 - [Firmware corpus](firmware/README.md)
 - [Per-device evidence dossiers](references/README.md)
 - [Firmware → Vulnerability → PoC methodology](docs/firmware-to-poc-methodology.md)

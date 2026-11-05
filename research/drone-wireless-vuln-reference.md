@@ -4,8 +4,8 @@
 > Covers WiFi, Bluetooth/BLE, and proprietary RF protocols — focused on DoS and RCE attack classes.
 > **Last updated:** 2026-10-14
 
-> **Evidence audit (2026-10-14):** See [CVE audit](research/CVE-AUDIT.md) and
-> [publication index](research/cve-record-index.json). All 97 fully written CVE
+> **Evidence audit (2026-10-14):** See [CVE audit](CVE-AUDIT.md) and
+> [publication index](cve-record-index.json). All 97 fully written CVE
 > identifiers were checked: 95 published, one rejected, one lookup with no public
 > record. Sixteen claims received substantive review; remaining entries are
 > research leads with applicability/PoC claims not yet independently verified.
@@ -301,13 +301,13 @@ The ESP32 is extremely common in hobby drones, companion computers, and DIY dron
 
 - **CVE-2026-25507:** Use-after-free in BLE provisioning when teardown leaves BLE enabled
 - **CVE-2026-25508:** Prepared-write out-of-bounds read/potential memory corruption in BLE provisioning
-- **Version/transport evidence:** See [audit](research/CVE-AUDIT.md).
+- **Version/transport evidence:** See [audit](CVE-AUDIT.md).
 
 #### CVE-2026-81507 — Bluetooth Classic L2CAP OOB Read
 
 - **Impact:** Possible disclosure of adjacent Bluetooth stack memory; requires
   Classic Bluetooth / BlueDroid. Do not describe this as BLE-only or merely DoS.
-- **Fixed versions:** CNA and vendor lists differ; see [audit](research/CVE-AUDIT.md)
+- **Fixed versions:** CNA and vendor lists differ; see [audit](CVE-AUDIT.md)
   for both lists and branch-specific patch references.
 
 #### CVE-2026-41429 — Arduino-ESP32 NBNS Memory Corruption
@@ -1123,7 +1123,7 @@ The USENIX Security 2020 **Frankenstein** work is a useful counterexample to tre
 | **CVE-2019-11516** | Classic Bluetooth Extended Inquiry Response while the victim scans | Heap overflow; BLOC freelist corruption produced a write-what-where primitive and firmware RCE on tested older Broadcom builds |
 | **CVE-2019-13916** | BLE PDU reception | Four-byte heap overflow; exploitable on some older builds, while a later build's one-byte canary caused a controlled crash and prevented the published RCE technique |
 | **CVE-2019-18614** | ACL traffic between host and controller | Heap overflow caused by advertised/actual buffer-size mismatch on CYW20735; reachability depends on the host path and may require privileges on other builds |
-| **CVE-2019-15063** (unverified identifier) | WiFi/Bluetooth coexistence registers | Historical research attribution; CVE API returned no public record on 2026-10-14. See [audit](research/CVE-AUDIT.md) |
+| **CVE-2019-15063** (unverified identifier) | WiFi/Bluetooth coexistence registers | Historical research attribution; CVE API returned no public record on 2026-10-14. See [audit](CVE-AUDIT.md) |
 
 **Reusable exploitation pattern:**
 1. Recover the exact allocator layout and BLOC header fields from the matching firmware.

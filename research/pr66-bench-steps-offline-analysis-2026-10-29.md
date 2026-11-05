@@ -145,7 +145,7 @@ Evidence from the project and broader ecosystem:
 1. **Consumer drone industry practice:** The 2026 arXiv paper on Holy Stone
    drone firmware extraction found that consumer drones "typically have unlabeled
    debug pads and undocumented memory layouts, but rarely enable readout
-   protection" (cited in `drone-wireless-vuln-reference.md`).
+   protection" (cited in `research/drone-wireless-vuln-reference.md`).
 
 2. **Betaflight ecosystem:** Betaflight's DFU bootloader and Configurator flash
    workflow assume SWD/DFU access. Setting RDP Level 1+ would break the standard

@@ -9,7 +9,7 @@ decisions were established by the completed roadmap grilling preserved in
 
 `SESSION-NOTES.md` remains the canonical append-only evidence and handoff log;
 it does not activate or reprioritize work. `codex-tasks.html`,
-`session-notes-2026-10-25.md`, `attack-research-plan.md`,
+`docs/session-notes-2026-10-25.md`, `research/attack-research-plan.md`,
 `HOME-LAB-HANDOFF.md`, and topic-specific plans are historical context or
 execution specifications. If any of them conflict with this roadmap, this file
 wins.

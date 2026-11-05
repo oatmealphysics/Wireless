@@ -637,7 +637,7 @@ sudo hcitool lescan | grep -i DJI
 #    - Power off → immediate DoS
 
 # Implementation: requires dji-ble-attack.py (not yet built)
-# Reference: drone-wireless-vuln-reference.md §2 BLE
+# Reference: research/drone-wireless-vuln-reference.md §2 BLE
 ```
 
 #### 4.5.2 DJI BLE Credential Sniff (CVE-2026-77812)

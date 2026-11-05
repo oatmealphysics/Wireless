@@ -5704,3 +5704,58 @@ command set. After G0 acceptance: ANDEDS re-clones the announced GitLab
 mirror, and TR-A (or the md cleanup, if the operator activates it first)
 can start as a named slice.
 
+## 87. Root Markdown cleanup executed: 17 -> 10 (andeds, 2026-11-04)
+
+### Starting state and objective
+- Enclave clone at `61e3882` (== GitLab `main`; pulled, clean tree).
+- Operator instruction: delete the parked `docs/MD-CLEANUP-PLAN.md` and
+  implement the cleanup directly on the current history (explicit override of
+  the post-G0 parking; operator is the owner of scope).
+
+### Actions
+- Deleted `docs/MD-CLEANUP-PLAN.md` (superseded by execution).
+- `git mv` seven historical/superseded root Markdown files:
+  - to `docs/`: `firmware-to-exploit-pathway.md`,
+    `session-notes-2026-10-25.md`,
+    `Harness_DIFFERENTIAL_REVIEW_2026-10-15.md`
+  - to `research/`: `failsafe-behavior-comparison.md`,
+    `wifi-attack-surfaces.md`, `attack-research-plan.md`,
+    `drone-wireless-vuln-reference.md`
+- Updated two hardcoded tool paths: `tools/validate-project.py:90` and
+  `tools/audit-cve-records.py:29` now read
+  `research/drone-wireless-vuln-reference.md`.
+- Updated 13 inbound Markdown references across `README.md`, `AGENTS.md`,
+  `PROJECT-ROADMAP.md`, `HOME-LAB-HANDOFF.md` (5 sites), `docs/game_day_playbook.md`,
+  `research/layer2-wireless-attack-research.md`,
+  `research/pr66-bench-steps-offline-analysis-2026-10-29.md`, plus two
+  moved-internal files. `SESSION-NOTES.md` historical links intentionally
+  left untouched (append-only log).
+- Fixed relative links inside the moved files:
+  `research/drone-wireless-vuln-reference.md` (5 links to `CVE-AUDIT.md` /
+  `cve-record-index.json` are now same-directory) and
+  `docs/firmware-to-exploit-pathway.md` (link to
+  `firmware-to-poc-methodology.md` now same-directory).
+
+### Validation
+- `python3 tools/validate-project.py`: PASS across 584 files (syntax, JSON,
+  corpus hashes, rainbow data, CVE coverage, local file links).
+- `python3 tools/audit-cve-records.py` smoke run: reads the moved reference,
+  97 identifiers, index written to `work/cve-record-index.json`.
+- Root now lists exactly 10 `*.md`: AGENTS, DRONE_RF_ARCHITECTURE,
+  E8-SERIAL-CHARACTERIZATION, HARDWARE-IDENTITY, HOME-LAB-HANDOFF,
+  PROJECT-ROADMAP, README, SECURITY, SESSION-NOTES, VALIDATION.
+
+### Notes for the G0 migration
+- This cleanup is pre-G0 work on the old history. The clean-history rebuild
+  should include it; no action needed at G0 beyond the rebuild naturally
+  containing this commit.
+
+### Files changed
+- 7 renames (3 -> `docs/`, 4 -> `research/`), 1 deletion
+  (`docs/MD-CLEANUP-PLAN.md`), 2 tool path lines, 13 reference updates,
+  6 intra-file link fixes.
+
+### Next smallest step
+Independent review of this diff (Codex, per rotation) when convenient;
+otherwise proceed with G0 as scheduled.
+

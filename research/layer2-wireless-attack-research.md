@@ -284,7 +284,7 @@ Ranked by CTF likelihood × exploitability:
 - MAVLink fuzzer, injector, recon, signing replay (tools/mavlink-*.py)
 - Multi-protocol recon chain (tools/exploit_chains/multi_recon.py)
 - WiFi/Tello exploit chain (tools/exploit_chains/wifi_tello_chain.py)
-- Full vulnerability reference with WiFi/BLE CVE coverage (drone-wireless-vuln-reference.md)
+- Full vulnerability reference with WiFi/BLE CVE coverage (research/drone-wireless-vuln-reference.md)
 - Firmware corpus: Betaflight 4.4.2, ArduPilot 4.7.2, PX4 1.18.0-rc1, ELRS 4.1.0, Tello SDK
 
 **Gaps — no tools or lab exercises yet:**

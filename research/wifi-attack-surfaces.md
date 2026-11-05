@@ -1,7 +1,7 @@
 # WiFi Attack Surfaces in Drone Platforms
 
 > **Purpose:** Focused reference for WiFi-based attacks against drone platforms in CTF competition.
-> Complements `drone-wireless-vuln-reference.md` with deeper operational detail per platform.
+> Complements `research/drone-wireless-vuln-reference.md` with deeper operational detail per platform.
 > **Last updated:** 2026-10-14
 
 ---

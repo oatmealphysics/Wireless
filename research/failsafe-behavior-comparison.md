@@ -446,4 +446,4 @@ get nav_rth_altitude
 - [iNav Failsafe Source (docs/Failsafe.md)](https://github.com/iNavFlight/inav/blob/master/docs/Failsafe.md)
 - [NCC Group/Fox-IT: ExpressLRS Vulnerabilities Allow Hijack of Control Link](https://www.fox-it.com/nl-en/technical-advisory-expresslrs-vulnerabilities-allow-for-hijack-of-control-link/)
 - [Oscar Liang: Failsafe Setup Guide](https://oscarliang.com/failsafe-rx-fc-naze32-frsky-d4rii/)
-- Existing project documentation: `drone-wireless-vuln-reference.md`, `firmware/README.md`
+- Existing project documentation: `research/drone-wireless-vuln-reference.md`, `firmware/README.md`
