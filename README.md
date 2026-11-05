@@ -11,7 +11,7 @@
 > are **retired** (operator-authorized 2026-10-16) — history only. **`SESSION-NOTES.md`
 > is the single active log for every workstream and every agent.** See entry #72.
 
-# research-project
+# Wireless
 
 Wireless security research toolkit for drone CTF competition. Covers reconnaissance, protocol analysis, exploit development, and defensive detection across WiFi, BLE, MAVLink, ExpressLRS, and CRSF protocols.
 
@@ -47,8 +47,8 @@ virtual environment, use `python` for the same module or script.
 
 ```bash
 # Clone the repository
-git clone https://github.com/oatmealphysics/research-project.git
-cd research-project
+git clone https://github.com/oatmealphysics/Wireless.git
+cd Wireless
 
 # (Optional) Create a virtual environment
 python3 -m venv .venv
@@ -139,7 +139,7 @@ lifecycle, state-history, and browser checks on Ubuntu and Windows with Python
 ## Project Structure
 
 ```
-research-project/
+Wireless/
 ├── web/                    # Browser-based dashboard (Flask)
 │   ├── app.py              # Main application
 │   ├── templates/          # HTML templates

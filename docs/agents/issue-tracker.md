@@ -1,7 +1,7 @@
 # Issue tracker: GitHub
 
 Issues and specifications for this repository live in GitHub Issues at
-`oatmealphysics/research-project`. Use the authenticated `gh` CLI for all
+`oatmealphysics/Wireless`. Use the authenticated `gh` CLI for all
 operations and verify the target with `gh repo view --json nameWithOwner`
 before the first write of a session.
 

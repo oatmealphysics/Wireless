@@ -5759,3 +5759,60 @@ can start as a named slice.
 Independent review of this diff (Codex, per rotation) when convenient;
 otherwise proceed with G0 as scheduled.
 
+## 88. Gate 0 clean-history candidate rebuilt for Wireless (Codex, 2026-11-04)
+
+### Starting state and objective
+- Began from the reviewed Gate 0 rehearsal tip `736a2d2`, whose cleaned
+  history removed the historical capture subtree and restored only approved
+  metadata and sanitized derivatives.
+- Froze the legacy source at `ed823d4c1d7c80e51201df80b4c02d039a22488d`
+  (tree `2ead47a97127e2804fe64030c2edfe1ead63fd46`) and rebuilt the candidate in
+  the new `/home/borealis/Wireless` workspace.
+- Objective: preserve the latest intended legacy tree plus the reviewed Gate
+  0 cleanup/domain additions, without importing the oversized legacy ancestry.
+
+### Archive and reconstruction evidence
+- Re-verified the 94-ref complete archive bundle; SHA-256 remains
+  `dffa66c4bca5c45be59f545d038ff0ee175565a42c2a084a7a4e3bb96e217a36`.
+- Added and verified the 76,762-byte incremental bundle covering legacy main
+  `92f3ae3..ed823d4`; SHA-256 is
+  `03620c26159895d889aeff5a68230db875d1012d3a1ccb18b3cd42bc4d9a7f12`.
+- The external archive retains the complete LFS store plus both raw IQ files
+  and their checksum/provenance material. The active history retains only the
+  reviewed capture metadata and sanitized derivatives.
+- Replayed the seven writer-frozen commits after `92f3ae3` as patches onto the
+  cleaned lineage. A content comparison against the frozen source found only
+  the expected Gate 0 differences: capture externalization, the glossary/ADR/
+  agent workflow files, and this migration material.
+- Added `docs/migration/GATE0-MIGRATION-RUNBOOK.md` with exact refs, archive
+  hashes, cleanup rules, publication commands, fresh-clone checks, and rollback.
+- Renamed active README/tracker references from `research-project` to
+  `oatmealphysics/Wireless`.
+
+### Reachability and validation
+- `git fsck --full --strict`: PASS.
+- Packed object store: 251.41 MiB; largest reachable blob: 86,931,961 bytes
+  (`elrs-sdr-research.tgz`); no reachable blob exceeds GitHub's 100 MiB limit.
+- `git lfs ls-files`: empty.
+- No reachable active path has a raw capture extension (`.iq`, `.cf32`,
+  `.complex8`, `.sigmf-data`, or `.cfile`).
+- `python3 -B tools/validate-project.py`: PASS across 591 files.
+- Broad offline tool suite: 810 tests PASS, 444 deliberately quarantined or
+  environment-gated skips.
+- Web/API/lifecycle/state/browser suites: PASS, including 11 Playwright
+  browser tests against temporary headless Chromium and loopback only.
+- Maintained-module Ruff 0.8.6 and mypy 1.14.1 gates: PASS after removing
+  three pre-existing unused imports. The intentionally broad Ruff 0.11.12
+  full-tree audit still reports extensive legacy lint debt; no broad cleanup
+  was added to Gate 0.
+- Hosted CI: `NOT RUN` at this point.
+
+### Safety and publication state
+- No RF, serial, device, firmware, configuration, reset, or live-target action
+  occurred. Raw captures were read only for checksum verification.
+- GitHub `oatmealphysics/Wireless` is empty and accepts SSH authentication.
+  GitLab `user08/Wireless` contains only initialization commit `6838beb`.
+- Remote replacement, GitLab pull-mirror configuration, GitHub labels/branch
+  protection, fresh-clone proof, and Claude's independent acceptance remain
+  to be recorded after this local candidate commit.
+

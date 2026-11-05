@@ -7,9 +7,7 @@ dispatches to the correct chain backends.
 Runs entirely offline — no hardware, no network targets.
 """
 
-import json
 import sys
-import threading
 import time
 from pathlib import Path
 from unittest.mock import patch, MagicMock
