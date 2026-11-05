@@ -5550,3 +5550,42 @@ before that migration and the bounded truth-restoration sprint.
   separately decides when to resume the independently reviewed Gate 0 remote
   migration.
 
+## 83. Gate 0 announced; ANDEDS fresh-clone verification from enclave blocked (andeds, 2026-11-04)
+
+### Starting state and objective
+- Enclave clone at `b105d33` == GitLab `main` (fetched, clean tree).
+- Operator announced "Gate 0 is done." Per
+  `docs/ANDEDS-CAPABILITY-PATHWAY.md` Step 2, ANDEDS must verify the announced
+  cleaned tip and tree hash, from a fresh clone of the designated canonical
+  remote (GitHub, the new write authority), before taking a writer task.
+
+### Verification attempt and blocker
+- Fetched GitLab (`origin`): `main` is **unchanged at `b105d33`** — the old
+  full history with `captures/` still tracked (10 files) is still the GitLab
+  tip. The old branches `github-mirror-20261104`,
+  `backup/pre-github-mirror-20261104`, and `mirror-hook` also remain.
+- Direct GitHub verification from the enclave is **impossible**: VLAN716 has
+  no egress (`git ls-remote https://github.com/...` → connection failed).
+  ANDEDS cannot independently observe the GitHub tip or tree hash.
+- Codex's ignored `work/` staging clone still exists locally (not an active
+  branch; per the brief, ANDEDS does not resume or reproduce it).
+
+### Conclusion
+- Gate 0 completion is **operator-attested but not independently verifiable
+  from the enclave**. Per the brief, ANDEDS does **not** take a writer task
+  until the two verifiable conditions hold:
+  1. The operator supplies the **cleaned tip SHA + tree hash** of the new
+     canonical `main` (and names which remote to treat as canonical during
+     the transition).
+  2. ANDEDS can confirm from an reachable clone that tip/tree — expected via
+     a laptop cross-check (`git ls-remote` GitHub vs GitLab) or by the
+     operator pasting both tips.
+- No edits, history operations, or ref changes were made by ANDEDS.
+
+### Next smallest step
+Operator pastes: GitHub `main` tip SHA + tree hash, GitLab `main` tip SHA +
+tree hash (post-Gate 0), and the designated canonical remote for the
+transition period. ANDEDS then re-verifies from the enclave (GitLab leg) and
+records the fresh-clone step once the canonical remote is reachable or
+attested.
+
