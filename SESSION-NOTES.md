@@ -5645,3 +5645,16 @@ attested.
 - Validate links/diff hygiene, commit and fast-forward GitLab `enclave/main`,
   then begin only G0 runbook/review work. TR-A remains planned, not active.
 
+## 85. Capability-program roadmap published to GitLab (Codex, 2026-11-04)
+
+- Committed the roadmap, serialized Codex/Claude/ANDEDS plan, ANDEDS brief
+  correction, and entry #84 as `d70f95e` (`docs: activate capability program
+  roadmap`).
+- Pushed by ordinary fast-forward to GitLab `enclave/main`:
+  `b9ff37b..d70f95e`.
+- `python3 tools/validate-project.py` passed across 584 files; diff whitespace,
+  local links, one-`NOW`/two-`NEXT` structure, and stale R6-selector checks
+  passed before commit.
+- Active work is G0 only. TR-A, TR-B, CP1, ELRS Pack 1, hardware, RF, serial,
+  and remote history replacement remain inactive until their stated gates.
+
