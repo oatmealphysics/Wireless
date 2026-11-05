@@ -1,11 +1,11 @@
 # Project Roadmap
 
-Last reviewed: 2026-10-30
+Last reviewed: 2026-11-04
 
 This file is the sole source of truth for current project priorities, status,
-ownership, acceptance criteria, and next-task selection. It consolidates and
-updates Claude's `codex-tasks.html` task inventory after comparing it with the
-code, tests, merged PRs, and the evidence log.
+ownership, acceptance criteria, and next-task selection. The capability-program
+decisions were established by the completed roadmap grilling preserved in
+`handoffs/2026-11-04-roadmap-grilling-handoff.md`.
 
 `SESSION-NOTES.md` remains the canonical append-only evidence and handoff log;
 it does not activate or reprioritize work. `codex-tasks.html`,
@@ -16,66 +16,285 @@ wins.
 
 ## Operating rules
 
-- **NOW** is the single active implementation lane. Finish or explicitly block
-  it before promoting another task.
-- **NEXT** is ordered. Pick the first task whose dependencies and acceptance
-  criteria are satisfied.
-- **LATER** is useful but not yet worth active complexity or CI cost.
-- **GATED** requires a new, explicit owner decision before work begins.
-- **DONE** means the stated acceptance evidence exists in the repository.
-- Every NOW task must have a safe scope, an executable acceptance test, a named
-  evidence class, and no unmet authorization or hardware gate.
-- Each task names a primary and an independent reviewer. The primary owns its
-  implementation and acceptance evidence; the reviewer stays read-only on that
-  implementation surface until the primary pushes a handoff, unless this
-  roadmap explicitly transfers ownership. A planned assignment does not
-  activate work, and ownership is never permission to bypass a gate.
-- Keep the maintained backlog serialized in this order unless an explicit
-  owner decision changes it: R1 Codex -> R2 Codex -> R3 Claude -> R4 Claude ->
-  R5 Codex -> R6 Claude -> R7 Codex. This keeps related file families under one
-  writer and preserves independent review.
-- Owner decision (2026-10-28): Claude is temporarily unavailable. Completed
-  work may advance on repository evidence plus independent read-only Codex
-  sub-agent reviews; Claude's named reviews are deferred as retrospective
-  audits. Any takeover of a Claude implementation lane must be recorded here
-  before edits begin.
-- Owner decision (2026-10-29): Claude capacity is available again. R4 remains
-  with Codex through its already-started handoff to avoid a mid-diff writer
-  transfer; Claude's read-only review role resumes after that pushed handoff.
-  R5 retains Codex implementation with Claude browser review, and R6 retains
-  Claude implementation after R5.
-- Owner decision (2026-10-29): finish the in-flight R5 implementation, then
-  perform a source-backed defensive research expansion across drone hardware,
-  firmware, and protocols. R5 is accepted on its local automated and Chromium
-  evidence; the named Claude review becomes retrospective. The research pass
-  is documentation and prioritization only: it does not activate an RQ row or
-  authorize device, bus, serial, RF, bootloader, or firmware interaction.
+- **NOW** is the one active delivery outcome. Finish, explicitly block, or
+  falsify it before promoting another outcome.
+- **NEXT** contains at most two ordered outcomes. A planned assignment becomes
+  active only when this roadmap promotes it to `NOW`.
+- **PARKED** preserves useful work without competing with the active lane.
+- **GATED** requires a new, explicit operator decision before the gated action.
+- **DONE** requires the stated acceptance evidence and an eligible independent
+  review; a primary never accepts their own work.
+- Each active slice names one primary, one reviewer, exact dependencies, a safe
+  scope, and executable completion criteria.
+- Time boxes are review checkpoints, not delivery promises. Passing a checkpoint
+  requires an evidence-based decision to continue rather than a silent slip.
+- Ownership is dynamic at each handoff. It follows access, environment, current
+  context, token availability, file boundaries, and review independence rather
+  than permanent agent specialization.
+
+Review eligibility is fixed even when implementation ownership changes:
+
+| Writer | Eligible reviewer(s) |
+| --- | --- |
+| ANDEDS | Claude or Codex |
+| Claude | Codex |
+| Codex | Claude |
+
+ANDEDS may write but never reviews. One active writer owns each implementation
+slice. Another agent may perform a read-only audit in parallel when it uses no
+active hardware and edits no overlapping files.
 
 ## Scope and evidence boundary
 
-Default active work is offline application engineering: tracked fixtures and
-passive captures, deterministic simulation, local files, and loopback-only
-tests. It excludes hardware access, serial access, RF transmission, firmware
-changes, external targets, and state-changing network or device actions.
+The reusable product is a **Capability Pack**: a target-scoped, human-operable
+wireless chain that begins with Wireless Entry, produces and verifies a useful
+effect against a Stock Target, retains evidence, and declares applicability,
+prerequisites, reliability, stop behavior, and falsifiers. Tools, decoders,
+dashboards, simulations, and research are components rather than completed
+capabilities.
 
-The E8 and TinyHawk no-flashing rule is absolute. A plan or tool is never
-authorization. Private identifiers, UIDs, and raw captures remain under ignored
-`work/`; only sanitized aggregates and hashes are tracked.
+Default active work is offline application engineering: sanitized fixtures,
+deterministic simulation, local files, and loopback-only tests. Hardware access,
+serial access, RF transmission, state-changing network/device work, and
+destructive execution each require their own explicit gate. No target may be
+flashed, erased, restored, recovered, or firmware-updated under any gate.
 
-Evidence labels are not interchangeable:
+Private identifiers, credentials, and raw captures stay under ignored `work/`
+or a verified external archive. Track only sanitized fixtures, conclusions,
+hashes, provenance, and retrieval instructions.
 
-- **SOURCE-DERIVED:** established from pinned source or protocol definitions.
-- **SYNTHETIC/OFFLINE-TESTED:** deterministic local fixtures and simulations pass.
-- **PASSIVE-CAPTURE-VALIDATED:** independently reproduced from recorded traffic.
-- **RECEIVER-ACCEPTED:** an owned receiver accepted a bounded candidate under a
-  separately approved bench plan.
+Capability evidence advances through:
 
-The current passive ELRS result is `PASSIVE-CAPTURE-VALIDATED`: 54 CRC-valid
-frames from two tracked captures agree byte-for-byte across two decoders. It is
-not evidence of receiver acceptance, transmitter identity, measured
-multi-channel FHSS agreement, or an operational takeover capability.
+```text
+CANDIDATE -> OFFLINE-VALIDATED -> PASSIVE-VALIDATED
+          -> BENCH-VALIDATED -> FIELD-READY
+```
 
-## Completed this cycle
+Only `BENCH-VALIDATED` and `FIELD-READY` count as completed offensive
+capability. Execution reports a separate Result State:
+
+```text
+PREVIEWED -> ATTEMPTED -> TRANSMITTED
+          -> TARGET_ACCEPTED -> EFFECT_CONFIRMED
+```
+
+Sending bytes never proves target acceptance or effect. Legacy evidence terms
+map as follows:
+
+- `SOURCE-DERIVED` is an evidence-basis tag, not a maturity level.
+- `SYNTHETIC/OFFLINE-TESTED` maps to `OFFLINE-VALIDATED`.
+- `PASSIVE-CAPTURE-VALIDATED` maps to `PASSIVE-VALIDATED`.
+- `RECEIVER-ACCEPTED` maps to Result State `TARGET_ACCEPTED`; a bounded expected
+  effect is still required for `BENCH-VALIDATED`.
+
+The current 54-frame passive ELRS result is `PASSIVE-VALIDATED`. It does not
+establish receiver acceptance, transmitter identity, coherent multi-channel
+FHSS agreement, or operational takeover.
+
+## Active capability-program plan
+
+### NOW — G0: exact GitHub/GitLab repository migration
+
+**Status:** IN PROGRESS — locally prepared, remote replacement not executed
+
+**Primary:** Codex
+
+**Independent reviewer:** Claude
+
+**ANDEDS role:** writer freeze; after acceptance, re-clone GitLab and reproduce
+the announced ref/tree checks as an operator, not as the reviewer
+
+**Evidence target:** identical cleaned repositories and fresh-clone proof;
+outside the Capability Pack maturity ladder
+
+**Objective:** create one cleaned active history with GitHub as the sole write
+authority and GitLab as its deterministic one-directional mirror.
+
+Current facts:
+
+- GitLab remains the temporary write authority and includes ANDEDS verification
+  entry #83; GitHub `main` was last verified divergent at `40044e1`.
+- GitHub CLI authentication has been restored.
+- A complete 94-ref bundle plus LFS/capture archive was verified locally.
+- A 252 MiB cleaned candidate was validated, but it predates `b64c9cf`,
+  `b105d33`, `b9ff37b`, and this roadmap update. It is now a rehearsal artifact
+  and must not be pushed as the final history.
+- The proposed remote push was interrupted before either remote changed.
+
+Execution steps:
+
+1. Codex records the exact current refs, archive hashes, clean rules, intended
+   surviving refs, rollback procedure, and fresh-clone verification commands in
+   a reversible migration runbook.
+2. Codex rebuilds the candidate from the writer-frozen current GitLab tip,
+   removing raw capture history and restoring only approved metadata.
+3. Claude independently verifies the archive, clean rules, current-tree
+   preservation, object-size result, runbook, and rollback path without writing
+   the candidate.
+4. The operator approves the reviewed maintenance-window command set.
+5. Codex performs the one-time remote replacement and configures the
+   one-directional mirror.
+6. Claude verifies fresh clones from GitHub and GitLab. ANDEDS then discards the
+   old checkout and re-clones the announced GitLab mirror.
+7. Codex publishes the GitHub issue-tracker setup, canonical label vocabulary,
+   `GLOSSARY.md`, and qualifying ADRs on the cleaned history.
+
+Completion criteria:
+
+- the original history and external artifacts have verified recoverable
+  archives;
+- no raw capture blob is reachable from any intended active ref;
+- GitHub and GitLab expose the same intended refs, commit graph, tip, and tree;
+- fresh clones from both remotes pass `git fsck` and the maintained local gates;
+- ordinary pushes target GitHub only and deterministic replication updates
+  GitLab;
+- GitHub Issues contains the canonical triage labels, including
+  `ready-for-agent`;
+- the domain glossary/ADRs and tracker-consumer instructions are present; and
+- the one-time rewrite exception is closed, with later force-pushes prohibited.
+
+### NEXT 1 — TR: bounded truth restoration
+
+**Status:** BLOCKED on G0
+
+**Evidence target:** `OFFLINE-VALIDATED`
+
+**Review checkpoint:** two working days after activation; extension requires
+recorded evidence that continuing is worth more than switching paths
+
+This outcome is deliberately limited to five code defects and truth-in-evidence
+corrections. It contains two serialized writer slices:
+
+#### TR-A — code and focused regressions
+
+**Planned primary:** ANDEDS
+
+**Planned reviewer:** Codex
+
+**Dependency:** G0 accepted and ANDEDS working from a fresh mirror clone
+
+ANDEDS implements exactly the defect boundaries in `SESSION-NOTES.md` entries
+#73 and #74:
+
+1. robust MAVLink target parsing for IPv6 and omitted ports;
+2. matching Wi-Fi/MAVLink constants imported from the existing MAVLink chain,
+   with the broader six-file duplication left as tracked follow-up;
+3. consistent ELRS v3/v4 SYNC and RC parameter derivation using the single
+   `elrs_core`;
+4. fix or removal of the unread `elrs_chain` `max_power_dbm` field without
+   changing the correct bench-controller field; and
+5. an explicit-safe simulation binding-phrase input instead of a real-looking
+   default.
+
+**TR-A complete when:** every defect has a failing regression before its fix,
+focused tests pass, ANDEDS pushes one coherent handoff, and Codex independently
+finds no scope, safety, or regression blocker.
+
+#### TR-B — roadmap and evidence correction
+
+**Planned primary:** Claude
+
+**Planned reviewer:** Codex
+
+**Dependency:** TR-A accepted
+
+Claude reconciles maintained documentation with repository evidence: remove
+stale active-lane language; correct the B3 description; describe RQ23 direct USB
+entry as scaffolding rather than wireless compromise; remove unsupported E8
+version-match language; report hosted CI as `NOT RUN` when it did not execute;
+apply the public-fixture/private-identifier policy; and preserve the no-flashing
+and reviewer rules.
+
+**TR-B complete when:** the validator and full maintained offline suites pass,
+every corrected claim cites repository evidence, hosted CI status is literal,
+and Codex independently accepts the documentation diff.
+
+**TR outcome complete when:** TR-A and TR-B are accepted, one truthful `NOW` and
+at most two ordered `NEXT` outcomes remain, and no hardware, RF, serial, UI
+framework expansion, or general cleanup entered the sprint.
+
+### NEXT 2 — CP1: minimal Capability Pack/web-control contract
+
+**Status:** BLOCKED on TR
+
+**Evidence target:** `OFFLINE-VALIDATED`
+
+The approved test seam is:
+
+```text
+registry -> applicability -> scoped authorization -> isolated executor
+         -> structured Result State and evidence
+```
+
+The web UI remains a loopback-only human control plane and is tested against a
+fake executor. RF/hardware acceptance remains a separate gated evidence seam.
+Implementation is serialized into three verticals:
+
+1. **CP1-A — contract and registry:** Claude primary; Codex reviewer. Define the
+   repository-owned pack/action metadata, applicability, prerequisites,
+   authorization scope, structured request/result, stop, and evidence contract.
+2. **CP1-B — headless fake executor:** ANDEDS primary; Codex reviewer. Exercise
+   the accepted contract end-to-end with deterministic fixtures, cancellation,
+   timeout, and truthful Result States, without Flask or hardware.
+3. **CP1-C — UI and isolated worker adapter:** Codex primary; Claude reviewer.
+   Replace hard-coded in-process dispatch with the accepted registry/executor
+   seam while preserving probe-free preview/simulation and loopback behavior.
+
+Each vertical begins only after the previous writer's commit and independent
+review. The next writer pulls that accepted tip before editing.
+
+Completion criteria:
+
+- one simulated Capability Pack traverses the full approved seam;
+- applicability and action metadata have one source of truth;
+- authorization is target/action-specific, bounded, expiring, and records stop
+  conditions plus the evidence destination;
+- live execution is isolated from Flask with structured input/output, timeout,
+  cancellation, stop reason, and minimal privilege;
+- destructive actions require exact Sacrificial Target designation;
+- the UI never turns `ATTEMPTED` or `TRANSMITTED` into acceptance or effect;
+- preview and simulation perform no hardware or external-network probe; and
+- no arbitrary third-party plugin loading is introduced in v1.
+
+### PARKED / GATED — ELRS Capability Pack 1
+
+Promotion requires CP1 acceptance and a fresh roadmap assignment. The owned
+E8/TinyHawk pair is a Proving Fixture, not a presumed competition target. The
+candidate boundary is ELRS 2.4 GHz OTA v3 receiver-side injection; B205mini is
+the primary portable SDR and B210 is the measured lab reference/fallback.
+
+The first Pack 1 checkpoint occurs ten working days after activation. It must
+answer whether realistic prerequisite acquisition, timed B2xx transport,
+independently decodable IQ, Stock Target acceptance, a field-visible useful
+effect, and adequate bounded-retry reliability form a plausible end-to-end
+wireless route. If not, mark the path `LIMITED` or `BLOCKED`, preserve reusable
+components, and move to the operator-supplied next Stock Target.
+
+Initial assignment at promotion is chosen dynamically. Expected verticals are
+Codex-led timed transport/ELRS integration with Claude review, an isolated
+ANDEDS offline-fixture writer slice with Claude or Codex review, and a
+Claude-led UI/evidence integration slice with Codex review. No live RF or Stock
+Target step is activated by this roadmap text.
+
+### Shared-checkout handoff protocol
+
+1. The active primary pulls the canonical branch, confirms a clean tree, and
+   records the exact slice and file boundary before editing.
+2. Other agents remain read-only on that boundary. Parallel fact gathering may
+   not touch the primary's files or active hardware.
+3. The primary stages explicit paths only, runs focused and required full gates,
+   commits a coherent slice, pushes it, and appends `SESSION-NOTES.md` evidence.
+4. The independent reviewer pulls that commit and reviews without editing the
+   primary's surface. Findings return to the primary; acceptance promotes the
+   next serialized slice.
+5. Ownership ends at handoff. Hardware access always requires a separate
+   operator handoff and is never inferred from device availability.
+
+## Historical completed cycle
+
+R0 through R7 below are accepted historical foundations. Their former `NOW`,
+`NEXT`, ownership, and CI wording do not select current work; the active plan
+above does.
 
 ### R0 — Make simulation mode genuinely hardware-free
 
@@ -371,15 +590,14 @@ de-duplication — `lint-full` was renamed to restore it. Python 3.13 coverage
 is not currently exercised in hosted CI; restoring it requires an owner
 decision on Actions-minute budget.
 
-## GATED research pathway queue
+## PARKED / GATED research pathway queue
 
-R6 remains the single active implementation lane. Every RQ item below has
-status **GATED** and no active owner. Each row records a dormant planned primary
-and reviewer so a future handoff is unambiguous. Promotion requires an explicit
-owner decision and a roadmap change that moves R6 out of NOW, activates the
-planned assignment (or records a replacement), and records its evidence
-target. Merely appearing here does not authorize serial, RF, hardware, or
-live-device work.
+Every RQ item below remains **GATED** with no active owner. The legacy ownership
+cells are planning history, not activation. Promotion requires completion or
+explicit blocking of the active capability-program outcome, a new operator
+decision, and a roadmap edit that names the current primary, eligible reviewer,
+evidence target, and falsifier. Merely appearing here does not authorize serial,
+RF, hardware, or live-device work.
 
 The queue was derived from the owner-provided one-screen summary, repository
 evidence, and two primary-source research passes. The second pass is preserved
@@ -451,11 +669,12 @@ and [STM32F411 errata](https://www.st.com/resource/en/errata_sheet/es0287-stm32f
 | RQ22 | **Conditional peripheral serial and cooperative-traffic adapters** | Claude primary; Codex review | Exact SRXL2, SmartAudio, or ADS-B/DAA implementation is proven | Add decode-only/state-only adapters for SRXL2 handshake/failsafe, SmartAudio version/transaction/table policy, and synthetic cooperative-traffic freshness/collision/eviction/conflict state. | `SYNTHETIC/OFFLINE-TESTED`: no bind, programming, UART, VTX, RF, or live traffic action. These adapters remain dormant and do not apply to the current ELRS link by analogy. |
 | RQ23 | **E8 TX command-surface PoC (issue commands to the controller)** | Codex primary; Claude review | `research/e8-tx-command-surface.md` (command-surface map, source-pinned ELRS 4.1.0); `tools/crsf-packet-tool.py`, `tools/elrs_core/` for frame construction; TBS CRSF spec (commit-pinned) for frame validation | Build offline CRSF/MSP frame constructors for the E8 TX command sinks (RC-channel override 0x16, command 0x32, parameter read/write 0x2C/0x2D, MSP_ELRS_FUNC power-cal, MSP_SET_VTX_CONFIG) and a USB-CDC reachability probe design. Validate frames offline against the pinned CRSF spec and `msptypes.h`. **Round 5 (integration against the live owned E8) is a separate gated stage** requiring explicit operator sign-off. | `SYNTHETIC/OFFLINE-TESTED` for rounds 1-4 (frame construction + offline validation). Round 5 is `GATED` on operator sign-off: bench-only, owned grounded E8, no RF TX, no flashing, no TinyHawk interaction. The PoC objective is T2 command injection (RC override, param write), not T1 RCE. The WiFi firmware-upload RCE lane is documented but not wirelessly reachable in the integrated E8 and requires a separate decision to enter WiFi mode. |
 
-If the owner explicitly promotes a research task and moves R6 out of NOW, start
-with RQ15 for the current Betaflight target or RQ1 for the passive-capture
-family. RQ6 and RQ20 are the next reusable evidence gates; RQ17 follows only if
-the ESC identity is proven. RQ9-RQ14 and RQ16/RQ18/RQ19/RQ21/RQ22 are useful
-conditional expansion paths, not reasons to delay current work.
+If the operator later promotes a research task, select it against the current
+Capability Pack outcome and evidence gap rather than the former R6 lane. RQ15
+remains the strongest current Betaflight attestation candidate and RQ1 the
+passive-capture candidate; neither is active. RQ6 and RQ20 are reusable evidence
+gates, while the remaining rows are conditional expansion paths rather than
+reasons to delay current work.
 
 #### RQ1 progress (andeds, 2026-11-01) — GATED, no active owner; groundwork only
 
@@ -591,7 +810,7 @@ elrs_chain `max_power_dbm` dead heuristic; default binding phrase
   appropriate receiver/adapter and an owned transmitter/node, plus privacy
   handling. Official sample captures remain suitable for offline work now.
 
-## LATER
+## Historical LATER list
 
 - Persistent scan-session summaries and cancelable simulated/offline progress.
 - Further replacement of `Any` with concrete target, event, and action types.
@@ -601,7 +820,7 @@ elrs_chain `max_power_dbm` dead heuristic; default binding phrase
   existing `unittest` suite.
 - Further task-board polish after the R6 reliability/theme work.
 
-## GATED / excluded from the active backlog
+## Global gates / exclusions
 
 - Receiver-acceptance tests, transmitter execution, RF, serial, live hardware
   discovery, and state-changing device or network actions.
@@ -614,10 +833,11 @@ elrs_chain `max_power_dbm` dead heuristic; default binding phrase
 The focused `research/receiver-acceptance-validation-plan.md` remains a design
 reference only. Its active stages are not authorized by appearing in that file.
 
-## Claude task-list assessment
+## Historical Claude task-list assessment
 
-This table preserves Claude's original IDs while correcting stale premises and
-making dependencies explicit.
+This table preserves Claude's original IDs and the decisions made during the
+completed R0-R7 cycle. Its status column is historical and does not activate
+current work.
 
 | ID | Original task | Status | Roadmap decision |
 |---|---|---|---|

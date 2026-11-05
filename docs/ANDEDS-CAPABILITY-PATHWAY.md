@@ -18,11 +18,12 @@ do not create another rolling agent log.
 ## Current state
 
 - The strategic grilling is complete. Its decision frontier is empty.
-- Gate 0 is **not complete**. GitLab `main` is `92f3ae3`; GitHub `main` remains
-  the divergent `40044e1`.
-- A cleaned-history candidate and verified offline archive were prepared
-  locally by Codex, but the remote replacement was interrupted before it
-  changed either remote.
+- Gate 0 is **not complete**. GitLab remains the temporary write authority and
+  GitHub remains divergent; read the `NOW` row in `PROJECT-ROADMAP.md` for the
+  current tips and migration status.
+- A cleaned-history rehearsal and verified offline archive were prepared
+  locally by Codex, but later GitLab commits made that candidate stale. The
+  remote replacement was interrupted before it changed either remote.
 - GitHub authentication was restored locally. This does not give ANDEDS
   Internet access or permission to execute the migration.
 - The intended sequence is:
@@ -31,6 +32,10 @@ do not create another rolling agent log.
   Gate 0 -> truth restoration -> minimal Capability Pack contract
          -> ELRS Pack 1 -> operator-supplied second Stock Target
   ```
+
+- After Gate 0, `PROJECT-ROADMAP.md` plans ANDEDS as primary for the serialized
+  TR-A code/regression slice, with Codex as the independent reviewer. That
+  assignment activates only when TR is promoted to `NOW`.
 
 ## Step 1: synchronize and select work
 

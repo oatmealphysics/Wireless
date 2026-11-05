@@ -5589,3 +5589,59 @@ transition period. ANDEDS then re-verifies from the enclave (GitLab leg) and
 records the fresh-clone step once the canonical remote is reachable or
 attested.
 
+## 84. Capability-program roadmap and three-agent work rotation activated (Codex, 2026-11-04)
+
+### Starting state and objective
+- Began from GitLab-canonical `b105d33`; during the edit ANDEDS appended entry
+  #83 and advanced GitLab to `b9ff37b`. Codex fetched and fast-forwarded that
+  non-overlapping commit before finalizing this entry.
+- The operator asked to update the active roadmap from the completed grilling
+  and define how Codex, Claude, and ANDEDS should work.
+
+### Roadmap decisions applied
+- Replaced the stale R6 selector with exactly one `NOW` outcome and two ordered
+  `NEXT` outcomes:
+  1. `NOW` G0 — exact GitHub/GitLab cleaned-history migration.
+  2. `NEXT 1` TR — bounded truth restoration.
+  3. `NEXT 2` CP1 — minimal Capability Pack/web-control contract.
+- Parked ELRS Capability Pack 1 behind CP1 and retained the RQ catalogue as
+  historical/gated evidence rather than deleting it.
+- Added the five-level capability Evidence Level ladder, separate Result State
+  progression, and an explicit mapping from the legacy evidence terms.
+- Recorded the approved Capability Pack test seam and kept RF/hardware
+  acceptance as a separately gated evidence seam.
+
+### Agent work plan
+- G0: Codex primary; Claude independent reviewer; ANDEDS remains frozen, then
+  re-clones and reproduces announced mirror checks after acceptance.
+- TR-A: ANDEDS writes the five bounded code/regression fixes; Codex reviews.
+- TR-B: Claude writes the roadmap/evidence corrections after TR-A; Codex
+  reviews.
+- CP1 is serialized into Claude contract/registry, ANDEDS headless fake
+  executor, and Codex UI/isolated-worker integration verticals, with an
+  eligible independent review after each handoff.
+- One active writer owns each slice. Parallel work is read-only, has no active
+  hardware, and may not overlap the primary's files.
+
+### Gate 0 correction
+- ANDEDS's entry #83 confirms the operator's earlier completion announcement
+  could not be verified: GitLab still carried the old history and GitHub was
+  unreachable from the enclave.
+- The earlier 252 MiB clean candidate is a rehearsal artifact because it
+  predates the ANDEDS brief, entries #82/#83, and this roadmap update. Gate 0
+  requires a rebuild from the final writer-frozen GitLab tip plus Claude review
+  before a new operator-approved remote replacement.
+
+### Files changed
+- `PROJECT-ROADMAP.md` — active program, evidence model, assignments,
+  acceptance criteria, gates, and historical labels.
+- `docs/ANDEDS-CAPABILITY-PATHWAY.md` — current-state correction and planned
+  TR-A assignment pointer.
+- `SESSION-NOTES.md` (+#84).
+
+### Safety boundaries and next step
+- Documentation/planning only. No remote rewrite, RF, serial, device, firmware,
+  configuration, reset, or live-target action occurred.
+- Validate links/diff hygiene, commit and fast-forward GitLab `enclave/main`,
+  then begin only G0 runbook/review work. TR-A remains planned, not active.
+
