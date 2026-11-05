@@ -5658,3 +5658,49 @@ attested.
 - Active work is G0 only. TR-A, TR-B, CP1, ELRS Pack 1, hardware, RF, serial,
   and remote history replacement remain inactive until their stated gates.
 
+## 86. Root-md cleanup plan written as parked post-G0 ticket (andeds, 2026-11-04)
+
+### Starting state and objective
+- Enclave clone synced to GitLab `main` `228c04f` (fetched, ff-only, clean
+  tree). Roadmap read: `NOW` = G0 (IN PROGRESS, Codex primary / Claude
+  reviewer, ANDEDS writer-frozen), `NEXT 1` = TR (TR-A planned primary
+  ANDEDS, blocked on G0), `NEXT 2` = CP1.
+- Operator asked for the root-Markdown cleanup to be captured as a note
+  rather than executed, consistent with the TR exclusion of general cleanup.
+
+### What was written
+- `docs/MD-CLEANUP-PLAN.md` (new): full execution spec for reducing 17 root
+  `*.md` files to 10 — the 10 STAY files with reasons, the 7 MOVE files with
+  destinations (`docs/` x3, `research/` x4) and the evidence each is
+  historical/superseded, the ordered mechanical steps (git mv; the two
+  hardcoded path updates in `tools/validate-project.py:90` and
+  `tools/audit-cve-records.py:29`; the verified inbound-link inventory per
+  file; the explicit rule to leave `SESSION-NOTES.md` historical links
+  untouched), and acceptance criteria (root lists exactly 10 files,
+  `validate-project.py` passes, renames-only diff, independent review).
+- The plan is explicitly PARKED: it is not activated by this entry, is
+  excluded from TR scope, and requires an owner decision + eligible
+  reviewer after G0 acceptance and the fresh mirror clone.
+
+### Evidence and safety boundaries
+- Read-only analysis plus one new planning document; no root file was moved,
+  no code changed, no history operation performed.
+- No RF, serial, device, firmware, configuration, or network action.
+- ANDEDS remains writer-frozen on implementation work per the G0 row; this
+  planning note was explicitly requested by the operator.
+
+### Files changed
+- `docs/MD-CLEANUP-PLAN.md` (new)
+- `SESSION-NOTES.md` (+#86)
+
+### Validation
+- `python3 tools/validate-project.py` passes after the addition (local-link
+  check included).
+
+### Next smallest step
+None for ANDEDS (frozen). G0 proceeds: Claude review of the rebuilt
+clean-history candidate, then operator approval of the maintenance-window
+command set. After G0 acceptance: ANDEDS re-clones the announced GitLab
+mirror, and TR-A (or the md cleanup, if the operator activates it first)
+can start as a named slice.
+
