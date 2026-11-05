@@ -5537,3 +5537,16 @@ before that migration and the bounded truth-restoration sprint.
 - ANDEDS should read the brief from that pushed commit. Gate 0 still precedes
   truth-restoration implementation.
 
+## 82. ANDEDS pathway brief published to GitLab (Codex, 2026-11-04)
+
+- Committed `docs/ANDEDS-CAPABILITY-PATHWAY.md` and `SESSION-NOTES.md` entry
+  #81 as `b64c9cf` (`docs: add ANDEDS capability pathway brief`).
+- Pushed the commit by ordinary fast-forward to GitLab `enclave/main`:
+  `92f3ae3..b64c9cf`.
+- `python3 tools/validate-project.py` passed across 584 files and the staged
+  diff passed whitespace validation before commit.
+- This publication did not rewrite history, modify GitHub, or complete Gate 0.
+- Next: ANDEDS reads the brief from `b64c9cf`; the operator/Codex/Claude
+  separately decides when to resume the independently reviewed Gate 0 remote
+  migration.
+
