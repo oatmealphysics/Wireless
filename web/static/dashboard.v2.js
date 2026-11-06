@@ -1,6 +1,9 @@
 let targets = [];
 let selectedTargetId = null;
 let actionDefs = {};
+let packsList = [];
+let activeScopes = [];
+let scopeCountdownTimer = null;
 let scanPollTimer = null;
 let statusRefreshTimer = null;
 let eventSource = null;
@@ -17,13 +20,27 @@ async function init() {
   initLogViewer();
   initHwWidget();
   initSSEBanner();
+  initPacksPanel();
+  initArmDialog();
+  initDestructiveConfirm();
+  initEvidenceViewer();
+  initResultStateDisplay();
   connectSSE();
   try {
-    actionDefs = await fetchJson('/api/actions');
+    const packsResponse = await fetchJson('/api/actions');
+    actionDefs = {};
+    if (Array.isArray(packsResponse)) {
+      for (const pack of packsResponse) {
+        for (const action of (pack.actions || [])) {
+          if (action.name) actionDefs[action.name] = action;
+        }
+      }
+    }
   } catch (error) {
     showToast(`Unable to load actions: ${error.message}`, 'error');
   }
   await refreshStatus(true);
+  refreshScopes();
 }
 
 async function fetchJson(url, options = {}) {
@@ -113,6 +130,29 @@ function connectSSE() {
     if (selectedTargetId && data.target_id === selectedTargetId) {
       refreshActionLog(selectedTargetId);
     }
+  });
+
+  eventSource.addEventListener('result_state_transition', (e) => {
+    const data = parseEventData(e);
+    if (!data) return;
+    addResultStateEntry(data);
+    addLogEntry('result_state', `${data.pack_name}: ${data.state} on ${data.target_id}`);
+  });
+
+  eventSource.addEventListener('scope_armed', (e) => {
+    const data = parseEventData(e);
+    if (!data) return;
+    showToast(`Armed: ${data.pack_name} on ${data.target_identity}`, 'action');
+    addLogEntry('scope_armed', `Armed ${data.pack_name} v${data.pack_version} on ${data.target_identity}`);
+    refreshScopes();
+  });
+
+  eventSource.addEventListener('scope_disarmed', (e) => {
+    const data = parseEventData(e);
+    if (!data) return;
+    showToast(`Disarmed: ${data.pack_name} on ${data.target_identity}`, 'action');
+    addLogEntry('scope_disarmed', `Disarmed ${data.pack_name} v${data.pack_version} on ${data.target_identity}`);
+    refreshScopes();
   });
 
   eventSource.onerror = () => {
@@ -908,6 +948,420 @@ function formatLogMessage(type, data) {
       return `${data.label || data.action || 'Action'}: ${data.status || 'done'}` + (data.target_name ? ` on ${data.target_name}` : '');
     default:
       return JSON.stringify(data);
+  }
+}
+
+// --- Pack listing panel ---
+
+function initPacksPanel() {
+  const btn = document.getElementById('btn-packs');
+  const overlay = document.getElementById('pack-list-overlay');
+  const closeBtn = document.getElementById('pack-list-close');
+  if (!btn || !overlay) return;
+
+  btn.addEventListener('click', async () => {
+    overlay.hidden = false;
+    await refreshPacksList();
+  });
+
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => { overlay.hidden = true; });
+  }
+}
+
+async function refreshPacksList() {
+  try {
+    packsList = await fetchJson('/api/actions');
+    renderPacksList();
+  } catch (error) {
+    showToast(`Unable to load packs: ${error.message}`, 'error');
+  }
+}
+
+function renderPacksList() {
+  const container = document.getElementById('pack-list');
+  if (!container || !Array.isArray(packsList)) return;
+
+  if (packsList.length === 0) {
+    container.innerHTML = '<div class="empty-state"><p>No capability packs registered</p></div>';
+    return;
+  }
+
+  container.innerHTML = packsList.map(p => {
+    const hasDestructive = (p.effects || []).some(e => e.destructive);
+    const destructiveBadge = hasDestructive
+      ? '<span class="pack-badge pack-badge-destructive">DESTRUCTIVE</span>'
+      : '<span class="pack-badge pack-badge-safe">SAFE</span>';
+    const effectBadges = (p.effects || []).map(e =>
+      `<span class="pack-badge pack-badge-effect">${escHtml(e.name)}</span>`
+    ).join('');
+    const prereqBadges = (p.prerequisites || []).map(pr =>
+      `<span class="pack-badge pack-badge-prereq">${escHtml(pr.name)}</span>`
+    ).join('');
+
+    return `
+      <div class="pack-card" data-pack-name="${escAttr(p.name)}" data-pack-version="${escAttr(p.version)}">
+        <div class="pack-card-header">
+          <span class="pack-card-name">${escHtml(p.name)}</span>
+          <span class="pack-card-version">v${escHtml(p.version)}</span>
+        </div>
+        <div class="pack-card-desc">${escHtml(p.description)}</div>
+        <div class="pack-card-meta">${destructiveBadge}${effectBadges}${prereqBadges}</div>
+        <div class="pack-card-actions">
+          <button type="button" class="btn btn-sm btn-warning pack-arm-btn" data-pack-name="${escAttr(p.name)}" data-pack-version="${escAttr(p.version)}">Arm</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  container.querySelectorAll('.pack-arm-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('pack-list-overlay').hidden = true;
+      openArmDialog(btn.dataset.packName, btn.dataset.packVersion);
+    });
+  });
+}
+
+// --- Arm dialog ---
+
+let armingPackName = null;
+let armingPackVersion = null;
+
+function initArmDialog() {
+  const cancelBtn = document.getElementById('arm-dialog-cancel');
+  const confirmBtn = document.getElementById('arm-dialog-confirm');
+
+  if (cancelBtn) cancelBtn.addEventListener('click', closeArmDialog);
+  if (confirmBtn) confirmBtn.addEventListener('click', submitArm);
+}
+
+function openArmDialog(packName, packVersion) {
+  armingPackName = packName;
+  armingPackVersion = packVersion;
+
+  const dialog = document.getElementById('arm-dialog');
+  if (!dialog) return;
+
+  document.getElementById('arm-pack-name').value = `${packName} v${packVersion}`;
+  document.getElementById('arm-dialog-title').textContent = `Arm: ${packName}`;
+
+  // Populate target select
+  const select = document.getElementById('arm-target-select');
+  select.innerHTML = targets.map(t =>
+    `<option value="${escAttr(t.id)}">${escHtml(t.name)} (${escHtml(t.id)})</option>`
+  ).join('');
+
+  // Check if pack is destructive
+  const pack = packsList.find(p => p.name === packName && p.version === packVersion);
+  const hasDestructive = pack && (pack.effects || []).some(e => e.destructive);
+  const notice = document.getElementById('arm-destructive-notice');
+  const sacrificialField = document.getElementById('arm-sacrificial-field');
+  if (notice) notice.hidden = !hasDestructive;
+  if (hasDestructive) {
+    document.getElementById('arm-sacrificial-target').checked = false;
+  }
+
+  dialog.hidden = false;
+}
+
+function closeArmDialog() {
+  const dialog = document.getElementById('arm-dialog');
+  if (dialog) dialog.hidden = true;
+  armingPackName = null;
+  armingPackVersion = null;
+}
+
+async function submitArm() {
+  if (!armingPackName || !armingPackVersion) return;
+
+  const targetId = document.getElementById('arm-target-select').value;
+  const timeLimit = parseInt(document.getElementById('arm-time-limit').value, 10) || 300;
+  const stopConditions = document.getElementById('arm-stop-conditions').value
+    .split(',').map(s => s.trim()).filter(Boolean);
+  const sacrificial = document.getElementById('arm-sacrificial-target').checked;
+  const evidenceDest = document.getElementById('arm-evidence-dest').value || 'default';
+
+  try {
+    const data = await fetchJson(`/api/packs/${encodeURIComponent(armingPackName)}/${encodeURIComponent(armingPackVersion)}/arm`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        target_identity: targetId,
+        permitted_actions: targets.find(t => t.id === targetId)?.available_actions || [],
+        time_limit_seconds: timeLimit,
+        stop_conditions: stopConditions,
+        sacrificial_target: sacrificial,
+        evidence_destination: evidenceDest,
+      }),
+    });
+    showToast(`Armed: ${data.pack_name} on ${data.target_identity}`, 'action');
+    closeArmDialog();
+    refreshScopes();
+  } catch (error) {
+    showToast(`Arm failed: ${error.message}`, 'error');
+  }
+}
+
+// --- Scope management ---
+
+async function refreshScopes() {
+  try {
+    activeScopes = await fetchJson('/api/scopes');
+    renderScopeIndicator();
+    startScopeCountdown();
+  } catch (error) {
+    activeScopes = [];
+  }
+}
+
+function renderScopeIndicator() {
+  const indicator = document.getElementById('scope-indicator');
+  if (!indicator) return;
+
+  const active = activeScopes.filter(s => !s.disarmed && !s.is_expired);
+  const expired = activeScopes.filter(s => s.is_expired && !s.disarmed);
+  const disarmed = activeScopes.filter(s => s.disarmed);
+
+  if (active.length === 0 && expired.length === 0) {
+    indicator.innerHTML = '';
+    return;
+  }
+
+  let html = '';
+  for (const scope of active) {
+    const remaining = Math.max(0, Math.floor(scope.time_remaining_seconds));
+    const mins = Math.floor(remaining / 60);
+    const secs = remaining % 60;
+    html += `<span class="scope-armed">${escHtml(scope.pack_name)}</span>`;
+    html += `<span class="scope-countdown">${mins}:${String(secs).padStart(2, '0')}</span>`;
+    html += `<button type="button" class="btn btn-sm btn-danger scope-disarm-btn" data-pack-name="${escAttr(scope.pack_name)}" data-pack-version="${escAttr(scope.pack_version)}" data-target="${escAttr(scope.target_identity)}">Disarm</button>`;
+  }
+  for (const scope of expired) {
+    html += `<span class="scope-expired">${escHtml(scope.pack_name)} EXPIRED</span>`;
+  }
+
+  indicator.innerHTML = html;
+
+  indicator.querySelectorAll('.scope-disarm-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      try {
+        await fetchJson(`/api/packs/${encodeURIComponent(btn.dataset.packName)}/${encodeURIComponent(btn.dataset.packVersion)}/disarm`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ target_identity: btn.dataset.target }),
+        });
+        refreshScopes();
+      } catch (error) {
+        showToast(`Disarm failed: ${error.message}`, 'error');
+      }
+    });
+  });
+}
+
+function startScopeCountdown() {
+  if (scopeCountdownTimer) clearInterval(scopeCountdownTimer);
+  const hasActive = activeScopes.some(s => !s.disarmed && !s.is_expired);
+  if (!hasActive) return;
+
+  scopeCountdownTimer = setInterval(() => {
+    for (const scope of activeScopes) {
+      if (!scope.disarmed && !scope.is_expired) {
+        scope.time_remaining_seconds = Math.max(0, scope.time_remaining_seconds - 1);
+        if (scope.time_remaining_seconds <= 0) {
+          scope.is_expired = true;
+        }
+      }
+    }
+    renderScopeIndicator();
+    const stillActive = activeScopes.some(s => !s.disarmed && !s.is_expired);
+    if (!stillActive) {
+      clearInterval(scopeCountdownTimer);
+      scopeCountdownTimer = null;
+    }
+  }, 1000);
+}
+
+// --- Destructive action confirmation ---
+
+let destructiveCallback = null;
+
+function initDestructiveConfirm() {
+  const cancelBtn = document.getElementById('destructive-confirm-cancel');
+  const proceedBtn = document.getElementById('destructive-confirm-proceed');
+  const checkbox = document.getElementById('destructive-confirm-checkbox');
+
+  if (cancelBtn) cancelBtn.addEventListener('click', closeDestructiveConfirm);
+  if (checkbox) {
+    checkbox.addEventListener('change', () => {
+      if (proceedBtn) proceedBtn.disabled = !checkbox.checked;
+    });
+  }
+  if (proceedBtn) {
+    proceedBtn.addEventListener('click', () => {
+      closeDestructiveConfirm();
+      if (destructiveCallback) destructiveCallback();
+    });
+  }
+}
+
+function showDestructiveConfirm(desc, callback) {
+  destructiveCallback = callback;
+  const overlay = document.getElementById('destructive-confirm');
+  const descEl = document.getElementById('destructive-confirm-desc');
+  const checkbox = document.getElementById('destructive-confirm-checkbox');
+  const proceedBtn = document.getElementById('destructive-confirm-proceed');
+  if (descEl) descEl.textContent = desc;
+  if (checkbox) checkbox.checked = false;
+  if (proceedBtn) proceedBtn.disabled = true;
+  if (overlay) overlay.hidden = false;
+}
+
+function closeDestructiveConfirm() {
+  const overlay = document.getElementById('destructive-confirm');
+  if (overlay) overlay.hidden = true;
+  destructiveCallback = null;
+}
+
+// --- Result State display ---
+
+function initResultStateDisplay() {
+  const closeBtn = document.getElementById('result-state-close');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      const display = document.getElementById('result-state-display');
+      if (display) display.hidden = true;
+    });
+  }
+}
+
+function addResultStateEntry(data) {
+  const display = document.getElementById('result-state-display');
+  const container = document.getElementById('result-state-transitions');
+  if (!display || !container) return;
+
+  display.hidden = false;
+  const stateCls = safeCssClass(data.state);
+  const ts = data.timestamp ? new Date(data.timestamp).toLocaleTimeString() : '';
+  const entry = document.createElement('div');
+  entry.className = `result-state-entry state-${stateCls}`;
+  entry.innerHTML = `
+    <span class="result-state-name">${escHtml(data.state)}</span>
+    <span class="result-state-ts">${escHtml(ts)}</span>
+    <span class="result-state-target">${escHtml(data.target_id || '')}</span>`;
+  container.appendChild(entry);
+}
+
+// --- Evidence viewer ---
+
+function initEvidenceViewer() {
+  const btn = document.getElementById('btn-evidence');
+  const overlay = document.getElementById('evidence-viewer');
+  const closeBtn = document.getElementById('evidence-viewer-close');
+
+  if (btn) {
+    btn.addEventListener('click', async () => {
+      if (overlay) overlay.hidden = false;
+      await refreshEvidenceList();
+    });
+  }
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      if (overlay) overlay.hidden = true;
+      const detail = document.getElementById('evidence-viewer-detail');
+      if (detail) detail.hidden = true;
+    });
+  }
+}
+
+async function refreshEvidenceList() {
+  const container = document.getElementById('evidence-viewer-list');
+  if (!container) return;
+
+  try {
+    const records = await fetchJson('/api/evidence');
+    if (!Array.isArray(records) || records.length === 0) {
+      container.innerHTML = '<div class="empty-state"><p>No evidence records</p></div>';
+      return;
+    }
+
+    container.innerHTML = records.map(r => {
+      const time = new Date(r.start_time).toLocaleTimeString();
+      const lastState = r.transition_log.length > 0
+        ? r.transition_log[r.transition_log.length - 1].state
+        : 'none';
+      return `
+        <div class="evidence-record-card" data-record-id="${escAttr(r.id)}">
+          <div class="evidence-record-header">
+            <span class="evidence-record-target">${escHtml(r.target_identity)}</span>
+            <span class="evidence-record-time">${escHtml(time)}</span>
+          </div>
+          <div class="evidence-record-state">
+            v${escHtml(r.capability_version)} | ${escHtml(lastState)} | ${escHtml(r.stop_reason)}
+          </div>
+        </div>`;
+    }).join('');
+
+    container.querySelectorAll('.evidence-record-card').forEach(card => {
+      card.addEventListener('click', () => showEvidenceDetail(card.dataset.recordId));
+    });
+  } catch (error) {
+    container.innerHTML = `<div class="empty-state"><p>Unable to load evidence: ${escHtml(error.message)}</p></div>`;
+  }
+}
+
+async function showEvidenceDetail(recordId) {
+  const detail = document.getElementById('evidence-viewer-detail');
+  if (!detail) return;
+
+  try {
+    const record = await fetchJson(`/api/evidence/${encodeURIComponent(recordId)}`);
+    const transitionHtml = record.transition_log.map(entry => {
+      const state = typeof entry === 'object' ? entry.state : entry;
+      const ts = typeof entry === 'object' && entry.timestamp
+        ? new Date(entry.timestamp).toLocaleTimeString() : '';
+      return `<div class="evidence-transition-entry"><span>${escHtml(state)}</span><span>${escHtml(ts)}</span></div>`;
+    }).join('');
+
+    const prereqModes = Object.entries(record.prerequisite_modes || {}).map(([k, v]) =>
+      `<span class="detail-label">${escHtml(k)}</span><span class="detail-value">${escHtml(v)}</span>`
+    ).join('');
+
+    detail.hidden = false;
+    detail.innerHTML = `
+      <div class="evidence-detail-section">
+        <h4>Execution Record</h4>
+        <div class="evidence-detail-grid">
+          <span class="evidence-detail-label">Capability Version</span>
+          <span class="evidence-detail-value">${escHtml(record.capability_version)}</span>
+          <span class="evidence-detail-label">Target</span>
+          <span class="evidence-detail-value">${escHtml(record.target_identity)}</span>
+          <span class="evidence-detail-label">Start Time</span>
+          <span class="evidence-detail-value">${escHtml(new Date(record.start_time).toLocaleString())}</span>
+          <span class="evidence-detail-label">End Time</span>
+          <span class="evidence-detail-value">${escHtml(new Date(record.end_time).toLocaleString())}</span>
+          <span class="evidence-detail-label">Stop Reason</span>
+          <span class="evidence-detail-value">${escHtml(record.stop_reason)}</span>
+          <span class="evidence-detail-label">Hardware</span>
+          <span class="evidence-detail-value">${escHtml(record.hardware_identity)}</span>
+          <span class="evidence-detail-label">Scope Ref</span>
+          <span class="evidence-detail-value">${escHtml(record.authorization_scope_ref)}</span>
+        </div>
+      </div>
+      ${prereqModes ? `
+      <div class="evidence-detail-section">
+        <h4>Prerequisite Modes</h4>
+        <div class="evidence-detail-grid">${prereqModes}</div>
+      </div>` : ''}
+      <div class="evidence-detail-section">
+        <h4>Result State Transitions</h4>
+        <div class="evidence-transition-list">${transitionHtml || '<em>None</em>'}</div>
+      </div>
+      <div class="evidence-detail-section">
+        <h4>Verification Evidence</h4>
+        <pre class="data-block">${escHtml(JSON.stringify(record.verification_evidence, null, 2))}</pre>
+      </div>`;
+  } catch (error) {
+    detail.hidden = false;
+    detail.innerHTML = `<p>Unable to load record: ${escHtml(error.message)}</p>`;
   }
 }
 

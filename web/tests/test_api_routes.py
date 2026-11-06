@@ -138,6 +138,8 @@ class TestTargetDetailEndpoint(unittest.TestCase):
 
 @needs_flask
 class TestTargetActionEndpoint(unittest.TestCase):
+    """``/api/targets/<id>/action`` delegates to the registry/executor."""
+
     def setUp(self) -> None:
         self.client = make_flask_client(web_app)
         self.state = web_app.get_dashboard_state(self.client.application)
@@ -146,15 +148,39 @@ class TestTargetActionEndpoint(unittest.TestCase):
             actions=["land", "streamon"],
         )
 
-    def test_valid_action_returns_dry_run(self) -> None:
+    def test_returns_result_state_response(self) -> None:
         resp = self.client.post(
             "/api/targets/wifi:t1/action",
             json={"action": "land"},
         )
         self.assertEqual(resp.status_code, 200)
         data = resp.get_json()
-        self.assertEqual(data["status"], "dry_run")
-        self.assertIn("DRY-RUN", data["result"])
+        # New dispatch returns Result State fields
+        self.assertIn("result_state", data)
+        self.assertIn("transition_log", data)
+        self.assertIn("stop_reason", data)
+
+    def test_simulation_mode_uses_fake_executor(self) -> None:
+        resp = self.client.post(
+            "/api/targets/wifi:t1/action",
+            json={"action": "land"},
+        )
+        data = resp.get_json()
+        # In simulation/dry-run mode, FakeExecutor walks to ATTEMPTED
+        self.assertEqual(data["result_state"], "attempted")
+        self.assertEqual(data["stop_reason"], "completed")
+
+    def test_transition_log_has_timestamps(self) -> None:
+        resp = self.client.post(
+            "/api/targets/wifi:t1/action",
+            json={"action": "land"},
+        )
+        data = resp.get_json()
+        self.assertIsInstance(data["transition_log"], list)
+        self.assertGreater(len(data["transition_log"]), 0)
+        for entry in data["transition_log"]:
+            self.assertIn("state", entry)
+            self.assertIn("timestamp", entry)
 
     def test_missing_action_returns_400(self) -> None:
         resp = self.client.post(
@@ -178,32 +204,80 @@ class TestTargetActionEndpoint(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 404)
 
-    def test_action_logged(self) -> None:
+    def test_action_logged_with_result_state(self) -> None:
         self.client.post(
             "/api/targets/wifi:t1/action",
             json={"action": "land"},
         )
         self.assertTrue(self.state.action_log)
-        self.assertEqual(self.state.action_log[-1]["action"], "land")
+        entry = self.state.action_log[-1]
+        self.assertEqual(entry["action"], "land")
+        self.assertIn("result_state", entry)
+
+    def test_preview_stops_at_previewed(self) -> None:
+        """Preview-only requests must not advance past PREVIEWED."""
+        resp = self.client.post(
+            "/api/targets/wifi:t1/action",
+            json={"action": "streamon", "preview": True},
+        )
+        data = resp.get_json()
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(data["result_state"], "previewed")
+
+    def test_sse_event_emitted_with_result_state(self) -> None:
+        self.client.post(
+            "/api/targets/wifi:t1/action",
+            json={"action": "land"},
+        )
+        with self.state.state_lock:
+            rs_events = [
+                e for e in self.state.events
+                if e["type"] == "result_state_transition"
+            ]
+        self.assertGreater(len(rs_events), 0)
+        self.assertIn("state", rs_events[0]["data"])
 
 
 @needs_flask
 class TestActionDefsEndpoint(unittest.TestCase):
+    """``/api/actions`` returns pack metadata from the registry."""
+
     def setUp(self) -> None:
         self.client = make_flask_client(web_app)
         self.state = web_app.get_dashboard_state(self.client.application)
 
-    def test_returns_all_action_defs(self) -> None:
+    def test_returns_packs_from_registry(self) -> None:
         resp = self.client.get("/api/actions")
         self.assertEqual(resp.status_code, 200)
         data = resp.get_json()
-        self.assertIn("land", data)
-        self.assertIn("emergency", data)
-        for name, defn in data.items():
-            self.assertIn("label", defn)
-            self.assertIn("description", defn)
-            self.assertIn("severity", defn)
-            self.assertIn("category", defn)
+        # Must be a list of pack metadata objects, not the old ACTION_DEFS dict
+        self.assertIsInstance(data, list)
+        self.assertGreater(len(data), 0)
+
+    def test_each_pack_has_identity_and_actions(self) -> None:
+        resp = self.client.get("/api/actions")
+        data = resp.get_json()
+        for pack_meta in data:
+            self.assertIn("name", pack_meta)
+            self.assertIn("version", pack_meta)
+            self.assertIn("description", pack_meta)
+            self.assertIn("actions", pack_meta)
+            self.assertIsInstance(pack_meta["actions"], list)
+
+    def test_each_pack_has_chain_and_effects(self) -> None:
+        resp = self.client.get("/api/actions")
+        data = resp.get_json()
+        for pack_meta in data:
+            self.assertIn("chain", pack_meta)
+            self.assertIn("effects", pack_meta)
+            self.assertIsInstance(pack_meta["effects"], list)
+
+    def test_simulation_packs_cover_all_chains(self) -> None:
+        resp = self.client.get("/api/actions")
+        data = resp.get_json()
+        chains = {p["chain"] for p in data}
+        for expected_chain in ("wifi_tello", "wifi_parrot", "mavlink", "elrs", "dji_ble"):
+            self.assertIn(expected_chain, chains, f"Missing pack for chain {expected_chain}")
 
 
 @needs_flask

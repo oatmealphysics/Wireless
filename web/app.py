@@ -27,7 +27,7 @@ import uuid
 from collections.abc import Generator
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +47,22 @@ sys.path.insert(0, str(TOOLS_DIR))
 sys.path.insert(0, str(TOOLS_DIR / "exploit_chains"))
 
 from exploit_chains.common import AbortHandler, ChainLogger
+
+from capability_pack import (
+    AuthorizationError,
+    AuthorizationScope,
+    EvidenceStore,
+    ExecutionRecord,
+    ExecutorInput,
+    ExecutorOutput,
+    FakeExecutor,
+    PackIdentity,
+    PackRegistry,
+    ResultState,
+    ScopeManager,
+    SimulationPack,
+    TargetDescriptor,
+)
 
 MAX_EVENTS = 500
 MAX_LOG = 200
@@ -121,6 +137,9 @@ class DashboardState:
     next_event_id: int = 0
     scan_defaults: dict[str, str] = field(default_factory=_new_scan_defaults)
     chain2_state: dict[str, Any] = field(default_factory=_new_chain2_state)
+    pack_registry: PackRegistry | None = field(default=None, repr=False)
+    scope_manager: ScopeManager | None = field(default=None, repr=False)
+    evidence_store: EvidenceStore = field(default_factory=EvidenceStore, repr=False)
     _app_owner_token: object | None = field(
         default=None, init=False, repr=False, compare=False,
     )
@@ -192,7 +211,15 @@ def create_dashboard_state(
         *, simulate: bool = False, dry_run: bool = True,
         scan_defaults: dict[str, str] | None = None) -> DashboardState:
     """Create isolated state for one dashboard application instance."""
-    state = DashboardState(simulate_mode=simulate, dry_run_mode=dry_run)
+    registry = build_simulation_registry()
+    scope_mgr = ScopeManager(registry)
+    evidence = EvidenceStore()
+    state = DashboardState(
+        simulate_mode=simulate, dry_run_mode=dry_run,
+        pack_registry=registry,
+        scope_manager=scope_mgr,
+        evidence_store=evidence,
+    )
     if scan_defaults:
         with state.state_lock:
             state.scan_defaults.update(scan_defaults)
@@ -702,6 +729,241 @@ ACTION_DEFS = {
     },
 }
 
+# ---------------------------------------------------------------------------
+# Simulation pack definitions — one per attack chain
+# ---------------------------------------------------------------------------
+
+# Maps chain name -> list of action names for that chain
+_CHAIN_ACTIONS: dict[str, list[str]] = {
+    "wifi_tello": ["land", "emergency", "takeoff", "streamon", "rc_zero"],
+    "wifi_parrot": ["land", "emergency_watchdog", "kill_control"],
+    "mavlink": ["sniff", "disarm", "land", "rtl", "reboot", "replay"],
+    "elrs": ["forge_disarm", "preview_fhss", "scan_deeper"],
+    "dji_ble": ["ble_scan_services"],
+    "chain2_wifi_mavlink": ["disarm", "land"],
+}
+
+_CHAIN_METADATA: dict[str, dict[str, Any]] = {
+    "wifi_tello": {
+        "description": "WiFi Tello SDK command injection",
+        "effects": [{"name": "motor_stop", "destructive": True, "description": "Emergency motor kill"}],
+    },
+    "wifi_parrot": {
+        "description": "WiFi Parrot AT command / telnet injection",
+        "effects": [{"name": "process_kill", "destructive": True, "description": "Kill control process"}],
+    },
+    "mavlink": {
+        "description": "MAVLink UDP command injection and traffic sniffing",
+        "effects": [{"name": "disarm", "destructive": True, "description": "Disarm flight controller"}],
+    },
+    "elrs": {
+        "description": "ExpressLRS FHSS analysis and packet forging",
+        "effects": [{"name": "desync", "destructive": False, "description": "Receiver desynchronization"}],
+    },
+    "dji_ble": {
+        "description": "DJI BLE GATT service enumeration",
+        "effects": [],
+    },
+    "chain2_wifi_mavlink": {
+        "description": "Chain 2: WiFi to MAVLink injection pipeline",
+        "effects": [{"name": "command_injection", "destructive": True, "description": "MAVLink command injection via WiFi"}],
+    },
+}
+
+
+def build_simulation_registry() -> PackRegistry:
+    """Build a PackRegistry populated with one SimulationPack per chain.
+
+    Each pack's ``actions`` list carries the ACTION_DEFS metadata so the
+    ``/api/actions`` endpoint can serve complete pack metadata from the
+    registry instead of the static ``ACTION_DEFS`` dictionary.
+    """
+    registry = PackRegistry()
+    for chain_name, action_names in _CHAIN_ACTIONS.items():
+        meta = _CHAIN_METADATA.get(chain_name, {})
+        actions = []
+        for act_name in action_names:
+            act_def = ACTION_DEFS.get(act_name, {})
+            actions.append({
+                "name": act_name,
+                "label": act_def.get("label", act_name),
+                "description": act_def.get("description", ""),
+                "severity": act_def.get("severity", "info"),
+                "category": act_def.get("category", "simulated"),
+                "icon": act_def.get("icon", ""),
+            })
+        pack = SimulationPack(
+            name=f"sim-{chain_name}",
+            version="0.1.0",
+            description=meta.get("description", f"Simulation pack for {chain_name}"),
+            chain=chain_name,
+            actions=actions,
+            effects=meta.get("effects", []),
+        )
+        registry.register(pack)
+    return registry
+
+
+def build_simulation_executor(*, preview_only: bool = False) -> FakeExecutor:
+    """Return a FakeExecutor with a canned sequence for simulation mode.
+
+    When *preview_only* is True, the executor stops at PREVIEWED (no
+    hardware probes, no RF, no network activity).  Otherwise it walks
+    through the simulation sequence to ATTEMPTED (the highest state a
+    simulation should claim without real evidence).
+    """
+    if preview_only:
+        sequence = [ResultState.PREVIEWED]
+    else:
+        sequence = [ResultState.PREVIEWED, ResultState.ATTEMPTED]
+    return FakeExecutor(
+        canned_sequence=sequence,
+        canned_evidence={"simulated": True, "side_effects": False},
+    )
+
+
+def _resolve_pack_for_target(
+    registry: PackRegistry, target: dict[str, Any],
+) -> SimulationPack | None:
+    """Find the registered SimulationPack matching a target's chain."""
+    chain = target.get("chain", "")
+    for pack in registry.query({}):
+        if isinstance(pack, SimulationPack) and pack.chain == chain:
+            return pack
+    return None
+
+
+def _execute_via_registry(
+    state: DashboardState,
+    registry: PackRegistry,
+    target: dict[str, Any],
+    action_name: str,
+    preview_only: bool = False,
+) -> dict[str, Any]:
+    """Resolve pack, run through FakeExecutor, emit SSE events, return response.
+
+    This is the unified dispatch path that replaces the old
+    execute_action_simulated / execute_action_live if/elif chain.
+    """
+    pack = _resolve_pack_for_target(registry, target)
+    if pack is None:
+        return {
+            "error": f"No registered pack for chain '{target.get('chain', '')}'",
+            "result_state": None,
+            "transition_log": [],
+            "stop_reason": "no_pack",
+        }
+
+    pack_id = pack.identity
+
+    # Enforce authorization unless in simulation/dry-run mode
+    scope_manager = state.scope_manager
+    with state.state_lock:
+        skip_auth = state.simulate_mode or state.dry_run_mode
+    if not skip_auth and scope_manager is not None:
+        try:
+            scope_manager.authorize(
+                pack_name=pack_id.name,
+                pack_version=pack_id.version,
+                target_identity=target["id"],
+                action=action_name,
+            )
+        except AuthorizationError as exc:
+            return {
+                "error": str(exc),
+                "result_state": None,
+                "transition_log": [],
+                "stop_reason": "authorization_denied",
+            }
+
+    executor = build_simulation_executor(preview_only=preview_only)
+    inp = ExecutorInput(
+        pack_identity=pack_id,
+        target=TargetDescriptor(
+            identity=target["id"],
+            protocol_version=pack.applicability.protocol_version,
+            firmware_impl=pack.applicability.firmware_impl,
+            firmware_version=pack.applicability.firmware_version,
+        ),
+        scope_reference=f"{pack_id.name}/{pack_id.version}/{target['id']}",
+        parameters={"action": action_name, "target_details": target.get("details", {})},
+    )
+
+    output = executor.run(inp)
+
+    # Emit SSE events for each Result State transition
+    for rs, ts in output.transition_log:
+        _push_event(state, "result_state_transition", {
+            "target_id": target["id"],
+            "action": action_name,
+            "state": rs.value,
+            "timestamp": ts.isoformat(),
+            "pack_name": pack_id.name,
+        })
+
+    # Build action log entry
+    entry = {
+        "id": uuid.uuid4().hex[:8],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "target_id": target["id"],
+        "target_name": target.get("name", "Unknown"),
+        "action": action_name,
+        "label": _action_label(pack, action_name),
+        "result_state": output.final_state.value,
+        "stop_reason": output.stop_reason,
+        "pack_name": pack_id.name,
+        "pack_version": pack_id.version,
+    }
+    _record_action(state, entry)
+
+    # Build serializable transition log for the HTTP response
+    transition_log = [
+        {"state": rs.value, "timestamp": ts.isoformat()}
+        for rs, ts in output.transition_log
+    ]
+
+    # Append evidence record to evidence store
+    end_time = datetime.now(timezone.utc)
+    evidence_record = ExecutionRecord(
+        capability_version=pack_id.version,
+        target_identity=target["id"],
+        prerequisite_values={"action": action_name},
+        prerequisite_modes={},
+        authorization_scope_ref=inp.scope_reference,
+        start_time=datetime.fromisoformat(entry["timestamp"]),
+        end_time=end_time,
+        transition_log=output.transition_log,
+        verification_evidence=output.evidence,
+        stop_reason=output.stop_reason,
+        hardware_identity="simulation",
+    )
+    if state.evidence_store is not None:
+        state.evidence_store.append(evidence_record)
+
+    return {
+        "id": entry["id"],
+        "timestamp": entry["timestamp"],
+        "target_id": target["id"],
+        "target_name": target.get("name", "Unknown"),
+        "action": action_name,
+        "label": entry["label"],
+        "result_state": output.final_state.value,
+        "transition_log": transition_log,
+        "stop_reason": output.stop_reason,
+        "evidence": output.evidence,
+        "pack_name": pack_id.name,
+        "pack_version": pack_id.version,
+    }
+
+
+def _action_label(pack: SimulationPack, action_name: str) -> str:
+    """Resolve the human-readable label for an action within a pack."""
+    for act in pack.action_defs:
+        if act["name"] == action_name:
+            return act.get("label", action_name)
+    # Fallback to ACTION_DEFS for legacy compatibility
+    return ACTION_DEFS.get(action_name, {}).get("label", action_name)
+
 
 def run_scan_simulated(
         state: DashboardState, protocols: list[str] | None = None,
@@ -1182,7 +1444,10 @@ def _score_target(t: dict[str, Any]) -> int:
     return base
 
 
-# --- Action execution ---
+# --- Legacy action execution (unreachable from new registry/executor dispatch) ---
+# These functions are retained until all chain handlers are wrapped as
+# full Capability Packs with real hardware executors.  The new dispatch
+# path in _execute_via_registry() replaces them.
 
 def execute_action_simulated(
         state: DashboardState, target: dict[str, Any],
@@ -1667,32 +1932,55 @@ def api_target_detail(target_id: str) -> tuple[Response, int] | Response:
 
 @dashboard.route("/api/targets/<path:target_id>/action", methods=["POST"])
 def api_target_action(target_id: str) -> tuple[Response, int] | Response:
+    """Execute an action via pack registry / executor delegation.
+
+    Resolves the target's applicable pack from the registry, builds an
+    ExecutorInput, runs through the FakeExecutor, and returns a Result
+    State response.  SSE events are emitted for each state transition.
+    """
     state = get_dashboard_state()
     with state.state_lock:
         target = deepcopy(state.targets.get(target_id))
-        use_simulation = state.simulate_mode or state.dry_run_mode
+        registry = state.pack_registry
     if not target:
         return jsonify({"error": "Target not found"}), 404
 
     body = request.get_json(silent=True)
     action_name = body.get("action") if isinstance(body, dict) else None
+    preview_only = body.get("preview", False) if isinstance(body, dict) else False
     if not isinstance(action_name, str) or not action_name:
         return jsonify({"error": "Action must be a non-empty string"}), 400
 
     if action_name not in target.get("available_actions", []):
         return jsonify({"error": f"Action '{action_name}' not available for this target"}), 400
 
-    if use_simulation:
-        result = execute_action_simulated(state, target, action_name)
-    else:
-        result = execute_action_live(state, target, action_name)
+    if registry is None:
+        return jsonify({"error": "Pack registry not initialized"}), 500
+
+    result = _execute_via_registry(
+        state, registry, target, action_name, preview_only=preview_only,
+    )
 
     return jsonify(result)
 
 
 @dashboard.route("/api/actions")
 def api_action_defs() -> Response:
-    return jsonify(ACTION_DEFS)
+    """Return pack metadata from the registry.
+
+    Each entry describes one registered Capability Pack with its identity,
+    chain, available actions, effects, and prerequisites.  Replaces the
+    former static ACTION_DEFS dictionary.
+    """
+    state = get_dashboard_state()
+    registry = state.pack_registry
+    if registry is None:
+        return jsonify([])
+    packs_meta = []
+    for pack in registry.query({}):
+        if isinstance(pack, SimulationPack):
+            packs_meta.append(pack.to_metadata())
+    return jsonify(packs_meta)
 
 
 @dashboard.route("/api/log")
@@ -1778,6 +2066,213 @@ def api_events() -> Response:
 
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# --- Pack arming / disarming / scopes / evidence endpoints ---
+
+@dashboard.route("/api/packs/<pack_name>/<version>/arm", methods=["POST"])
+def api_pack_arm(pack_name: str, version: str) -> tuple[Response, int] | Response:
+    """Create a scoped authorization for a pack against a target."""
+    state = get_dashboard_state()
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "JSON body required"}), 400
+
+    required = ("target_identity", "permitted_actions", "time_limit_seconds",
+                "stop_conditions", "sacrificial_target", "evidence_destination",
+                "protocol_version", "firmware_impl", "firmware_version")
+    missing = [f for f in required if f not in body]
+    if missing:
+        return jsonify({"error": f"Missing required fields: {', '.join(missing)}"}), 400
+
+    # Validate permitted_actions is a list of strings
+    permitted_actions_raw = body["permitted_actions"]
+    if (not isinstance(permitted_actions_raw, list)
+            or not all(isinstance(a, str) for a in permitted_actions_raw)):
+        return jsonify({"error": "permitted_actions must be a list of strings"}), 400
+
+    registry = state.pack_registry
+    scope_mgr = state.scope_manager
+    if registry is None or scope_mgr is None:
+        return jsonify({"error": "Pack system not initialized"}), 500
+
+    pack = registry.lookup(pack_name, version)
+    if pack is None:
+        return jsonify({"error": f"Pack not found: {pack_name} v{version}"}), 404
+
+    target_identity = body["target_identity"]
+    # Build a TargetDescriptor from client-supplied values so the
+    # boundary check is meaningful (not tautological).
+    td = TargetDescriptor(
+        identity=target_identity,
+        protocol_version=body["protocol_version"],
+        firmware_impl=body["firmware_impl"],
+        firmware_version=body["firmware_version"],
+    )
+
+    try:
+        scope = scope_mgr.arm(
+            pack_name=pack_name,
+            pack_version=version,
+            target=td,
+            permitted_actions=frozenset(permitted_actions_raw),
+            bounds={},
+            time_limit=timedelta(seconds=body["time_limit_seconds"]),
+            stop_conditions=body["stop_conditions"],
+            sacrificial_target=body["sacrificial_target"],
+            evidence_destination=body["evidence_destination"],
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except LookupError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+    _push_event(state, "scope_armed", {
+        "pack_name": pack_name,
+        "pack_version": version,
+        "target_identity": target_identity,
+        "expiry": scope.expiry.isoformat(),
+    })
+
+    return jsonify({
+        "status": "armed",
+        "scope_key": f"{pack_name}/{version}/{target_identity}",
+        "expiry": scope.expiry.isoformat(),
+        "pack_name": pack_name,
+        "pack_version": version,
+        "target_identity": target_identity,
+    })
+
+
+@dashboard.route("/api/packs/<pack_name>/<version>/disarm", methods=["POST"])
+def api_pack_disarm(pack_name: str, version: str) -> tuple[Response, int] | Response:
+    """Revoke authorization for a pack against a target."""
+    state = get_dashboard_state()
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"error": "JSON body required"}), 400
+
+    target_identity = body.get("target_identity", "")
+    scope_mgr = state.scope_manager
+    if scope_mgr is None:
+        return jsonify({"error": "Pack system not initialized"}), 500
+
+    scope_mgr.disarm(
+        pack_name=pack_name,
+        pack_version=version,
+        target_identity=target_identity,
+    )
+
+    _push_event(state, "scope_disarmed", {
+        "pack_name": pack_name,
+        "pack_version": version,
+        "target_identity": target_identity,
+    })
+
+    return jsonify({
+        "status": "disarmed",
+        "pack_name": pack_name,
+        "pack_version": version,
+        "target_identity": target_identity,
+    })
+
+
+@dashboard.route("/api/scopes")
+def api_scopes() -> Response:
+    """List active authorization scopes with time-to-expiry."""
+    state = get_dashboard_state()
+    scope_mgr = state.scope_manager
+    if scope_mgr is None:
+        return jsonify([])
+
+    with state.state_lock:
+        scope_snapshot = scope_mgr.list_scopes()
+
+    now = datetime.now(timezone.utc)
+    scopes_list = []
+    for key, scope in scope_snapshot:
+        remaining = (scope.expiry - now).total_seconds()
+        scopes_list.append({
+            "pack_name": scope.pack_identity.name,
+            "pack_version": scope.pack_identity.version,
+            "target_identity": scope.target.identity,
+            "expiry": scope.expiry.isoformat(),
+            "time_remaining_seconds": max(0, remaining),
+            "is_expired": scope.is_expired,
+            "disarmed": scope.disarmed,
+            "sacrificial_target": scope.sacrificial_target,
+            "permitted_actions": sorted(scope.permitted_actions),
+            "stop_conditions": scope.stop_conditions,
+            "evidence_destination": scope.evidence_destination,
+        })
+    return jsonify(scopes_list)
+
+
+@dashboard.route("/api/evidence")
+def api_evidence() -> Response:
+    """List evidence records."""
+    state = get_dashboard_state()
+    store = state.evidence_store
+    if store is None:
+        return jsonify([])
+
+    records = []
+    for i, rec in enumerate(store.records):
+        records.append(_serialize_evidence_record(rec, record_id=str(i)))
+    return jsonify(records)
+
+
+@dashboard.route("/api/evidence/<record_id>")
+def api_evidence_detail(record_id: str) -> tuple[Response, int] | Response:
+    """Get specific evidence record details."""
+    state = get_dashboard_state()
+    store = state.evidence_store
+    if store is None:
+        return jsonify({"error": "Evidence store not initialized"}), 500
+
+    try:
+        idx = int(record_id)
+    except (ValueError, TypeError):
+        return jsonify({"error": "Invalid record ID"}), 404
+
+    all_records = store.records
+    if idx < 0 or idx >= len(all_records):
+        return jsonify({"error": "Evidence record not found"}), 404
+
+    rec = all_records[idx]
+    return jsonify(_serialize_evidence_record(rec, record_id=record_id))
+
+
+def _serialize_evidence_record(rec: ExecutionRecord, *, record_id: str) -> dict[str, Any]:
+    """Serialize an ExecutionRecord to a JSON-safe dict."""
+    transition_log = []
+    for entry in rec.transition_log:
+        if isinstance(entry, tuple) and len(entry) == 2:
+            state_val, ts = entry
+            state_str = state_val.value if hasattr(state_val, "value") else str(state_val)
+            ts_str = ts.isoformat() if hasattr(ts, "isoformat") else str(ts)
+            transition_log.append({"state": state_str, "timestamp": ts_str})
+        else:
+            transition_log.append(entry)
+
+    prereq_modes = {}
+    for k, v in rec.prerequisite_modes.items():
+        prereq_modes[k] = v.value if hasattr(v, "value") else str(v)
+
+    return {
+        "id": record_id,
+        "capability_version": rec.capability_version,
+        "target_identity": rec.target_identity,
+        "prerequisite_values": rec.prerequisite_values,
+        "prerequisite_modes": prereq_modes,
+        "authorization_scope_ref": rec.authorization_scope_ref,
+        "start_time": rec.start_time.isoformat(),
+        "end_time": rec.end_time.isoformat(),
+        "transition_log": transition_log,
+        "verification_evidence": rec.verification_evidence,
+        "stop_reason": rec.stop_reason,
+        "hardware_identity": rec.hardware_identity,
+    }
 
 
 # --- Chain 2: WiFi → MAVLink injection endpoints ---
@@ -1959,8 +2454,6 @@ def main() -> None:
     parser.add_argument("--simulate", action="store_true",
                         help="Demo mode with simulated targets")
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--live-actions", action="store_true",
-                        help="Enable live action execution (default: dry-run only)")
     parser.add_argument("--wifi-iface", default="wlan0",
                         help="Default WiFi interface (default: wlan0)")
     parser.add_argument("--ble-iface", default="hci0",
@@ -1972,7 +2465,7 @@ def main() -> None:
     state = get_dashboard_state(app)
     with state.state_lock:
         state.simulate_mode = args.simulate
-        state.dry_run_mode = not args.live_actions
+        state.dry_run_mode = True  # Authorization is now per-pack via scoping
         state.scan_defaults.update({
             "wifi_iface": args.wifi_iface,
             "ble_iface": args.ble_iface,
