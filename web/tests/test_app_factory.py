@@ -12,7 +12,7 @@ TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
 sys.path.insert(0, str(TOOLS_DIR / "tests"))
 
-from helpers import get_web_app, make_target, needs_flask
+from helpers import arm_pack, get_web_app, make_target, needs_flask
 
 web_app = get_web_app()
 
@@ -70,6 +70,7 @@ class TestApplicationStateFactory(unittest.TestCase):
                 state.scan_defaults["wifi_iface"] = f"wlan-{label}"
             web_app._push_event(state, "instance_event", {"instance": label})
             with flask_app.test_client() as client:
+                arm_pack(client, target_id, actions=["land"])
                 action = client.post(
                     f"/api/targets/{target_id}/action", json={"action": "land"},
                 )

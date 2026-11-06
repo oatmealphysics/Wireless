@@ -88,6 +88,25 @@ def _inject_target(state, target_dict):
         state.targets[target_dict["id"]] = dict(target_dict)
 
 
+def _arm(client, target_id, chain, actions):
+    """Arm a simulation pack scope so an action POST is authorized.
+
+    Authorization is always enforced for execution, so every action test must
+    first create a time-limited scope against a discovered target.
+    """
+    return client.post(
+        f"/api/packs/sim-{chain}/0.1.0/arm",
+        json={
+            "target_identity": target_id,
+            "permitted_actions": list(actions),
+            "time_limit_seconds": 300,
+            "stop_conditions": ["operator_abort"],
+            "sacrificial_target": True,
+            "evidence_destination": "test",
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # API route tests
 # ---------------------------------------------------------------------------
@@ -292,6 +311,7 @@ class TestActionEndpoint:
     def test_action_returns_result_state(self, client, app_state):
         """All modes now return Result State response from the executor."""
         _inject_target(app_state, self.TELLO_TARGET)
+        _arm(client, self.TELLO_TARGET["id"], "wifi_tello", ["land"])
         resp = client.post(
             f"/api/targets/{self.TELLO_TARGET['id']}/action",
             json={"action": "land"},
@@ -336,6 +356,7 @@ class TestActionEndpoint:
         for chain, target in chain_targets.items():
             _inject_target(app_state, target)
             action = target["available_actions"][0]
+            _arm(client, target["id"], chain, [action])
             resp = client.post(
                 f"/api/targets/{target['id']}/action",
                 json={"action": action},
@@ -347,6 +368,7 @@ class TestActionEndpoint:
 
     def test_action_appends_to_log_with_result_state(self, client, app_state):
         _inject_target(app_state, self.TELLO_TARGET)
+        _arm(client, self.TELLO_TARGET["id"], "wifi_tello", ["land"])
         client.post(
             f"/api/targets/{self.TELLO_TARGET['id']}/action",
             json={"action": "land"},
@@ -513,6 +535,7 @@ class TestSSEEvents:
             "available_actions": ["land"],
             "details": {},
         })
+        _arm(client, "wifi:TEST", "wifi_tello", ["land"])
         client.post("/api/targets/wifi:TEST/action", json={"action": "land"})
         with app_state.state_lock:
             event_types = [e["type"] for e in app_state.events]
@@ -526,6 +549,7 @@ class TestSSEEvents:
             "available_actions": ["land"],
             "details": {},
         })
+        _arm(client, "wifi:TEST", "wifi_tello", ["land"])
         client.post("/api/targets/wifi:TEST/action", json={"action": "land"})
         with app_state.state_lock:
             rs_events = [
@@ -689,17 +713,47 @@ class TestRegistryDispatchIntegration:
             assert expected in chains
 
     def test_execute_via_registry_returns_result_state(self, app_state):
-        """_execute_via_registry produces a Result State response."""
+        """_execute_via_registry produces a Result State response once armed."""
+        from datetime import timedelta
+
         target = {
             "id": "wifi:test", "name": "Test",
             "chain": "wifi_tello", "details": {},
         }
+        # Authorization is always enforced; arm a scope against this target.
+        app_state.scope_manager.arm(
+            pack_name="sim-wifi_tello",
+            pack_version="0.1.0",
+            target=webapp.TargetDescriptor(
+                identity="wifi:test", protocol_version="*",
+                firmware_impl="*", firmware_version="*",
+            ),
+            permitted_actions=frozenset(["land"]),
+            bounds={},
+            time_limit=timedelta(seconds=300),
+            stop_conditions=["operator_abort"],
+            sacrificial_target=True,
+            evidence_destination="test",
+        )
         result = webapp._execute_via_registry(
             app_state, app_state.pack_registry, target, "land",
         )
         assert result["result_state"] == "attempted"
         assert result["stop_reason"] == "completed"
         assert len(result["transition_log"]) > 0
+
+    def test_execute_via_registry_denies_unarmed(self, app_state):
+        """Without an armed scope, execution is denied before any side effect."""
+        target = {
+            "id": "wifi:unarmed", "name": "Test",
+            "chain": "wifi_tello", "details": {},
+        }
+        result = webapp._execute_via_registry(
+            app_state, app_state.pack_registry, target, "land",
+        )
+        assert result["result_state"] is None
+        assert result["stop_reason"] == "authorization_denied"
+        assert result["transition_log"] == []
 
     def test_preview_flag_produces_previewed_only(self, app_state):
         target = {
@@ -760,6 +814,34 @@ class TestChain2UnifiedDispatch:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["status"] == "dry_run"
+        # Dry-run builds the packet but transmits nothing: PREVIEWED only.
+        assert data["result_state"] == "previewed"
+
+    def test_chain2_inject_dry_run_records_evidence(self, client, app_state):
+        """Every injection attempt produces an append-only evidence record."""
+        client.post(
+            "/api/chain2/inject",
+            json={"command": "land", "target_id": "t1"},
+        )
+        records = client.get("/api/evidence").get_json()
+        assert len(records) == 1
+        assert records[0]["stop_reason"] == "dry_run"
+
+    def test_chain2_live_inject_denied_without_scope(self, live_client, live_app_state):
+        """A live (non-dry-run) injection requires an armed scope first."""
+        resp = live_client.post(
+            "/api/chain2/inject",
+            json={
+                "command": "land",
+                "target_id": "mav:1:1",
+                "endpoint": "192.0.2.1:14550",
+            },
+        )
+        assert resp.status_code == 403
+        data = resp.get_json()
+        assert data["status"] == "authorization_denied"
+        # No transmission occurred; the packet was built but not sent.
+        assert "packet_hex" in data
 
 
 # ---------------------------------------------------------------------------

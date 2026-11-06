@@ -469,6 +469,42 @@ class TestEvidenceStore(unittest.TestCase):
             store.append(record)
         self.assertEqual(len(store.records), 3)
 
+    def test_stored_record_cannot_be_mutated_in_place(self) -> None:
+        """A stored record's container fields are deeply immutable."""
+        from datetime import datetime, timezone
+
+        from capability_pack import EvidenceStore, ExecutionRecord, ResultState
+
+        store = EvidenceStore()
+        now = datetime.now(timezone.utc)
+        evidence = {"packets": [{"channel": 1}], "ok": True}
+        record = ExecutionRecord(
+            capability_version="0.1.0",
+            target_identity="bench-01",
+            prerequisite_values={"uid": "aabbcc"},
+            prerequisite_modes={},
+            authorization_scope_ref="ref",
+            start_time=now,
+            end_time=now,
+            transition_log=[(ResultState.PREVIEWED, now)],
+            verification_evidence=evidence,
+            stop_reason="completed",
+            hardware_identity="sdr-001",
+        )
+        store.append(record)
+
+        # Mutating the original input dict must not change the stored record.
+        evidence["ok"] = False
+        evidence["packets"].append({"channel": 99})
+
+        stored = store.records[0]
+        self.assertTrue(stored.verification_evidence["ok"])
+        self.assertEqual(len(stored.verification_evidence["packets"]), 1)
+
+        # Direct in-place mutation of the frozen field must raise.
+        with self.assertRaises(TypeError):
+            stored.verification_evidence["ok"] = False  # type: ignore[index]
+
 
 # ---------------------------------------------------------------------------
 # Seam 4: Headless pipeline integration

@@ -99,3 +99,35 @@ def make_flask_client(
     flask_app = web_app.create_app(state)
     flask_app.testing = True
     return flask_app.test_client()
+
+
+def arm_pack(
+    client: Any,
+    target_id: str,
+    *,
+    chain: str = "wifi_tello",
+    actions: list[str] | None = None,
+    version: str = "0.1.0",
+    sacrificial: bool = True,
+    time_limit: int = 300,
+) -> Any:
+    """Arm a simulation pack's scope so a subsequent action POST is authorized.
+
+    Authorization is always enforced for execution, so tests that drive an
+    action through the registry must first create a time-limited scope. The
+    target must already be present in ``state.targets`` before calling this.
+    """
+    pack_name = f"sim-{chain}"
+    if actions is None:
+        actions = ["land", "streamon", "emergency", "takeoff", "rc_zero"]
+    return client.post(
+        f"/api/packs/{pack_name}/{version}/arm",
+        json={
+            "target_identity": target_id,
+            "permitted_actions": list(actions),
+            "time_limit_seconds": time_limit,
+            "stop_conditions": ["operator_abort"],
+            "sacrificial_target": sacrificial,
+            "evidence_destination": "test",
+        },
+    )

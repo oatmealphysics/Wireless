@@ -525,7 +525,19 @@ function renderDetail(t) {
   refreshActionLog(t.id);
 }
 
-async function executeAction(targetId, actionName, actionButton) {
+function executeAction(targetId, actionName, actionButton) {
+  // Destructive actions (severity "danger") route through the Sacrificial
+  // Target confirmation dialog before any request is sent.
+  const def = actionDefs[actionName] || {};
+  if (def.severity === 'danger') {
+    const desc = `${def.label || actionName}: ${def.description || 'This action has destructive effects on the target.'}`;
+    showDestructiveConfirm(desc, () => doExecuteAction(targetId, actionName, actionButton));
+    return;
+  }
+  doExecuteAction(targetId, actionName, actionButton);
+}
+
+async function doExecuteAction(targetId, actionName, actionButton) {
   const resultEl = document.getElementById('action-result');
   if (!resultEl || actionButton?.disabled) return;
   if (actionButton) actionButton.disabled = true;
@@ -539,20 +551,14 @@ async function executeAction(targetId, actionName, actionButton) {
       body: JSON.stringify({ action: actionName }),
     });
     if (selectedTargetId === targetId && resultEl.isConnected) {
-      const dataBlock = data.data
-        ? `<div class="data-block"><pre>${escHtml(JSON.stringify(data.data, null, 2))}</pre></div>`
-        : '';
-      const cls = data.status === 'error' ? 'error' : '';
-      resultEl.innerHTML = `
-        <div class="action-result ${cls}">
-          <strong>${escHtml(data.label || actionName)}</strong> [${escHtml(data.status)}]
-          <br>${escHtml(data.result)}
-          ${dataBlock}
-        </div>`;
+      resultEl.innerHTML = renderActionResult(data, actionName);
     }
   } catch(error) {
+    // A denied (unarmed/expired/out-of-scope) request surfaces here via the
+    // non-2xx response; show the authorization error rather than a phantom
+    // "executed" state.
     if (selectedTargetId === targetId && resultEl.isConnected) {
-      resultEl.innerHTML = `<div class="action-result error">Error: ${escHtml(error.message)}</div>`;
+      resultEl.innerHTML = `<div class="action-result error">Not authorized / failed: ${escHtml(error.message)}</div>`;
     }
   } finally {
     if (resultEl.isConnected) resultEl.setAttribute('aria-busy', 'false');
@@ -560,6 +566,28 @@ async function executeAction(targetId, actionName, actionButton) {
   }
 
   if (selectedTargetId === targetId) refreshActionLog(targetId);
+}
+
+function renderActionResult(data, actionName) {
+  const resultState = data.result_state || 'unknown';
+  const label = escHtml(data.label || actionName);
+  const stop = data.stop_reason ? `<span class="result-stop">(${escHtml(data.stop_reason)})</span>` : '';
+  const transitions = Array.isArray(data.transition_log)
+    ? data.transition_log.map(t =>
+        `<span class="rs-chip state-${safeCssClass(t.state)}">${escHtml(t.state)}</span>`
+      ).join('')
+    : '';
+  const evidence = data.evidence
+    ? `<div class="data-block"><pre>${escHtml(JSON.stringify(data.evidence, null, 2))}</pre></div>`
+    : '';
+  return `
+    <div class="action-result">
+      <strong>${label}</strong>
+      → <span class="result-state-badge state-${safeCssClass(resultState)}">${escHtml(resultState)}</span>
+      ${stop}
+      ${transitions ? `<div class="result-transitions">${transitions}</div>` : ''}
+      ${evidence}
+    </div>`;
 }
 
 async function refreshActionLog(targetId) {
@@ -575,12 +603,14 @@ async function refreshActionLog(targetId) {
     }
     el.innerHTML = entries.map(e => {
       const time = new Date(e.timestamp).toLocaleTimeString();
-      const resultCls = e.status === 'error' ? 'error' : '';
+      // Log entries carry a Result State (and, for Chain 2, a legacy status).
+      const outcome = e.result_state || e.status || 'unknown';
+      const resultCls = (e.stop_reason === 'error' || e.status === 'error') ? 'error' : '';
       return `
         <div class="log-entry">
           <span class="log-time">${time}</span>
           <span class="log-action">${escHtml(e.label || e.action)}</span>
-          <span class="log-result ${resultCls}">[${escHtml(e.status)}]</span>
+          <span class="log-result ${resultCls}">[${escHtml(outcome)}]</span>
         </div>`;
     }).join('');
   } catch(e) {}

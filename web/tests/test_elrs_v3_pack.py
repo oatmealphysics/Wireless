@@ -502,5 +502,57 @@ class TestPackLifecycleMethods(unittest.TestCase):
         self.assertIn("stopped", result)
 
 
+# ===========================================================================
+# Seam 9: Honest offline evidence (no overclaiming)
+# ===========================================================================
+
+class TestOfflineEvidenceHonesty(unittest.TestCase):
+    """execute()/verify() never claim more than offline source-derivation."""
+
+    def test_execute_offline_does_not_claim_transmission(self) -> None:
+        from elrs_v3_pack import ELRSv3OTAInjectionPack
+        pack = ELRSv3OTAInjectionPack()
+        result = pack.execute({"binding_phrase": FIXTURE_PHRASE})
+        # Nothing is transmitted offline, so the honest state is PREVIEWED.
+        self.assertEqual(result["result_state"], "previewed")
+        self.assertFalse(result["transmitted"])
+
+    def test_verify_validated_only_when_crc_checks_pass(self) -> None:
+        from elrs_v3_pack import ELRSv3OTAInjectionPack
+        pack = ELRSv3OTAInjectionPack()
+        result = pack.verify({"binding_phrase": FIXTURE_PHRASE})
+        self.assertTrue(result["independently_verified"])
+        self.assertEqual(result["evidence_level"], "offline_validated")
+        self.assertGreater(result["packets_checked"], 0)
+        # Even when validated, it must not claim bench/field evidence.
+        self.assertIn("bench-validated", result["scope"].lower())
+        self.assertIn("not field-ready", result["scope"].lower())
+
+    def test_verify_is_candidate_without_prerequisites(self) -> None:
+        from elrs_v3_pack import ELRSv3OTAInjectionPack
+        pack = ELRSv3OTAInjectionPack()
+        result = pack.verify({})
+        self.assertEqual(result["evidence_level"], "candidate")
+        self.assertFalse(result["independently_verified"])
+
+    def test_detect_and_classify_stages(self) -> None:
+        from elrs_v3_pack import ELRSv3OTAInjectionPack
+        pack = ELRSv3OTAInjectionPack()
+        detection = pack.detect({"capture": {
+            "elrs_detected": True, "sync_word": 0x42, "hop_count": 240,
+            "ota_version": 3, "packet_rate_hz": 250,
+        }})
+        self.assertTrue(detection["detected"])
+        classification = pack.classify(detection)
+        self.assertEqual(classification["ota_version"], 3)
+        self.assertTrue(classification["applies"])
+
+    def test_classify_rejects_v4_observation(self) -> None:
+        from elrs_v3_pack import ELRSv3OTAInjectionPack
+        pack = ELRSv3OTAInjectionPack()
+        classification = pack.classify({"ota_version": 4})
+        self.assertFalse(classification["applies"])
+
+
 if __name__ == "__main__":
     unittest.main()

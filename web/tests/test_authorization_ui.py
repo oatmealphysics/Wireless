@@ -25,7 +25,7 @@ TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
 sys.path.insert(0, str(TOOLS_DIR / "tests"))
 
-from helpers import get_web_app, make_flask_client, make_target, needs_flask
+from helpers import arm_pack, get_web_app, make_flask_client, make_target, needs_flask
 
 web_app = get_web_app()
 
@@ -137,6 +137,88 @@ class TestArmEndpoint(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 400)
         self.assertIn("destructive", resp.get_json()["error"].lower())
+
+    def test_arm_browser_payload_without_applicability_fields(self) -> None:
+        """The browser arm request omits protocol/firmware fields; it must work.
+
+        Regression for the broken-arming finding: the server previously
+        required client-asserted applicability fields, so the real browser
+        request returned HTTP 400 and arming could never complete.
+        """
+        resp = self.client.post(
+            "/api/packs/sim-wifi_tello/0.1.0/arm",
+            json={
+                "target_identity": "wifi:t1",
+                "permitted_actions": ["land", "streamon"],
+                "time_limit_seconds": 300,
+                "stop_conditions": ["operator_abort"],
+                "sacrificial_target": True,
+                "evidence_destination": "default",
+            },
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["status"], "armed")
+
+    def test_arm_rejects_stringified_sacrificial_target(self) -> None:
+        """A truthy string such as "false" must not satisfy the bool check."""
+        resp = self.client.post(
+            "/api/packs/sim-wifi_tello/0.1.0/arm",
+            json={
+                "target_identity": "wifi:t1",
+                "permitted_actions": ["land"],
+                "time_limit_seconds": 300,
+                "stop_conditions": [],
+                "sacrificial_target": "false",
+                "evidence_destination": "test",
+            },
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("sacrificial_target", resp.get_json()["error"])
+
+    def test_arm_rejects_non_numeric_time_limit(self) -> None:
+        resp = self.client.post(
+            "/api/packs/sim-wifi_tello/0.1.0/arm",
+            json={
+                "target_identity": "wifi:t1",
+                "permitted_actions": ["land"],
+                "time_limit_seconds": "300",
+                "stop_conditions": [],
+                "sacrificial_target": True,
+                "evidence_destination": "test",
+            },
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn("time_limit_seconds", resp.get_json()["error"])
+
+    def test_arm_rejects_time_limit_over_max(self) -> None:
+        resp = self.client.post(
+            "/api/packs/sim-wifi_tello/0.1.0/arm",
+            json={
+                "target_identity": "wifi:t1",
+                "permitted_actions": ["land"],
+                "time_limit_seconds": web_app.MAX_ARM_SECONDS + 1,
+                "stop_conditions": [],
+                "sacrificial_target": True,
+                "evidence_destination": "test",
+            },
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_arm_rejects_unknown_target(self) -> None:
+        """You can only arm against a target the scanner actually discovered."""
+        resp = self.client.post(
+            "/api/packs/sim-wifi_tello/0.1.0/arm",
+            json={
+                "target_identity": "wifi:never-scanned",
+                "permitted_actions": ["land"],
+                "time_limit_seconds": 300,
+                "stop_conditions": [],
+                "sacrificial_target": True,
+                "evidence_destination": "test",
+            },
+        )
+        self.assertEqual(resp.status_code, 404)
+        self.assertIn("Target not found", resp.get_json()["error"])
 
 
 # ---------------------------------------------------------------------------
@@ -463,6 +545,91 @@ class TestFrontendDOMStructure(unittest.TestCase):
         resp = self.client.get("/")
         html = resp.get_data(as_text=True)
         self.assertIn("result-state-display", html)
+
+
+# ---------------------------------------------------------------------------
+# Seam 9: Authorization is always enforced for execution
+# ---------------------------------------------------------------------------
+
+@needs_flask
+class TestAuthorizationEnforcement(unittest.TestCase):
+    """Execution requires an armed scope even in simulate/dry-run mode."""
+
+    def setUp(self) -> None:
+        # Explicitly simulate + dry-run: the modes that previously waived auth.
+        self.client = make_flask_client(web_app, simulate=True, dry_run=True)
+        self.state = web_app.get_dashboard_state(self.client.application)
+        self.state.targets["wifi:t1"] = make_target(
+            target_id="wifi:t1", chain="wifi_tello", actions=["land", "streamon"],
+        )
+
+    def test_unarmed_action_denied_with_403(self) -> None:
+        resp = self.client.post(
+            "/api/targets/wifi:t1/action", json={"action": "land"},
+        )
+        self.assertEqual(resp.status_code, 403)
+        data = resp.get_json()
+        self.assertIsNone(data["result_state"])
+        self.assertEqual(data["stop_reason"], "authorization_denied")
+
+    def test_unarmed_action_creates_no_evidence(self) -> None:
+        self.client.post("/api/targets/wifi:t1/action", json={"action": "land"})
+        self.assertEqual(self.client.get("/api/evidence").get_json(), [])
+
+    def test_unarmed_action_creates_no_log_entry(self) -> None:
+        self.client.post("/api/targets/wifi:t1/action", json={"action": "land"})
+        with self.state.state_lock:
+            self.assertEqual(self.state.action_log, [])
+
+    def test_preview_is_exempt_from_arming(self) -> None:
+        """Preview is probe-free and side-effect-free, so it needs no scope."""
+        resp = self.client.post(
+            "/api/targets/wifi:t1/action",
+            json={"action": "land", "preview": True},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["result_state"], "previewed")
+
+    def test_armed_action_succeeds(self) -> None:
+        arm_pack(self.client, "wifi:t1", actions=["land"])
+        resp = self.client.post(
+            "/api/targets/wifi:t1/action", json={"action": "land"},
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["result_state"], "attempted")
+
+    def test_disarmed_scope_denies_action(self) -> None:
+        arm_pack(self.client, "wifi:t1", actions=["land"])
+        self.client.post(
+            "/api/packs/sim-wifi_tello/0.1.0/disarm",
+            json={"target_identity": "wifi:t1"},
+        )
+        resp = self.client.post(
+            "/api/targets/wifi:t1/action", json={"action": "land"},
+        )
+        self.assertEqual(resp.status_code, 403)
+
+
+@needs_flask
+class TestPack1Registration(unittest.TestCase):
+    """Pack 1 (ELRS v3 OTA Injection) is registered in the app registry."""
+
+    def setUp(self) -> None:
+        self.client = make_flask_client(web_app)
+        self.state = web_app.get_dashboard_state(self.client.application)
+
+    def test_elrs_v3_pack_present_in_registry(self) -> None:
+        pack = self.state.pack_registry.lookup("ELRS v3 OTA Injection", "0.1.0")
+        self.assertIsNotNone(pack)
+
+    def test_elrs_v3_pack_matches_betaflight_v3_target(self) -> None:
+        results = self.state.pack_registry.query({
+            "protocol_version": "ELRS v3 OTA",
+            "firmware_impl": "Betaflight",
+            "firmware_version": "4.4.2",
+        })
+        names = {p.identity.name for p in results}
+        self.assertIn("ELRS v3 OTA Injection", names)
 
 
 if __name__ == "__main__":

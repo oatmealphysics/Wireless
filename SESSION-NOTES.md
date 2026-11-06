@@ -6014,3 +6014,130 @@ otherwise proceed with G0 as scheduled.
 - Files changed by this task: `setup/claude-config/statusline.py`,
   `setup/tests/test_statusline.py`, and `SESSION-NOTES.md` only.
 
+## 92. Capability Pack remediation — critical/high review findings fixed (Claude Opus 4.8, 2026-11-06)
+
+### Starting state and objective
+- Started from `capability-pack-system` at `4ae643d` (after the §91 status-line
+  commit landed on the shared checkout; its files were not touched here).
+- Objective: remediate the Hard/Critical/High findings from the independent
+  review in §90 and make the branch's security boundary real, with coverage in
+  the Python suite that this environment can actually run. Operator chose the
+  "security-critical + high, fully tested" scope; the isolated **OS-level
+  worker process** and a full **Playwright browser E2E** rewrite are explicitly
+  deferred as tracked follow-ups (Playwright cannot run here — browser tests
+  stay skipped).
+
+### Findings addressed (§90 → fix)
+- **CRITICAL — authorization was decorative.** `_execute_via_registry`
+  (`web/app.py`) no longer skips authorization in simulate/dry-run mode.
+  Authorization is now **always enforced** for execution; only `preview`
+  (probe-free, side-effect-free) is exempt. `dry_run_mode` now governs real I/O
+  only, never the authorization boundary; the `main()` comment says so. An
+  unarmed/expired/out-of-scope action returns **HTTP 403**, creates no evidence,
+  and writes no action-log entry.
+- **CRITICAL — browser arming was broken.** The arm endpoint no longer requires
+  client-asserted `protocol_version`/`firmware_impl`/`firmware_version`, so the
+  real browser request (which never sent them) now succeeds. This single change
+  also resolves the **Hard target self-attestation** finding.
+- **Hard — bypassable guardrails.** `api_pack_arm` now strictly type-checks
+  `target_identity`, `permitted_actions`, `time_limit_seconds` (numeric, bounded
+  by `MAX_ARM_SECONDS=3600`), `stop_conditions`, and `sacrificial_target`
+  (must be a real bool — a truthy string such as `"false"` is rejected), plus an
+  optional `bounds` object. `run_headless_pipeline` no longer self-designates a
+  destructive pack as a Sacrificial Target; `sacrificial_target` is now an
+  explicit caller argument (default `False`), so a destructive pack without it
+  raises exactly as an operator request would.
+- **Hard — target was client self-attested.** The arm endpoint now looks the
+  target up in `DashboardState.targets` (404 if absent) and derives the
+  `TargetDescriptor` server-side via `_derive_target_descriptor()`. The
+  descriptor carries `phy_domain`/`interface`/`model`; `phy_domain` participates
+  in the Applicability Boundary match (with `"*"` treated as a wildcard on both
+  sides).
+- **Hard — ELRS evidence overclaimed.** Offline `execute()` now reports
+  `previewed` with `transmitted: False` (nothing is keyed to a radio).
+  `verify()` performs an **independent** check — it re-derives the v3 CRC
+  initializer/FHSS sequence from the UID and re-validates the CRC-14 of every
+  constructed packet with the vendored decoder — and reports
+  `offline_validated` only when that check passes, else `candidate`. It always
+  labels the evidence as source-derived, not bench/field.
+- **HIGH — Pack 1 not registered.** `ELRSv3OTAInjectionPack` is now registered
+  in the application registry (guarded import) and is lookup/queryable. Added
+  the ticket-05 `detect()` (passive detection from canned capture) and
+  `classify()` (version/rate/domain) offline stages.
+- **HIGH — Chain 2 not unified.** `/api/chain2/inject` now requires a scoped
+  authorization on the live (non-dry-run) send path (403 + no send when
+  unarmed) and records an append-only evidence record with a truthful Result
+  State path for every attempt (dry-run = `previewed`). Dry-run response shape
+  is unchanged.
+- **HIGH — destructive confirm + result rendering disconnected.**
+  `dashboard.v2.js`: `executeAction` now routes danger-severity actions through
+  `showDestructiveConfirm()` and renders `result_state`/`transition_log`/
+  `stop_reason` (with escaping) instead of the obsolete `status`/`result`
+  fields; the action log renders `result_state`. Added matching CSS.
+- **MEDIUM — evidence not deeply immutable.** `ExecutionRecord.__post_init__`
+  deep-freezes its container fields (read-only mappings / tuples), so a stored
+  record cannot be mutated in place through a retained reference. Serialization
+  uses a new `jsonable()` helper. (Durable on-disk persistence is noted below as
+  the remaining half of this finding.)
+- **Maintainability — three action sources of truth.** `_convert_recon_target`
+  now derives available actions from the single `_CHAIN_ACTIONS` map instead of
+  a duplicated local table. (The curated per-target `SIMULATED_TARGETS` subsets
+  are left as demo fixtures with a cross-reference.)
+- **Hygiene.** `reset_runtime()` now clears authorization scopes (via new
+  `ScopeManager.clear()`): scopes are bound to discovered targets, so they must
+  not outlive a target reset.
+
+### Validation and reproduced evidence
+- `python3 -B -m pytest -p no:cacheprovider -q web/tests`: **289 passed, 11
+  skipped, 5 subtests** (was 267/11/5; +22 new tests for the fixes).
+- `python3 -B -m pytest -p no:cacheprovider -q tools/tests`: **473 passed, 444
+  skipped, 167 subtests**. This includes repairing four **pre-existing**
+  failures in `tools/tests/test_web_dashboard.py` (stale pre-capability-pack
+  contract: `--live-actions`, flat `status`, `ACTION_DEFS` category shape) that
+  were already red on `4ae643d`/`c6bb0fb` and that §90 did not run.
+- Direct Flask-client reproduction: unarmed action → 403
+  `authorization_denied`; browser-style arm (no applicability fields) → 200;
+  armed action → 200 `attempted`; evidence recorded + serializable; `"false"`
+  sacrificial → 400; Chain 2 live inject without scope → 403, no send.
+- The 11 Playwright browser tests remain skipped (no browser deps here); the
+  one obsolete browser assertion was updated to the new arm→execute→
+  `result_state` contract but is **unverified in this environment**.
+- `node --check web/static/dashboard.v2.js`: syntax OK. Ruff/mypy were not
+  available and were not run.
+
+### Safety boundaries
+- No RF, serial, device, firmware, configuration, reset, external-target, or
+  live network action occurred. All execution was offline against the Flask test
+  client and the fake executor. No E8/TinyHawk access. Tickets 06–07 (live ELRS
+  transport, Stock Target acceptance) remain gated; nothing here activates them.
+
+### Files changed
+- `web/app.py`, `web/capability_pack.py`, `web/elrs_v3_pack.py`,
+  `web/static/dashboard.v2.js`, `web/static/dashboard.v2.css`,
+  `tools/tests/helpers.py`, and the test files
+  `web/tests/test_api_routes.py`, `web/tests/test_authorization_ui.py`,
+  `web/tests/test_elrs_v3_pack.py`, `web/tests/test_executor.py`,
+  `web/tests/test_web_integration.py`, `web/tests/test_app_factory.py`,
+  `web/tests/test_state_histories.py`, `web/tests/test_dashboard_browser.py`,
+  `tools/tests/test_web_dashboard.py`, and this `SESSION-NOTES.md`.
+
+### Deferred follow-ups (merge still blocked on independent re-review)
+1. **Isolated bounded worker process** with a real runtime cancellation API
+   (execution still runs in the request thread via the fake executor).
+2. **Durable evidence persistence** (append-only JSONL under ignored `work/`) —
+   the immutability half is done; survive-restart durability is not.
+3. **Playwright browser E2E** for the full arm → execute → evidence flow, to be
+   written and run where browser deps exist.
+4. The deferred-family simulation packs (DJI BLE, WiFi/Tello/Parrot, MAVLink,
+   Chain 2) were kept as clearly simulation-scoped demo packs rather than
+   removed, since the dashboard and its tests depend on them; revisit if the
+   reviewer still considers this scope creep.
+
+### Commit/push status and next step
+- Committed on `capability-pack-system` and pushed to the GitHub authority
+  (`origin`) and the GitLab `mirror` by ordinary fast-forward (no force, no
+  history rewrite). `main` and `mirror/main` are unchanged; the branch is **not
+  merged**. Next step: independent re-review of this remediation (per the §90
+  conclusion and the CP1 review-checkpoint model) before any merge or marking
+  tickets 01–05 resolved.
+

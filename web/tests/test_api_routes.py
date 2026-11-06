@@ -15,7 +15,7 @@ TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
 sys.path.insert(0, str(TOOLS_DIR / "tests"))
 
-from helpers import get_web_app, make_flask_client, make_target, needs_flask
+from helpers import arm_pack, get_web_app, make_flask_client, make_target, needs_flask
 
 web_app = get_web_app()
 
@@ -147,6 +147,9 @@ class TestTargetActionEndpoint(unittest.TestCase):
             target_id="wifi:t1",
             actions=["land", "streamon"],
         )
+        # Authorization is always enforced for execution; arm a scope so the
+        # action tests below exercise the executor path rather than a denial.
+        arm_pack(self.client, "wifi:t1", actions=["land", "streamon"])
 
     def test_returns_result_state_response(self) -> None:
         resp = self.client.post(
@@ -293,6 +296,7 @@ class TestLogEndpoint(unittest.TestCase):
 
     def test_log_returns_recent_actions(self) -> None:
         self.state.targets["wifi:t1"] = make_target(target_id="wifi:t1")
+        arm_pack(self.client, "wifi:t1", actions=["land"])
         self.client.post("/api/targets/wifi:t1/action", json={"action": "land"})
         resp = self.client.get("/api/log")
         entries = resp.get_json()

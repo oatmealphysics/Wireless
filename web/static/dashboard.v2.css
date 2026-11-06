@@ -542,6 +542,49 @@ body {
   color: var(--red);
 }
 
+.result-state-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.2);
+}
+.result-state-badge.state-previewed { color: var(--cyan); }
+.result-state-badge.state-attempted { color: var(--yellow); }
+.result-state-badge.state-transmitted { color: var(--orange); }
+.result-state-badge.state-target_accepted,
+.result-state-badge.state-effect_confirmed { color: var(--green); }
+
+.result-stop {
+  margin-left: 6px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.result-transitions {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rs-chip {
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  color: var(--text-dim);
+}
+.rs-chip.state-previewed { color: var(--cyan); }
+.rs-chip.state-attempted { color: var(--yellow); }
+.rs-chip.state-transmitted { color: var(--orange); }
+.rs-chip.state-target_accepted,
+.rs-chip.state-effect_confirmed { color: var(--green); }
+
 .action-result .data-block {
   margin-top: 8px;
   padding: 8px;

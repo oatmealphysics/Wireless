@@ -9,9 +9,49 @@ from __future__ import annotations
 
 import enum
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from types import MappingProxyType
 from typing import Any
+
+
+# ---------------------------------------------------------------------------
+# Immutability helpers
+# ---------------------------------------------------------------------------
+
+def deep_freeze(obj: Any) -> Any:
+    """Recursively convert mutable containers into read-only equivalents.
+
+    Mappings become ``MappingProxyType`` (with frozen values) and
+    lists/tuples become tuples (with frozen elements).  Scalars, enums,
+    and datetimes pass through unchanged.  Used by ``ExecutionRecord`` so
+    a stored evidence record cannot be retroactively mutated through a
+    reference a caller still holds.
+    """
+    if isinstance(obj, Mapping):
+        return MappingProxyType({k: deep_freeze(v) for k, v in obj.items()})
+    if isinstance(obj, (list, tuple)):
+        return tuple(deep_freeze(v) for v in obj)
+    return obj
+
+
+def jsonable(obj: Any) -> Any:
+    """Recursively convert frozen/exotic values into JSON-serializable forms.
+
+    Inverse direction of :func:`deep_freeze` for serialization: read-only
+    mappings become plain dicts, tuples become lists, enums become their
+    ``.value``, and datetimes become ISO-8601 strings.
+    """
+    if isinstance(obj, Mapping):
+        return {k: jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [jsonable(v) for v in obj]
+    if isinstance(obj, enum.Enum):
+        return obj.value
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return obj
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +284,9 @@ class PackRegistry:
     def _target_matches(boundary: ApplicabilityBoundary, target: dict[str, Any]) -> bool:
         for field_name in _APPLICABILITY_MATCH_FIELDS:
             target_value = target.get(field_name)
-            if target_value is None:
+            # ``None`` (field unknown for this target) and ``"*"`` (explicit
+            # wildcard) both mean "do not constrain on this field".
+            if target_value is None or target_value == "*":
                 continue
             boundary_value = getattr(boundary, field_name, None)
             if boundary_value == "*":
@@ -264,10 +306,20 @@ class TargetDescriptor:
     protocol_version: str
     firmware_impl: str
     firmware_version: str
+    phy_domain: str = "*"
+    interface: str = ""
+    model: str = ""
 
     def as_query(self) -> dict[str, str]:
+        """Return the applicability-match fields.
+
+        ``phy_domain`` participates in the Applicability Boundary match so
+        a target whose PHY/domain is known can be verified against the
+        pack's declared boundary rather than matched tautologically.
+        """
         return {
             "protocol_version": self.protocol_version,
+            "phy_domain": self.phy_domain,
             "firmware_impl": self.firmware_impl,
             "firmware_version": self.firmware_version,
         }
@@ -405,6 +457,15 @@ class ScopeManager:
         """Return a snapshot of all (key, scope) pairs."""
         return list(self._scopes.items())
 
+    def clear(self) -> None:
+        """Drop every scope.
+
+        Used when the owning dashboard state is reset: scopes are bound to
+        specific discovered targets, so once those targets are cleared the
+        scopes are stale and must not outlive them.
+        """
+        self._scopes.clear()
+
     def authorize(
         self,
         *,
@@ -467,7 +528,15 @@ class ExecutorOutput:
 
 @dataclass(frozen=True)
 class ExecutionRecord:
-    """Append-only evidence record.  Frozen after creation -- never mutated."""
+    """Append-only evidence record.  Frozen after creation -- never mutated.
+
+    The dataclass is frozen, but that only stops attribute *rebinding*.
+    ``__post_init__`` additionally deep-freezes the container fields
+    (``prerequisite_values``, ``prerequisite_modes``, ``transition_log``,
+    ``verification_evidence``) so a caller cannot retroactively mutate a
+    stored record in place through a reference it still holds.  Use
+    :func:`jsonable` to obtain a plain-dict snapshot for serialization.
+    """
     capability_version: str
     target_identity: str
     prerequisite_values: dict[str, Any]
@@ -479,6 +548,14 @@ class ExecutionRecord:
     verification_evidence: dict[str, Any]
     stop_reason: str
     hardware_identity: str
+
+    def __post_init__(self) -> None:
+        # Frozen dataclass: bypass the attribute guard to replace the
+        # mutable inputs with deeply-immutable equivalents.
+        object.__setattr__(self, "prerequisite_values", deep_freeze(self.prerequisite_values))
+        object.__setattr__(self, "prerequisite_modes", deep_freeze(self.prerequisite_modes))
+        object.__setattr__(self, "transition_log", deep_freeze(self.transition_log))
+        object.__setattr__(self, "verification_evidence", deep_freeze(self.verification_evidence))
 
 
 # ---------------------------------------------------------------------------
@@ -720,10 +797,17 @@ def run_headless_pipeline(
     hardware_identity: str,
     time_limit: timedelta,
     evidence_store: EvidenceStore,
+    sacrificial_target: bool = False,
+    bounds: dict[str, Any] | None = None,
 ) -> ExecutionRecord:
     """Wire registry -> scope_manager -> executor -> evidence in one call.
 
     Returns the completed ExecutionRecord and appends it to *evidence_store*.
+
+    ``sacrificial_target`` must be supplied explicitly by the caller.  The
+    pipeline never self-designates a destructive pack as a Sacrificial
+    Target; arming a destructive pack without this flag set raises through
+    :meth:`ScopeManager.arm`, exactly as an operator request would.
     """
     # 1. Lookup pack
     pack = registry.lookup(pack_name, pack_version)
@@ -736,10 +820,10 @@ def run_headless_pipeline(
         pack_version=pack_version,
         target=target,
         permitted_actions=frozenset({"preview", "arm", "execute", "verify", "stop"}),
-        bounds={},
+        bounds=dict(bounds) if bounds else {},
         time_limit=time_limit,
         stop_conditions=["operator_abort"],
-        sacrificial_target=pack.has_destructive_effects,
+        sacrificial_target=sacrificial_target,
         evidence_destination="headless-pipeline",
     )
 

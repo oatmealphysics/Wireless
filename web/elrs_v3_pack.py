@@ -335,12 +335,60 @@ class ELRSv3OTAInjectionPack(CapabilityPack):
             "ota_version": 3,
         }
 
+    def detect(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Passive ELRS detection stage (offline, canned capture only).
+
+        Accepts a canned capture descriptor under ``params['capture']``
+        (e.g. a passive SYNC observation produced by the offline pipeline).
+        No SDR access or RF.  Returns whether an ELRS 2.4 GHz signal was
+        observed and the raw observables used for classification.
+        """
+        capture = params.get("capture") or {}
+        sync_word = capture.get("sync_word")
+        detected = bool(capture.get("elrs_detected") or sync_word is not None)
+        return {
+            "stage": "passive_detection",
+            "detected": detected,
+            "phy_domain": self.applicability.phy_domain,
+            "sync_word": sync_word,
+            "observed_hop_count": capture.get("hop_count"),
+            "ota_version": capture.get("ota_version"),
+            "packet_rate_hz": capture.get("packet_rate_hz"),
+            "requires_hardware": False,
+            "source": "canned_offline_capture",
+        }
+
+    def classify(self, detection: dict[str, Any]) -> dict[str, Any]:
+        """Version/rate/domain classification stage (offline).
+
+        Maps a passive-detection observation to the ELRS OTA version,
+        packet rate, and RF domain, and reports whether the observation
+        falls inside this pack's Applicability Boundary.
+        """
+        cfg = self.applicability.configuration
+        expected_version = cfg.get("ota_version", 3)
+        ota_version = detection.get("ota_version")
+        if ota_version is None:
+            ota_version = expected_version
+        return {
+            "stage": "classification",
+            "ota_version": ota_version,
+            "applies": ota_version == expected_version,
+            "domain": self.applicability.phy_domain,
+            "channel_count": cfg.get("channel_count"),
+            "packet_rate_hz": detection.get("packet_rate_hz"),
+            "fhss_sequence_len": cfg.get("fhss_sequence_len"),
+            "matched_hop_count": detection.get("observed_hop_count"),
+        }
+
     def execute(self, params: dict[str, Any]) -> dict[str, Any]:
         """Execute the injection chain.
 
-        In offline / fixture mode, this builds the packet plan without
-        transmitting.  Live execution requires SDR hardware and a
-        separately authorized scope.
+        In offline / fixture mode this builds the packet plan but binds no
+        radio, so *nothing is transmitted*.  The honest Result State is
+        therefore ``previewed`` -- no on-air attempt was made.  Reaching
+        ``attempted``/``transmitted`` requires the gated live SDR transport
+        (tickets 06-07) and a separately authorized scope.
         """
         uid = _resolve_uid(params)
         crc_init = _v3_crc_init(uid)
@@ -348,23 +396,76 @@ class ELRSv3OTAInjectionPack(CapabilityPack):
         packets = _build_v3_rc_packets(uid, crc_init, fhss_seq)
 
         return {
-            "result_state": "attempted",
+            "result_state": "previewed",
             "packets_built": len(packets),
             "uid_hex": uid.hex(),
             "transmitted": False,
-            "reason": "offline mode -- no SDR hardware",
+            "transport": "none (offline)",
+            "reason": (
+                "offline mode -- no SDR transport bound; packets were "
+                "constructed but nothing was transmitted"
+            ),
         }
 
     def verify(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Verify injection effect.  Offline: reports candidate evidence."""
+        """Independently verify the constructed frames (offline only).
+
+        Re-derives the v3 CRC initializer and FHSS sequence from the UID and
+        re-validates the CRC-14 of every constructed RC packet with the
+        vendored decoder.  ``OFFLINE_VALIDATED`` is reported only when that
+        independent check actually passes; otherwise the claim is only a
+        ``CANDIDATE``.  This never asserts bench or field evidence.
+        """
+        scope_note = (
+            "Offline, source-derived only. Not bench-validated (no live RF "
+            "round-trip) and not field-ready. Receiver acceptance is a "
+            "separate gated question (tickets 06-07)."
+        )
+        try:
+            uid = _resolve_uid(params)
+        except (ValueError, KeyError):
+            return {
+                "result_state": "previewed",
+                "evidence_level": "candidate",
+                "independently_verified": False,
+                "reason": "no binding_phrase or target_uid supplied; cannot verify",
+                "scope": scope_note,
+            }
+
+        if not _ELRS_CORE_AVAILABLE:
+            return {
+                "result_state": "previewed",
+                "evidence_level": "candidate",
+                "independently_verified": False,
+                "reason": "elrs_core unavailable; CRC validation cannot run",
+                "scope": scope_note,
+            }
+
+        crc_init = _v3_crc_init(uid)
+        fhss_seq = _v3_fhss_sequence(uid)
+        packets = _build_v3_rc_packets(uid, crc_init, fhss_seq)
+
+        checked = 0
+        all_valid = True
+        for pkt in packets:
+            raw = bytes.fromhex(pkt["data_hex"])
+            if not validate_crc(raw, False, crc_init, 0, PACKET_TYPE_RCDATA):
+                all_valid = False
+                break
+            checked += 1
+
+        verified = all_valid and checked > 0
         return {
             "result_state": "previewed",
-            "evidence_level": "offline_validated",
+            "evidence_level": "offline_validated" if verified else "candidate",
+            "independently_verified": verified,
+            "packets_checked": checked,
+            "crc_init": crc_init,
             "notes": (
-                "Offline verification: packet CRC and FHSS sequence are "
-                "source-derived correct for v3. Bench validation requires "
-                "live RF and a separately authorized scope."
+                "CRC-14 of every constructed RC packet re-validated against "
+                "the source-derived v3 initializer (nonce 0)."
             ),
+            "scope": scope_note,
         }
 
     def stop(self) -> dict[str, Any]:
