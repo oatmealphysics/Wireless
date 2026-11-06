@@ -1,0 +1,612 @@
+<title>Claude Code Setup Guide</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+:root {
+  --bg: #0e1117;
+  --bg-surface: #161b22;
+  --bg-elevated: #1c2129;
+  --bg-code: #0d1117;
+  --fg: #e6edf3;
+  --fg-muted: #8b949e;
+  --fg-subtle: #6e7681;
+  --accent: #e8943a;
+  --accent-dim: #bb7630;
+  --green: #3fb950;
+  --green-dim: #238636;
+  --blue: #58a6ff;
+  --purple: #bc8cff;
+  --red: #f85149;
+  --border: #30363d;
+  --border-muted: #21262d;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #ffffff;
+    --bg-surface: #f6f8fa;
+    --bg-elevated: #eef1f5;
+    --bg-code: #f6f8fa;
+    --fg: #1f2328;
+    --fg-muted: #656d76;
+    --fg-subtle: #8b949e;
+    --accent: #d97706;
+    --accent-dim: #b45309;
+    --green: #1a7f37;
+    --green-dim: #dafbe1;
+    --blue: #0969da;
+    --purple: #8250df;
+    --red: #cf222e;
+    --border: #d0d7de;
+    --border-muted: #e1e4e8;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-surface: #f6f8fa;
+  --bg-elevated: #eef1f5;
+  --bg-code: #f6f8fa;
+  --fg: #1f2328;
+  --fg-muted: #656d76;
+  --fg-subtle: #8b949e;
+  --accent: #d97706;
+  --accent-dim: #b45309;
+  --green: #1a7f37;
+  --green-dim: #dafbe1;
+  --blue: #0969da;
+  --purple: #8250df;
+  --red: #cf222e;
+  --border: #d0d7de;
+  --border-muted: #e1e4e8;
+  color-scheme: light;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 2rem;
+}
+
+.container {
+  max-width: 52rem;
+  margin: 0 auto;
+}
+
+h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--accent);
+  margin: 0 0 0.25rem;
+  text-wrap: balance;
+  letter-spacing: -0.02em;
+}
+
+.subtitle {
+  color: var(--fg-muted);
+  font-size: 1rem;
+  margin: 0 0 2rem;
+}
+
+h2 {
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 2.5rem 0 1rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border);
+  text-wrap: balance;
+}
+
+h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 1.5rem 0 0.5rem;
+}
+
+p { margin: 0.5rem 0; }
+
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code {
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 0.85em;
+  background: var(--bg-code);
+  border: 1px solid var(--border-muted);
+  border-radius: 4px;
+  padding: 0.15em 0.4em;
+}
+
+pre {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  overflow-x: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin: 0.75rem 0;
+}
+
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+.step-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.25rem 1.5rem;
+  margin: 1rem 0;
+}
+
+.step-number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 700;
+  font-size: 0.85rem;
+  margin-right: 0.5rem;
+  flex-shrink: 0;
+}
+
+.step-title {
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  font-size: 1.05rem;
+  margin-bottom: 0.75rem;
+}
+
+ul, ol {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+
+li { margin: 0.3rem 0; }
+
+.prereq-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+}
+
+.prereq-item {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+
+.prereq-item strong {
+  color: var(--accent);
+  display: block;
+  font-size: 0.85rem;
+  margin-bottom: 0.25rem;
+}
+
+.prereq-item span {
+  color: var(--fg-muted);
+  font-size: 0.8rem;
+}
+
+.file-tree {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  color: var(--fg-muted);
+}
+
+.file-tree .dir { color: var(--blue); }
+.file-tree .file { color: var(--fg); }
+.file-tree .desc { color: var(--fg-subtle); }
+
+.tag {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.2em 0.6em;
+  border-radius: 4px;
+  margin-right: 0.25rem;
+}
+
+.tag-custom { background: var(--accent-dim); color: #fff; }
+.tag-marketplace { background: var(--green-dim); color: var(--green); }
+.tag-npm { background: #2d1b4e; color: var(--purple); }
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .tag-custom { background: #fef3c7; color: #92400e; }
+  :root:not([data-theme="dark"]) .tag-marketplace { background: #dcfce7; color: #166534; }
+  :root:not([data-theme="dark"]) .tag-npm { background: #ede9fe; color: #5b21b6; }
+}
+:root[data-theme="light"] .tag-custom { background: #fef3c7; color: #92400e; }
+:root[data-theme="light"] .tag-marketplace { background: #dcfce7; color: #166534; }
+:root[data-theme="light"] .tag-npm { background: #ede9fe; color: #5b21b6; }
+
+.warn-box {
+  background: color-mix(in srgb, var(--red) 10%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--red) 40%, var(--border));
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 0.75rem 0;
+  font-size: 0.9rem;
+}
+
+.warn-box strong { color: var(--red); }
+
+.info-box {
+  background: color-mix(in srgb, var(--blue) 10%, var(--bg-surface));
+  border: 1px solid color-mix(in srgb, var(--blue) 40%, var(--border));
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 0.75rem 0;
+  font-size: 0.9rem;
+}
+
+.info-box strong { color: var(--blue); }
+
+.skills-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.9rem;
+}
+
+.skills-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 2px solid var(--border);
+}
+
+.skills-table td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border-muted);
+  vertical-align: top;
+}
+
+.skills-table tr:last-child td { border-bottom: none; }
+
+.skills-table code {
+  font-size: 0.8em;
+  white-space: nowrap;
+}
+
+.toc {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1rem 1.5rem;
+  margin: 1.5rem 0;
+}
+
+.toc-title {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
+}
+
+.toc ol {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.toc li {
+  margin: 0.25rem 0;
+  font-size: 0.9rem;
+}
+
+.checkmark::before {
+  content: "\2713";
+  color: var(--green);
+  font-weight: bold;
+  margin-right: 0.5rem;
+}
+</style>
+
+<div class="container">
+
+<h1>Claude Code Setup Guide</h1>
+<p class="subtitle">Cybersecurity workstation configuration for Windows &mdash; mirror of the Ubuntu lab environment</p>
+
+<div class="toc">
+  <div class="toc-title">Contents</div>
+  <ol>
+    <li><a href="#prerequisites">Prerequisites</a></li>
+    <li><a href="#whats-included">What's Included</a></li>
+    <li><a href="#automated">Automated Install (PowerShell)</a></li>
+    <li><a href="#manual">Manual Install</a></li>
+    <li><a href="#plugins">Marketplace Plugin Install</a></li>
+    <li><a href="#skills">Custom Skills Reference</a></li>
+    <li><a href="#file-layout">File Layout</a></li>
+    <li><a href="#verify">Verification</a></li>
+    <li><a href="#platform-notes">Platform Notes</a></li>
+  </ol>
+</div>
+
+<!-- ─── Prerequisites ─── -->
+<h2 id="prerequisites">1. Prerequisites</h2>
+
+<div class="prereq-grid">
+  <div class="prereq-item">
+    <strong>Node.js 18+</strong>
+    <span>nodejs.org &mdash; includes npm</span>
+  </div>
+  <div class="prereq-item">
+    <strong>Claude Code CLI</strong>
+    <span><code>npm i -g @anthropic-ai/claude-code</code></span>
+  </div>
+  <div class="prereq-item">
+    <strong>Python 3.10+</strong>
+    <span>python.org &mdash; check "Add to PATH"</span>
+  </div>
+  <div class="prereq-item">
+    <strong>Git for Windows</strong>
+    <span>git-scm.com &mdash; includes Git Bash</span>
+  </div>
+  <div class="prereq-item">
+    <strong>Anthropic Account</strong>
+    <span>Run <code>claude</code> once to authenticate</span>
+  </div>
+  <div class="prereq-item">
+    <strong>This Repo</strong>
+    <span><code>git clone</code> the Wireless repo</span>
+  </div>
+</div>
+
+<div class="info-box">
+  <strong>Tip:</strong> After installing Node.js, open a <strong>new</strong> terminal (PowerShell or Windows Terminal) so <code>npm</code> is on your PATH.
+</div>
+
+<!-- ─── What's Included ─── -->
+<h2 id="whats-included">2. What's Included</h2>
+
+<p>The <code>setup/</code> directory in this repo contains everything needed to replicate the Ubuntu lab's Claude Code environment:</p>
+
+<div class="file-tree">
+  <span class="dir">setup/</span><br>
+  &nbsp;&nbsp;<span class="file">install.ps1</span> <span class="desc">&mdash; automated installer (PowerShell)</span><br>
+  &nbsp;&nbsp;<span class="dir">claude-config/</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">CLAUDE.md</span> <span class="desc">&mdash; global agent instructions (cybersec identity, tools ref, workflow)</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">settings.json</span> <span class="desc">&mdash; permissions, statusline, marketplace sources</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">statusline.py</span> <span class="desc">&mdash; custom powerline status bar (git, model, context %, cost)</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;<span class="dir">skills/</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">ctf.md</span> <span class="desc">&mdash; /ctf &mdash; CTF challenge solver workflow</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">exploit-dev.md</span> <span class="desc">&mdash; /exploit-dev &mdash; exploit scaffolding from bug class</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">recon.md</span> <span class="desc">&mdash; /recon &mdash; structured attack surface enumeration</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">vuln-research.md</span> <span class="desc">&mdash; /vuln-research &mdash; vulnerability hunting + CWE classification</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">msf.md</span> <span class="desc">&mdash; /msf &mdash; Metasploit workflow</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">reverse-engineer.md</span> <span class="desc">&mdash; /reverse-engineer &mdash; RE methodology</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="file">handoff.md</span> <span class="desc">&mdash; /handoff &mdash; session continuation documents</span><br>
+</div>
+
+<!-- ─── Automated ─── -->
+<h2 id="automated">3. Automated Install (Recommended)</h2>
+
+<div class="step-card">
+  <div class="step-title"><span class="step-number">1</span> Clone the repo</div>
+  <pre><code>git clone https://github.com/oatmealphysics/Wireless.git
+cd Wireless\setup</code></pre>
+</div>
+
+<div class="step-card">
+  <div class="step-title"><span class="step-number">2</span> Run the installer</div>
+  <pre><code>powershell -ExecutionPolicy Bypass -File .\install.ps1</code></pre>
+  <p>This copies <code>CLAUDE.md</code>, <code>settings.json</code>, <code>statusline.py</code>, and all 7 custom skills to <code>%USERPROFILE%\.claude\</code>. Existing files are backed up with a timestamp.</p>
+</div>
+
+<div class="step-card">
+  <div class="step-title"><span class="step-number">3</span> Install marketplace plugins</div>
+  <p>Open Claude Code (<code>claude</code> in terminal) and run each command. See <a href="#plugins">Section 5</a> for the full list.</p>
+</div>
+
+<!-- ─── Manual ─── -->
+<h2 id="manual">4. Manual Install</h2>
+
+<p>If you prefer to set things up by hand instead of running the script:</p>
+
+<h3>4a. Create the directory</h3>
+<pre><code>mkdir %USERPROFILE%\.claude
+mkdir %USERPROFILE%\.claude\skills</code></pre>
+
+<h3>4b. Copy configuration files</h3>
+<pre><code>copy setup\claude-config\CLAUDE.md       %USERPROFILE%\.claude\CLAUDE.md
+copy setup\claude-config\settings.json   %USERPROFILE%\.claude\settings.json
+copy setup\claude-config\statusline.py   %USERPROFILE%\.claude\statusline.py</code></pre>
+
+<h3>4c. Copy custom skills</h3>
+<pre><code>copy setup\claude-config\skills\*.md     %USERPROFILE%\.claude\skills\</code></pre>
+
+<h3>4d. Verify Python for statusline</h3>
+<p>The status bar calls <code>python statusline.py</code>. Verify it works:</p>
+<pre><code>python %USERPROFILE%\.claude\statusline.py</code></pre>
+<p>If your system uses <code>python3</code> instead, edit <code>settings.json</code> and change the statusLine command:</p>
+<pre><code>"command": "python3 %USERPROFILE%\\.claude\\statusline.py"</code></pre>
+
+<!-- ─── Plugins ─── -->
+<h2 id="plugins">5. Marketplace Plugin Install</h2>
+
+<p>These are installed inside a running Claude Code session. Open a terminal, run <code>claude</code>, then enter each command:</p>
+
+<div class="step-card">
+  <h3>Marketplace Plugins</h3>
+  <pre><code>/plugin marketplace add mattpocock/skills
+/plugin marketplace add Masriyan/Claude-Code-CyberSecurity-Skill
+/plugin marketplace add mukul975/Anthropic-Cybersecurity-Skills
+/plugin marketplace add hypnguyen1209/offensive-claude
+/plugin marketplace add trailofbits/skills</code></pre>
+</div>
+
+<div class="step-card">
+  <h3>NPX-installed Skills</h3>
+  <pre><code>npx skills add morluto/rea</code></pre>
+  <p>REA (Reverse Engineer Anything) &mdash; provides 20+ binary/firmware RE tools via <code>/reverse-engineer-anything</code>.</p>
+</div>
+
+<div class="warn-box">
+  <strong>Note:</strong> Each marketplace plugin prompts for confirmation. Accept the install when prompted. Some plugins fetch additional skills from GitHub on first use.
+</div>
+
+<!-- ─── Skills Reference ─── -->
+<h2 id="skills">6. Skills Reference</h2>
+
+<h3>Custom Skills <span class="tag tag-custom">Bundled</span></h3>
+<p>These are the 7 hand-written skills included in <code>setup/claude-config/skills/</code>. They're copied directly to your machine &mdash; no marketplace needed.</p>
+
+<table class="skills-table">
+  <thead><tr><th>Slash Command</th><th>File</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td><code>/ctf</code></td><td>ctf.md</td><td>CTF challenge solver: recon, category ID, methodology, flag extraction, writeup</td></tr>
+    <tr><td><code>/exploit-dev</code></td><td>exploit-dev.md</td><td>Exploit scaffolding from bug class with pwntools templates, shellcode, ROP</td></tr>
+    <tr><td><code>/recon</code></td><td>recon.md</td><td>Structured attack surface enumeration: passive, active, network, web, AD</td></tr>
+    <tr><td><code>/vuln-research</code></td><td>vuln-research.md</td><td>Vulnerability hunting with CWE classification, CVSS scoring, advisory drafting</td></tr>
+    <tr><td><code>/msf</code></td><td>msf.md</td><td>Metasploit workflow: modules, exploitation, post-exploitation, pivoting, msfvenom</td></tr>
+    <tr><td><code>/reverse-engineer</code></td><td>reverse-engineer.md</td><td>RE methodology: static/dynamic analysis, protocol RE, deobfuscation</td></tr>
+    <tr><td><code>/handoff</code></td><td>handoff.md</td><td>Session continuation documents when context gets heavy or phases change</td></tr>
+  </tbody>
+</table>
+
+<h3>Marketplace Skills <span class="tag tag-marketplace">Marketplace</span></h3>
+<table class="skills-table">
+  <thead><tr><th>Source</th><th>Skills</th><th>Coverage</th></tr></thead>
+  <tbody>
+    <tr><td>mattpocock/skills</td><td><code>/grill-me</code> <code>/to-spec</code> <code>/to-tickets</code> <code>/implement</code></td><td>Requirements &rarr; spec &rarr; tickets &rarr; implementation workflow</td></tr>
+    <tr><td>Masriyan/CyberSecurity</td><td>22 skills (<code>/01-recon-osint</code> through <code>/22-purple-team</code>)</td><td>Full offensive/defensive/RE/threat hunting/CSOC/AI security/OT-ICS/GRC</td></tr>
+    <tr><td>mukul975/Anthropic-CyberSecurity</td><td>Various</td><td>Complementary cybersecurity skills</td></tr>
+    <tr><td>hypnguyen1209/offensive-claude</td><td>31 skills, 8 agents</td><td>Kill Chain framework: recon through exfiltration</td></tr>
+    <tr><td>trailofbits/skills</td><td>Security review, secure coding</td><td>Trail of Bits security methodology</td></tr>
+  </tbody>
+</table>
+
+<h3>NPX Skills <span class="tag tag-npm">NPX</span></h3>
+<table class="skills-table">
+  <thead><tr><th>Source</th><th>Install</th><th>Coverage</th></tr></thead>
+  <tbody>
+    <tr><td>morluto/rea</td><td><code>npx skills add morluto/rea</code></td><td>Reverse Engineer Anything &mdash; 20+ binary/firmware/protocol RE tools</td></tr>
+  </tbody>
+</table>
+
+<!-- ─── File Layout ─── -->
+<h2 id="file-layout">7. Expected File Layout</h2>
+
+<p>After setup, your <code>%USERPROFILE%\.claude\</code> should look like this:</p>
+
+<div class="file-tree">
+  <span class="dir">%USERPROFILE%\.claude\</span><br>
+  &nbsp;&nbsp;<span class="file">CLAUDE.md</span> <span class="desc">&mdash; global instructions (cybersec identity, tools, conventions)</span><br>
+  &nbsp;&nbsp;<span class="file">settings.json</span> <span class="desc">&mdash; 130+ permission rules, status line, 5 marketplace sources</span><br>
+  &nbsp;&nbsp;<span class="file">statusline.py</span> <span class="desc">&mdash; powerline status bar</span><br>
+  &nbsp;&nbsp;<span class="dir">skills/</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">ctf.md</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">exploit-dev.md</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">recon.md</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">vuln-research.md</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">msf.md</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">reverse-engineer.md</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;<span class="file">handoff.md</span><br>
+  &nbsp;&nbsp;&nbsp;&nbsp;<span class="desc">&hellip; (marketplace skills auto-populate here after plugin install)</span><br>
+  &nbsp;&nbsp;<span class="dir">plugins/</span> <span class="desc">&mdash; auto-created by marketplace installs</span><br>
+</div>
+
+<!-- ─── Verify ─── -->
+<h2 id="verify">8. Verification</h2>
+
+<p>After completing all steps, verify the setup:</p>
+
+<div class="step-card">
+  <div class="step-title"><span class="step-number">1</span> Open Claude Code</div>
+  <pre><code>claude</code></pre>
+</div>
+
+<div class="step-card">
+  <div class="step-title"><span class="step-number">2</span> Check the status bar</div>
+  <p>You should see a colored status line at the bottom showing: git branch, model name, context %, and cost.</p>
+</div>
+
+<div class="step-card">
+  <div class="step-title"><span class="step-number">3</span> Verify skills are loaded</div>
+  <p>Type <code>/</code> and you should see the custom skills in the autocomplete list: <code>/ctf</code>, <code>/recon</code>, <code>/exploit-dev</code>, <code>/vuln-research</code>, <code>/msf</code>, <code>/reverse-engineer</code>, <code>/handoff</code>.</p>
+</div>
+
+<div class="step-card">
+  <div class="step-title"><span class="step-number">4</span> Test a skill</div>
+  <p>Try asking Claude to solve a CTF challenge or run <code>/recon</code> on a target &mdash; the agent should use the cybersecurity identity and tool references from CLAUDE.md.</p>
+</div>
+
+<!-- ─── Platform Notes ─── -->
+<h2 id="platform-notes">9. Platform Notes (Windows vs Ubuntu)</h2>
+
+<h3>What's identical</h3>
+<ul>
+  <li class="checkmark">CLAUDE.md global instructions (same file)</li>
+  <li class="checkmark">All 7 custom skills (same files)</li>
+  <li class="checkmark">All 5 marketplace plugin sources</li>
+  <li class="checkmark">Permission allowlist (130+ rules)</li>
+  <li class="checkmark">Status line script (cross-platform Python)</li>
+</ul>
+
+<h3>What differs</h3>
+<table class="skills-table">
+  <thead><tr><th>Item</th><th>Ubuntu</th><th>Windows</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Python command</td>
+      <td><code>python3</code></td>
+      <td><code>python</code> (default Python installer)</td>
+    </tr>
+    <tr>
+      <td>Config path</td>
+      <td><code>~/.claude/</code></td>
+      <td><code>%USERPROFILE%\.claude\</code></td>
+    </tr>
+    <tr>
+      <td>Statusline command</td>
+      <td><code>python3 ~/.claude/statusline.py</code></td>
+      <td><code>python %USERPROFILE%\.claude\statusline.py</code></td>
+    </tr>
+    <tr>
+      <td>Linux-only tools</td>
+      <td>Native: aircrack-ng, pspy, linpeas, strace, ltrace</td>
+      <td>Use WSL2 for Linux tools, or native equivalents (x64dbg, WinDbg, WinPEAS)</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="info-box">
+  <strong>WSL2 Recommendation:</strong> Many offensive security tools (aircrack-ng, Impacket, Responder, etc.) run best on Linux. Install WSL2 with Ubuntu and run Claude Code inside it for the most complete experience. The <code>.claude/</code> config goes in your WSL home directory in that case.
+</div>
+
+<h3>Statusline troubleshooting</h3>
+<p>If the status line doesn't appear or shows errors:</p>
+<ol>
+  <li>Verify Python is on PATH: <code>python --version</code></li>
+  <li>If you use <code>python3</code> on Windows, update <code>settings.json</code> statusLine command accordingly</li>
+  <li>The ANSI color codes work in Windows Terminal and PowerShell 7+. Legacy cmd.exe may not render them &mdash; use Windows Terminal instead.</li>
+</ol>
+
+</div>
