@@ -5983,3 +5983,34 @@ otherwise proceed with G0 as scheduled.
   `origin/capability-pack-system`. `main` and the GitLab `mirror/main` authority
   were not changed; merge remains blocked on remediation and re-review.
 
+## 91. Windows Claude Code status line adds rate-limit reset countdowns (Codex, 2026-11-06)
+
+### Starting state and objective
+- Started from `capability-pack-system` at `c6bb0fb`; unrelated in-progress
+  capability-pack remediation changes were already present and were not edited.
+- Operator requested the bundled status line show remaining percentage and reset
+  time for both the five-hour and weekly Claude usage windows, in the form
+  `5h 35% left 2h33m - weekly 33% left 5d22h19m`.
+
+### Implementation and evidence
+- Updated `setup/claude-config/statusline.py` to consume the officially
+  documented `rate_limits.five_hour` and `rate_limits.seven_day` payload fields.
+  `used_percentage` is converted to a clamped percentage remaining and
+  `resets_at` epoch seconds are rendered as a compact non-negative countdown.
+- Missing rate-limit data is omitted cleanly; either window can appear without
+  the other. Countdown minutes round up so the display does not claim a reset
+  has occurred early.
+- Added `setup/tests/test_statusline.py` with four offline tests covering the
+  exact requested combined format, a missing window, absent rate-limit data,
+  and clamping after an elapsed reset.
+
+### Validation, safety, and handoff
+- `python3 -B -m unittest -v setup/tests/test_statusline.py`: **4 passed**.
+- Python compilation and `git diff --check` passed for both changed status-line
+  files.
+- Local formatting only. No RF, serial, device, firmware, configuration,
+  external-target, or live network action occurred. The implementation performs
+  no network request; it formats the JSON Claude Code supplies on stdin.
+- Files changed by this task: `setup/claude-config/statusline.py`,
+  `setup/tests/test_statusline.py`, and `SESSION-NOTES.md` only.
+

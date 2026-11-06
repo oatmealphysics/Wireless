@@ -9,9 +9,11 @@ makes the same file useful from a shell prompt or tmux.
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +87,49 @@ def segment(kind: str, text: str, plain: bool) -> str:
     return f"{COLORS[kind]}{text}{RESET}"
 
 
+def reset_countdown(resets_at: Any, *, now: float | None = None) -> str | None:
+    """Format an epoch reset time as a compact, non-negative countdown."""
+    if isinstance(resets_at, bool) or not isinstance(resets_at, (int, float)):
+        return None
+
+    seconds_left = max(0.0, float(resets_at) - (time.time() if now is None else now))
+    total_minutes = math.ceil(seconds_left / 60)
+    days, remaining_minutes = divmod(total_minutes, 24 * 60)
+    hours, minutes = divmod(remaining_minutes, 60)
+
+    if days:
+        return f"{days}d{hours}h{minutes}m"
+    if hours:
+        return f"{hours}h{minutes}m"
+    return f"{minutes}m"
+
+
+def rate_limit_window(
+    payload: dict[str, Any], window: str, label: str, *, now: float | None = None
+) -> str | None:
+    """Return remaining percentage and reset countdown for one rate-limit window."""
+    used = nested(payload, "rate_limits", window, "used_percentage")
+    if isinstance(used, bool) or not isinstance(used, (int, float)):
+        return None
+
+    remaining = min(100.0, max(0.0, 100.0 - float(used)))
+    text = f"{label} {remaining:.0f}% left"
+    countdown = reset_countdown(
+        nested(payload, "rate_limits", window, "resets_at"), now=now
+    )
+    return f"{text} {countdown}" if countdown else text
+
+
+def rate_limits_text(payload: dict[str, Any], *, now: float | None = None) -> str | None:
+    """Format the five-hour and weekly rate limits when Claude provides them."""
+    windows = [
+        rate_limit_window(payload, "five_hour", "5h", now=now),
+        rate_limit_window(payload, "seven_day", "weekly", now=now),
+    ]
+    available = [window for window in windows if window]
+    return " - ".join(available) if available else None
+
+
 def main() -> int:
     payload = read_payload()
     cwd = str(
@@ -111,6 +156,7 @@ def main() -> int:
 
     cost = nested(payload, "cost", "total_cost_usd")
     cost_text = f"${float(cost):.2f}" if isinstance(cost, (int, float)) else None
+    limits_text = rate_limits_text(payload)
 
     parts = [
         segment("brand", f"◆ {label}", plain),
@@ -120,6 +166,8 @@ def main() -> int:
     if model:
         parts.append(segment("model", str(model), plain))
     parts.append(segment("context", context_text, plain))
+    if limits_text:
+        parts.append(segment("context", limits_text, plain))
     if cost_text:
         parts.append(segment("cost", cost_text, plain))
     print(f" {(' ' + SEP + ' ').join(parts)} ")
