@@ -5865,3 +5865,117 @@ otherwise proceed with G0 as scheduled.
   INDEPENDENT REVIEW` until Claude verifies and accepts the migration. ANDEDS
   re-clones GitLab only after that acceptance.
 
+## 90. Capability Pack system independent code review — not merge-ready (Codex, 2026-11-06)
+
+### Starting state and objective
+- Reviewed `capability-pack-system` at `57ca098147cd427eb9da7c8a118c674a72287701`
+  against `main` at `208eef8713c6d6d71a35bd5ed4308ce2f20260f1`.
+  The branch changes 12 files with 5,572 insertions and 292 deletions.
+- Objective: independently review the implementation against
+  `.scratch/capability-pack-system/spec.md`, resolved tickets 01--05, repository
+  standards, and safety guardrails. Tickets 06--07 remain gated and were not
+  treated as expected implementation.
+- The review was first performed against the corresponding legacy
+  `/home/borealis/poc-research` branch and then reproduced against the canonical
+  `~/Wireless` branch. Eleven of the twelve changed files match byte-for-byte;
+  the only difference is two pre-existing unused imports absent from
+  `web/tests/test_web_integration.py` in `~/Wireless`.
+
+### Standards and safety findings
+- **Hard — authorization guardrails are bypassable.** `web/app.py:2081-2124`
+  accepts client-asserted scope data, supplies `bounds={}`, and does not
+  type-check `time_limit_seconds`, `stop_conditions`, or `sacrificial_target`.
+  A truthy string such as `"false"` satisfies the destructive-pack check at
+  `web/capability_pack.py:372`. `authorize()` does not enforce bounds or stop
+  conditions, and `run_headless_pipeline()` self-designates destructive packs
+  as Sacrificial Targets at `web/capability_pack.py:734-744`. This conflicts
+  with `SECURITY.md:61-98`.
+- **Hard — target matching is client self-attestation.** `web/app.py:2103-2111`
+  constructs the target descriptor entirely from request data without checking
+  `DashboardState.targets`. `TargetDescriptor` at
+  `web/capability_pack.py:261-273` omits model, revision, interface, and PHY, so
+  the required exact-target verification cannot be performed.
+- **Hard — ELRS evidence overclaims.** Offline `execute()` transmits nothing but
+  reports `attempted` (`web/elrs_v3_pack.py:338-356`), while `verify()`
+  unconditionally reports `offline_validated` and source-derived correctness
+  without performing an independent verification (`:358-367`). This does not
+  preserve the repository's distinction between source-derived candidates and
+  validated behavior.
+- **Process — the implementation commit contained no `SESSION-NOTES.md`
+  handoff.** This entry records the independent review; it does not retroactively
+  supply the implementation's missing starting revision, actions, and handoff
+  evidence.
+- **Maintainability — action membership has three sources of truth:**
+  `SIMULATED_TARGETS` (`web/app.py:524-611`), `_CHAIN_ACTIONS` (`:737-744`),
+  and `action_map` (`:1373-1379`). Applicability fields are likewise repeated
+  as loose primitives across the server and browser contracts.
+
+### Specification findings
+- **CRITICAL — browser arming is broken.** The UI request at
+  `web/static/dashboard.v2.js:1087-1094` omits `protocol_version`,
+  `firmware_impl`, and `firmware_version`, while `web/app.py:2081-2086`
+  requires them. The actual browser-equivalent request returns HTTP 400, so the
+  ticket-04 arming flow cannot complete.
+- **CRITICAL — authorization is decorative in the shipped runtime.** `main()`
+  permanently sets `dry_run_mode=True` at `web/app.py:2465-2469`, and
+  `_execute_via_registry()` skips authorization whenever dry-run is true at
+  `:859-877`. An unarmed action POST returns HTTP 200, advances to `ATTEMPTED`,
+  and creates evidence.
+- **HIGH — Chain 2 was not unified.** `/api/chain2/inject` still constructs and
+  sends UDP packets directly in the Flask process at `web/app.py:2343-2411`,
+  without scoped authorization, executor delegation, Result State transitions,
+  or the evidence pipeline required by ticket 03.
+- **HIGH — there is no isolated bounded worker or runtime cancellation.** The
+  request thread synchronously creates and runs `FakeExecutor` at
+  `web/app.py:879-892`. Its cancellation is a predetermined test-step setting
+  (`web/capability_pack.py:523-550`), not an operator cancellation API.
+- **HIGH — Pack 1 is not registered in the application.** The application
+  registry registers only `sim-*` packs at `web/app.py:774-804`;
+  `ELRSv3OTAInjectionPack` is absent. Its implementation also lacks the required
+  canned-IQ passive detection and rate/version classification stages from
+  ticket 05.
+- **HIGH — destructive confirmation and action-result rendering are not
+  connected.** Actions POST directly at `web/static/dashboard.v2.js:528-540`;
+  `showDestructiveConfirm()` at `:1206-1216` has no caller. The renderer still
+  expects obsolete `status` and `result` fields at `:545-551`, while the server
+  returns `result_state`, `transition_log`, and `stop_reason`, producing
+  `undefined` output in the browser.
+- **MEDIUM — evidence is neither durable nor deeply immutable.** `EvidenceStore`
+  is an in-memory list inside Flask (`web/capability_pack.py:688-703`), and the
+  frozen `ExecutionRecord` contains mutable dictionaries and lists
+  (`:468-481`). Restarts lose evidence and callers can retroactively mutate
+  stored records, contrary to the append-only external evidence contract.
+- **Scope creep — deferred target families were registered as packs.**
+  `web/app.py:736-770` registers DJI BLE, WiFi/Tello, WiFi/Parrot, MAVLink, and
+  Chain 2 simulation packs although the v1 spec defers those pack families.
+
+### Validation and reproduced evidence
+- `python3 -B -m pytest -p no:cacheprovider -q web/tests`: **267 passed, 11
+  skipped, 5 subtests passed** in 16.85 seconds.
+- All 11 browser tests were skipped because Playwright/browser dependencies
+  were unavailable. The green Python suite therefore did not exercise the
+  broken browser arming or result-rendering flow.
+- Direct Flask-client reproduction in `~/Wireless`:
+  - browser-equivalent arm payload: HTTP 400, missing the three applicability
+    fields;
+  - default unarmed action: HTTP 200 with `result_state=attempted`;
+  - unarmed preview with authorization enforcement enabled: authorization
+    denial embedded in an HTTP 200 response;
+  - lookup of `ELRS v3 OTA Injection` v0.1.0 in the application registry:
+    absent.
+- Ruff was not available in the environment and was not run.
+
+### Review conclusion, safety, and next step
+- **Conclusion: not merge-ready.** Six Standards findings and eight Spec
+  findings were reported; the worst issues are the ineffective authorization
+  boundary and nonfunctional browser arming flow. Fix the critical/high issues,
+  add a real browser E2E flow, and request another independent review before
+  merging or marking tickets 01--05 resolved.
+- No RF, serial, device, firmware, configuration, reset, external-target, or
+  live network action occurred. All execution was offline against Flask's test
+  client and fake executor. Tickets 06--07 remain gated; no gated ELRS transport
+  or Stock Target work was activated.
+- Files changed by this review: `SESSION-NOTES.md` only. The pre-existing
+  untracked `setup/` directory was not inspected beyond file-name inventory and
+  was not modified.
+
