@@ -108,6 +108,20 @@ sudo tools/recon-wifi-drone.sh -i wlan0mon --json
 
 See [tools/README.md](tools/README.md) for the complete tool reference.
 
+### Stable identification and offline PoC binding
+
+```bash
+# Merge typed observations across hopping frequencies; keep spectrum separate
+python3 -m elrs_sdr.cli identify-tracks observations.jsonl --output tracks.json
+
+# Require exact protocol/version/PHY/identity evidence before selecting an offline PoC
+python3 -m elrs_sdr.cli bind-target manifest.json tracks.json \
+  --entity-id did:v1:... --output receipt.json
+```
+
+See [identity tracks and offline target binding](docs/identity-and-target-binding.md)
+for the schemas, adapter interface, failure modes, and tests.
+
 ## Running Tests
 
 ```bash
@@ -116,6 +130,11 @@ python3 -B tools/validate-project.py
 
 # Tool unit tests
 python3 -B -m unittest discover -s tools/tests -p "test_*.py" -v
+
+# Shared passive identity and target-binding tests
+python3 -B -m unittest discover -s tests -p "test_identity.py" -v
+python3 -B -m unittest discover -s tests -p "test_target_binding.py" -v
+python3 -B -m unittest discover -s tests -p "test_detect_integration.py" -v
 
 # Web dashboard backend tests
 python3 -m pip install -r web/requirements-e2e.txt

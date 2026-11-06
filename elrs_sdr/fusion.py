@@ -30,6 +30,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from .log import get_logger
 
@@ -58,6 +59,7 @@ class DroneTrack:
         f = self.fields
         return {
             "key": self.key,
+            "entity_id": f.get("entity_id"),
             "kind": self.kind,
             "source": self.source,
             "protocol": self.protocol,
@@ -96,6 +98,9 @@ class TrackTable:
         """Stable merge key. A real identity wins; else fall back to a
         source/protocol/frequency signature so unidentified signals still
         accumulate as one row instead of churning."""
+        entity_id = ev.get("fields", {}).get("entity_id")
+        if entity_id:
+            return entity_id
         if ev.get("identity"):
             return f"id:{ev['identity']}"
         f = ev.get("fields", {})
@@ -212,6 +217,48 @@ def remoteid_event(pack_bytes: bytes, transport: str = "replay",
         "identity": report.identity(),
         "protocol": f"Open Drone ID ({transport})",
         "confirmed": report.identity() is not None,
+        "fields": fields,
+    }
+
+
+def detection_event(detection, *, observed_at: str, source: str,
+                    compatibility: dict[str, str | None] | None = None,
+                    unique_frequency_hz: int | None = None) -> dict:
+    """Adapt a detector result into the live fusion event interface.
+
+    The canonical entity ID is carried in ``fields`` so the live table uses
+    the same cross-frequency merge rule as offline track building.  Signals
+    without a typed identity require an explicit identity-bearing frequency.
+    """
+    from .identity import detection_observation, stable_entity_id
+
+    observation = detection_observation(
+        detection,
+        timestamp=observed_at,
+        source=source,
+        compatibility=compatibility,
+        unique_frequency_hz=unique_frequency_hz,
+    )
+    entity_id = stable_entity_id(observation)
+    identity = observation.get("identity")
+    fields = {
+        "entity_id": entity_id,
+        "identity_type": identity["kind"] if identity else "unique_frequency",
+        "freq_mhz": observation["frequency_hz"] / 1e6,
+        "evidence_maturity": observation["evidence_maturity"],
+    }
+    for name in ("protocol_version", "phy", "model", "firmware"):
+        if name in observation:
+            fields[name] = observation[name]
+    return {
+        "source": source,
+        "ts": datetime.fromisoformat(
+            observation["timestamp"].replace("Z", "+00:00")
+        ).timestamp(),
+        "kind": "control-link",
+        "identity": identity["value"] if identity else str(unique_frequency_hz),
+        "protocol": observation["protocol"],
+        "confirmed": observation["evidence_maturity"] == "identified",
         "fields": fields,
     }
 

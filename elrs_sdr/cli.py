@@ -20,6 +20,7 @@ import argparse
 import json
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -1086,6 +1087,69 @@ def cmd_validate(args):
 
 
 # ----------------------------------------------------------------------------
+# identity tracks + offline PoC target binding
+# ----------------------------------------------------------------------------
+def _write_json_result(result, output: Path | None, pretty: bool) -> None:
+    rendered = json.dumps(result, indent=2 if pretty else None, sort_keys=True) + "\n"
+    if output is None:
+        sys.stdout.write(rendered)
+    else:
+        output.write_text(rendered, encoding="utf-8")
+
+
+def cmd_identify_tracks(args):
+    """Build deterministic identity tracks from offline JSON/JSONL evidence."""
+    from .identity import ValidationError, build_tracks, load_records
+
+    try:
+        result = build_tracks(load_records(args.input))
+        mismatches = []
+        if args.expect_tracks is not None and result["track_count"] != args.expect_tracks:
+            mismatches.append(
+                f"expected {args.expect_tracks} tracks, observed {result['track_count']}"
+            )
+        if (
+            args.expect_spectrum is not None
+            and result["spectrum_evidence_count"] != args.expect_spectrum
+        ):
+            mismatches.append(
+                "expected "
+                f"{args.expect_spectrum} spectrum records, "
+                f"observed {result['spectrum_evidence_count']}"
+            )
+        if mismatches:
+            result["status"] = "expectation_failed"
+            result["errors"] = mismatches
+        _write_json_result(result, args.output, args.pretty)
+    except (OSError, ValidationError) as exc:
+        print(json.dumps({"status": "invalid_input", "error": str(exc)}, sort_keys=True),
+              file=sys.stderr)
+        raise SystemExit(2) from exc
+    if result["status"] != "ok":
+        raise SystemExit(3)
+
+
+def cmd_bind_target(args):
+    """Bind an offline PoC manifest to exactly one identified target track."""
+    from .identity import ValidationError
+    from .target_binding import bind, load_json
+
+    try:
+        receipt = bind(
+            load_json(args.manifest),
+            load_json(args.target),
+            args.entity_id,
+        )
+        _write_json_result(receipt, args.output, args.pretty)
+    except (OSError, ValidationError) as exc:
+        print(json.dumps({"status": "invalid_input", "error": str(exc)}, sort_keys=True),
+              file=sys.stderr)
+        raise SystemExit(2) from exc
+    if receipt["status"] != "accepted":
+        raise SystemExit(3)
+
+
+# ----------------------------------------------------------------------------
 # parser
 # ----------------------------------------------------------------------------
 def build_parser():
@@ -1115,6 +1179,28 @@ def build_parser():
                         help="ELRS air rate (default 250Hz)")
 
     sp = sub.add_parser("info", help="probe the device"); sp.set_defaults(fn=cmd_info)
+
+    sp = sub.add_parser(
+        "identify-tracks",
+        help="offline: build stable cross-frequency tracks from JSON/JSONL observations",
+    )
+    sp.add_argument("input", type=Path, help="JSON or JSONL observation file")
+    sp.add_argument("--output", type=Path, help="write the track set to this path")
+    sp.add_argument("--pretty", action="store_true", help="indent JSON output")
+    sp.add_argument("--expect-tracks", type=int)
+    sp.add_argument("--expect-spectrum", type=int)
+    sp.set_defaults(fn=cmd_identify_tracks)
+
+    sp = sub.add_parser(
+        "bind-target",
+        help="offline: check a PoC manifest against one exact identity track",
+    )
+    sp.add_argument("manifest", type=Path)
+    sp.add_argument("target", type=Path)
+    sp.add_argument("--entity-id", help="select one entity from a multi-track set")
+    sp.add_argument("--output", type=Path, help="write the receipt to this path")
+    sp.add_argument("--pretty", action="store_true", help="indent JSON output")
+    sp.set_defaults(fn=cmd_bind_target)
 
     sp = sub.add_parser("scan", help="sweep the 2.4 GHz band")
     sp.add_argument("--sweep", type=int, default=80, help="number of sweep steps")

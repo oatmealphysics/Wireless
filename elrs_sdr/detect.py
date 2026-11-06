@@ -54,7 +54,7 @@ cross-check* only.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 import numpy as np
@@ -105,8 +105,9 @@ class Detection:
     home_geo, rc_geo, orientation, speed, net_id, model, rc_info, serial_number, ssid,
     vendor, network_devices, detection_uid, alert_type`. We carry the fields we can
     actually produce from a 2.4 GHz capture (no position/velocity — we don't decode the
-    MAVLink telemetry yet; that's a separate build step). `detection_uid` is the
-    reference's per-detection unique id (a hash of net_id + freq); we compute the same.
+    MAVLink telemetry yet; that's a separate build step). ``entity_id`` is our
+    versioned SHA-256 tracking identity. ``detection_uid`` keeps a short display form
+    for existing callers while avoiding frequency churn for typed hopping-link IDs.
     """
 
     protocol: str                    # the protocol name (from the catalog)
@@ -123,17 +124,65 @@ class Detection:
     extra: dict = field(default_factory=dict)  # protocol-specific extras (SSID, model, ...)
 
     @property
-    def detection_uid(self) -> str:
-        """The reference's `detection_uid` — a stable hash of net_id + freq + protocol.
+    def entity_id(self) -> str:
+        """Canonical entity ID for cross-capture and cross-frequency merging.
 
-        This is what the reference uses to *track* a detection across time (merge/
-        de-dup the same link seen on consecutive frames). We use the same idea: a
-        short hex digest of the identifying fields.
+        A typed link identity is independent of the currently measured channel.
+        An unidentified signal remains frequency-scoped so unrelated activity is
+        not merged by guesswork.
         """
-        key = (self.protocol, self.net_id.net_id_str if self.net_id else "",
-               f"{self.freq_hz:.0f}")
-        import hashlib
-        return hashlib.sha1("|".join(key).encode()).hexdigest()[:12]
+        from elrs_sdr.identity import (
+            MATURITY_RANK,
+            normalize_detection,
+            stable_entity_id,
+        )
+
+        # Evidence maturity is not part of the entity-id hash, but the shared
+        # observation contract only accepts the tracked rungs. A NONE-level
+        # record has no identity maturity; floor it so this display-facing id
+        # (and detection_uid) stays total instead of raising on a valid rung.
+        maturity = self.detection_level.label
+        if maturity not in MATURITY_RANK:
+            maturity = "presence"
+        record = {
+            "timestamp": "1970-01-01T00:00:00Z",
+            "protocol": self.protocol,
+            "frequency_hz": round(self.freq_hz),
+            "evidence_maturity": maturity,
+            "source": "elrs_sdr.detect",
+        }
+        if self.net_id is not None:
+            record["identity"] = {
+                "kind": self.net_id.kind,
+                "value": self.net_id.net_id_str,
+            }
+        else:
+            record["unique_frequency_hz"] = round(self.freq_hz)
+        return stable_entity_id(normalize_detection(record))
+
+    @property
+    def detection_uid(self) -> str:
+        """Short compatibility form of :attr:`entity_id` for existing displays."""
+        return self.entity_id.rsplit(":", 1)[-1][:12]
+
+    def to_observation(
+        self,
+        *,
+        timestamp: str,
+        source: str = "elrs_sdr.detect",
+        compatibility: dict[str, str | None] | None = None,
+        unique_frequency_hz: int | None = None,
+    ) -> dict:
+        """Adapt this result to the shared deterministic observation contract."""
+        from elrs_sdr.identity import detection_observation
+
+        return detection_observation(
+            self,
+            timestamp=timestamp,
+            source=source,
+            compatibility=compatibility,
+            unique_frequency_hz=unique_frequency_hz,
+        )
 
     def summary(self) -> str:
         bits = [f"{self.protocol}", f"{self.freq_hz/1e6:.2f} MHz",
@@ -521,6 +570,16 @@ def _extract_wifi_net_id(payload: bytes | None) -> tuple[NetID | None, dict]:
     mac = _wifi.parse_beacon_mac(payload)
     if mac is None:
         return None, extra
+    return _wifi_net_id_from_mac(mac)
+
+
+def _wifi_net_id_from_mac(mac: bytes) -> tuple[NetID | None, dict]:
+    """Wrap an already-decoded BSSID in the shared typed-identity model."""
+    from elrs_sdr import wifi as _wifi
+
+    extra: dict = {}
+    if len(mac) != 6:
+        return None, extra
     net_id = NetID(raw_net_id=mac, net_id_str=_wifi.mac_to_str(mac), kind="mac",
                    evidence=EvidenceClass.VALIDATED)  # the WiFi MAC is validated (L-SIG decode)
     vendor = _wifi.mac_to_oui_vendor(mac)
@@ -651,12 +710,32 @@ def _demod_burst(burst: np.ndarray, srate: float,
         from elrs_sdr import positivedet as _pd
         score, _lbl = _pd.ofdm_preamble(burst, srate)
         if score > 0.5:
-            # it's OFDM-like; try the WiFi L-SIG + beacon demod
-            # (the full WiFi demod is in waveraider; here we do the presence + try the MAC)
-            # NOTE: the full WiFi beacon demod (L-SIG + the CC decode + the beacon MAC)
-            # is a heavier path; for now, mark it PRESENCE (OFDM) unless the full
-            # demod lands. The MAC extraction is the IDENTIFIED step (a separate build).
-            return "WiFi", DetectionLevel.PRESENCE, None, EvidenceClass.SYNTHETIC, extra
+            # OFDM shape is only a candidate.  A decoded beacon MAC is the
+            # identity-bearing result; a validated L-SIG is protocol-specific;
+            # otherwise this branch remains presence-only.
+            mac = _wifi.decode_beacon_mac(burst, srate)
+            if mac is not None:
+                net_id, wifi_extra = _wifi_net_id_from_mac(mac)
+                extra.update(wifi_extra)
+                extra["wifi_beacon_decoded"] = True
+                return (
+                    "WiFi",
+                    DetectionLevel.IDENTIFIED,
+                    net_id,
+                    EvidenceClass.VALIDATED,
+                    extra,
+                )
+            lsig_valid, detail = _wifi.demod_lsig(burst, srate)
+            extra["wifi_lsig"] = detail
+            if lsig_valid:
+                return (
+                    "WiFi",
+                    DetectionLevel.SPECIFIC,
+                    None,
+                    EvidenceClass.SELF_CONSISTENT,
+                    extra,
+                )
+            return "WiFi", DetectionLevel.PRESENCE, None, EvidenceClass.PRESENCE, extra
     except Exception:
         pass
 
@@ -679,6 +758,33 @@ def _demod_burst(burst: np.ndarray, srate: float,
 #    in software).
 # --------------------------------------------------------------------------- #
 _srate_global = 1e6  # filled by detect_and_identify (so HysteresisBurst.duration_s works)
+
+
+def _promote_lora_detections(
+    detections: list[Detection],
+    net_id: NetID,
+    *,
+    corroborated_bursts: int,
+    ota_version: int,
+) -> list[Detection]:
+    """Return promoted copies without mutating frozen detection records."""
+    promoted = []
+    for detection in detections:
+        if detection.protocol not in ("LoRa", "ExpressLRS", "Crossfire"):
+            promoted.append(detection)
+            continue
+        promoted_extra = dict(detection.extra)
+        promoted_extra["corroborated_bursts"] = corroborated_bursts
+        promoted_extra["ota_version"] = ota_version
+        promoted.append(replace(
+            detection,
+            net_id=net_id,
+            detection_level=DetectionLevel.IDENTIFIED,
+            evidence=EvidenceClass.SELF_CONSISTENT,
+            crc_valid=True,
+            extra=promoted_extra,
+        ))
+    return promoted
 
 
 def detect_and_identify(iq: np.ndarray, srate: float,
@@ -861,14 +967,12 @@ def detect_and_identify(iq: np.ndarray, srate: float,
                         kind="uid",
                         evidence=EvidenceClass.SELF_CONSISTENT,
                     )
-                    for d in dets:
-                        if d.protocol in ("LoRa", "ExpressLRS", "Crossfire"):
-                            d.net_id = corroborated_net_id
-                            d.detection_level = DetectionLevel.IDENTIFIED
-                            d.evidence = EvidenceClass.SELF_CONSISTENT
-                            d.crc_valid = True
-                            d.extra["corroborated_bursts"] = len(corroborated)
-                            d.extra["ota_version"] = top.ota_version
+                    dets = _promote_lora_detections(
+                        dets,
+                        corroborated_net_id,
+                        corroborated_bursts=len(corroborated),
+                        ota_version=top.ota_version,
+                    )
         except Exception:
             pass
 
@@ -920,17 +1024,21 @@ if __name__ == "__main__":  # pragma: no cover - manual inspection
         on = int(0.5e-3 * sr)   # 500 us on
         off = int(0.5e-3 * sr)  # 500 us off (the on/off burst structure -> high CV)
         for start in range(0, n - on, on + off):
-            bursty[start:start + on] += 1000 * np.exp(2j * np.pi * 1e5 * t[start:start + on])
+            # Keep the whole burst above the low threshold while varying its
+            # envelope enough that the central core is not a continuous tone.
+            envelope = np.ones(on)
+            envelope[on // 4:on // 2] = 0.2
+            envelope[3 * on // 4:] = 0.2
+            bursty[start:start + on] += (
+                1000 * envelope * np.exp(2j * np.pi * 1e5 * t[start:start + on])
+            )
         # check the CV of a full on+off period (the burst structure)
         period = bursty[0:on + off]
         cv_period = float(np.abs(period).std() / (np.abs(period).mean() + 1e-12))
         assert cv_period > 0.15, f"the on/off burst should be high-CV (got {cv_period:.3f})"
         d_b = detect_and_identify(bursty, sr, freq_hz=2.4314e9)
         print(f"  (b) bursty on/off signal (CV={cv_period:.3f}): {len(d_b)} detections (expected >=1)")
-        # NOTE: we don't assert >=1 here — the hysteresis gate + the per-protocol demod
-        # may not produce a *named* detection on a generic on/off tone (it's not a real
-        # ELRS/LoRa/WiFi signal, so the detectors correctly don't name it). What we DO
-        # assert is that the discriminator does NOT reject it as a carrier (it's high-CV).
+        assert d_b, "the end-to-end detector must report the synthetic burst"
         assert not is_continuous_carrier(period, sr), "the high-CV on/off burst must NOT be rejected as a carrier"
         # (c) the is_continuous_carrier discriminator directly
         assert is_continuous_carrier(carrier[:on], sr) is True, "carrier should be rejected"

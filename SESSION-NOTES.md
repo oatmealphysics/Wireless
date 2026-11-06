@@ -6239,3 +6239,170 @@ otherwise proceed with G0 as scheduled.
   ordinary fast-forward to the same `capability-pack-system` branch on GitHub
   and GitLab; leave both `main` authorities unchanged.
 
+## 94. Stable identity and offline target-binding integration (Codex, 2026-11-06)
+
+### Starting state and objective
+- Started from clean `capability-pack-system` at
+  `2a95903c57f0c328806be0fbc4106483ff0fcf4f`; the required
+  `git pull --ff-only` reported that the branch was current.
+- Operator-directed objective: integrate the offline stable-identity and exact
+  PoC target-binding contracts from the completed firmware/PDF investigation
+  alongside the current Wireless detector and fusion paths, then leave the
+  changes for Claude to review and publish.
+- This was a contained offline application slice while the roadmap's G0 lane
+  remains in independent review. No roadmap priority or acceptance status was
+  changed.
+
+### Implementation
+- Added `elrs_sdr/identity.py`, a pure protocol-neutral module for:
+  - versioned typed observations and SHA-256 entity IDs;
+  - cross-frequency merging of a typed hopping-link identity;
+  - deterministic evidence counts, compatibility fields, and conflict
+    retention;
+  - separately versioned spectrum evidence that cannot create or promote an
+    identity; and
+  - JSON array, observations-object, and JSON Lines input.
+- Added `elrs_sdr/target_binding.py`. It checks exactly one target track against
+  a `wireless-poc-compatibility/v1` manifest and emits a deterministic
+  `wireless-poc-target-binding/v1` receipt. Missing, unknown, conflicted,
+  mismatched, ambiguous, or insufficient evidence rejects. It accepts only
+  `offline-non-transmitting` manifests and never imports or invokes the named
+  PoC.
+- Added offline CLI commands:
+  - `elrs-sdr identify-tracks INPUT [--output ...] [--expect-* ...]`
+  - `elrs-sdr bind-target MANIFEST TARGET [--entity-id ...]`
+  Exit codes preserve the standalone contracts: success `0`, invalid input or
+  output `2`, expectation/rejection `3`.
+- Integrated the identity seam with current code:
+  - `Detection.entity_id` is stable across measured-frequency changes when a
+    typed Net ID exists; `detection_uid` remains a 12-hex display form.
+  - `Detection.to_observation()` adapts detector output to the shared contract.
+  - `fusion.detection_event()` carries the same canonical entity ID into the
+    live `TrackTable`; legacy fusion events remain supported.
+  - Unidentified observations fail closed unless the caller explicitly marks a
+    frequency as identity-bearing.
+- Fixed capture-level LoRa corroboration: frozen `Detection` values are now
+  promoted with `dataclasses.replace()` and copied metadata instead of illegal
+  mutation hidden by a broad exception.
+- Connected the existing Wi-Fi beacon decoder to `detect._demod_burst()`:
+  decoded BSSID -> `IDENTIFIED`; validated L-SIG without BSSID -> `SPECIFIC`;
+  OFDM shape alone -> `PRESENCE`.
+- Strengthened `python3 -m elrs_sdr.detect selftest`: the synthetic burst now
+  exercises the full detector and asserts at least one result instead of
+  printing an unmet expectation and passing.
+- Documented the schemas, adapters, commands, exit behavior, and test surface
+  in `docs/identity-and-target-binding.md` and linked it from `README.md`.
+
+### Reproduced evidence and validation
+- `python3 -B -m pytest -p no:cacheprovider -q tests`: **17 passed**.
+- `python3 -m unittest discover -s tests -p 'test_*.py' -v`: **17 passed**.
+- `python3 -m elrs_sdr.selftest`: **all checks passed**, including existing
+  mock-UHD and detector/fusion/Wi-Fi checks.
+- `python3 -m elrs_sdr.detect selftest`: continuous carrier rejected; 30
+  synthetic bursts reported; self-test passed.
+- `python3 -B tools/validate-project.py`: passed syntax, JSON, corpus
+  hash/provenance, rainbow-data, CVE-coverage, and 617 local-link checks.
+- `python3 -m compileall -q elrs_sdr tests` and `git diff --check`: passed.
+- Original sanitized fixture through the integrated CLI:
+  - track-set exit `0`, 2 tracks and 1 spectrum record;
+  - compact output SHA-256
+    `b6e120c7f84ae3dfacfd3798b7db559ae8396498c067d0e5621d3cb46617e138`,
+    exactly matching the standalone result;
+  - accepted manifest exit `0`, binding ID
+    `binding:v1:4f0482555feb49cd071073b15603ac95a360f21deff1d17f36bce273b3ef6d92`,
+    exactly matching the standalone result;
+  - incompatible manifest exit `3`, status `rejected`, no binding ID; and
+  - deliberately wrong track expectation exit `3`, status
+    `expectation_failed`.
+
+### Safety boundaries
+- All work and validation were offline against synthetic/sanitized fixtures and
+  in-memory detector data. No RF, serial, device, firmware, configuration,
+  reset, external-target, or live network action occurred. No E8/TinyHawk
+  access occurred.
+
+### Files changed and handoff
+- Changed: `README.md`, `SESSION-NOTES.md`, `elrs_sdr/cli.py`,
+  `elrs_sdr/detect.py`, and `elrs_sdr/fusion.py`.
+- Added: `docs/identity-and-target-binding.md`, `elrs_sdr/identity.py`,
+  `elrs_sdr/target_binding.py`, `tests/test_identity.py`,
+  `tests/test_target_binding.py`, and `tests/test_detect_integration.py`.
+- Commit/push status: intentionally **uncommitted and unpushed** per the
+  operator's request. Claude is the independent reviewer and should inspect
+  the working-tree diff, rerun the listed offline checks, then commit/publish
+  if accepted.
+
+## 95. Identity/target-binding integration reviewed, one fix, published (Claude Opus 4.8, 2026-11-06)
+
+### Starting state and objective
+- Reviewed the uncommitted §94 working-tree update on `capability-pack-system`
+  at `2a95903` (both `origin` and `mirror` already at `2a95903`). Objective:
+  independently review the stable-identity + offline target-binding integration,
+  fix what needed fixing, and publish to both authorities if accepted.
+- Axes: the §94 handoff, the `docs/identity-and-target-binding.md` contract,
+  repository guardrails, and the module/CLI/adapter behavior.
+
+### Review findings
+- **FIXED (latent regression) — `Detection.detection_uid` could raise.**
+  `entity_id`/`detection_uid` routed every call through
+  `identity.normalize_detection()`, which only accepts the maturity rungs
+  `presence|family|specific|identified`. `DetectionLevel.NONE.label` is
+  `"none"`, so a NONE-level `Detection` raised `ValidationError` from a
+  display helper that the previous SHA-1 implementation never raised from
+  (`elrs_sdr/detect.py:980` renders `d.detection_uid`). No current
+  `_demod_burst` path emits a NONE detection, so nothing crashes today, but the
+  accessor was newly partial on a valid enum rung. Fix: floor an
+  out-of-vocabulary maturity to `presence` when building the id record.
+  Maturity is **not** part of `stable_entity_id`, so a real detection's id is
+  unchanged; only the spurious exception is removed. Added
+  `tests/test_detect_integration.py::test_detection_uid_is_total_for_none_level`
+  (asserts a 12-hex uid and that NONE and PRESENCE ids are identical).
+- **Verified, no change needed:**
+  - `identity.py` and `target_binding.py` are pure, deterministic, and genuinely
+    fail-closed: unknown/conflicted/mismatched/ambiguous/insufficient evidence
+    all reject, only `offline-non-transmitting` manifests are accepted, and the
+    binder never imports or invokes the named PoC.
+  - The frozen-`Detection` promotion fix is real and correct: `Detection` is
+    `@dataclass(frozen=True)`, so the prior in-place mutation raised
+    `FrozenInstanceError` that the surrounding `except Exception: pass` swallowed
+    (promotion silently never happened). `_promote_lora_detections()` now uses
+    `dataclasses.replace()`, the promoted copies reach `return dets`, and the
+    original is left untouched (covered by a test).
+  - The new Wi-Fi path calls real functions (`wifi.decode_beacon_mac`,
+    `demod_lsig`, `_wifi_net_id_from_mac`); the OFDM→beacon-MAC→IDENTIFIED path
+    is exercised by a mocked integration test, so it is not a silent no-op.
+  - The fusion/CLI adapters carry the canonical entity id into the live
+    `TrackTable` (cross-frequency merge), and the CLI exit codes are 0/2/3 as
+    documented.
+
+### Reproduced evidence and validation
+- `python3 -B -m pytest -p no:cacheprovider -q tests`: **18 passed** (17 + the
+  new regression test).
+- `python3 -m elrs_sdr.selftest`: all checks passed.
+- `python3 -m elrs_sdr.detect selftest`: carrier rejected; 30 synthetic bursts;
+  PASS.
+- `python3 -B tools/validate-project.py`: PASS (syntax, JSON, corpus
+  hashes/provenance, rainbow data, CVE coverage, 617 local-link checks).
+- `python3 -m compileall -q elrs_sdr tests` and `git diff --check`: passed.
+  Ruff was unavailable and not run.
+- CLI end-to-end on a synthetic fixture: `identify-tracks` merged the same UID
+  across 2.400 GHz and 2.425 GHz into one track (exit 0); `bind-target`
+  accepted an exact manifest with a deterministic `binding:v1:` id (exit 0);
+  a wrong-PHY manifest rejected (exit 3); a missing input file exited 2.
+
+### Safety boundaries
+- Offline review only. No RF, serial, device, firmware, configuration, reset,
+  external-target, or live network action occurred. No E8/TinyHawk access. The
+  target binder evaluates compatibility and never invokes the PoC or transmits.
+
+### Files changed, commit/push, next step
+- Beyond the §94 working-tree update I reviewed, this task changed
+  `elrs_sdr/detect.py` (the one fix), `tests/test_detect_integration.py` (the
+  regression test), and `SESSION-NOTES.md` (this entry).
+- Published the accepted §94 update plus this fix on `capability-pack-system` by
+  ordinary fast-forward to GitHub (`origin`) and the GitLab `mirror`; no force,
+  no history rewrite. `main`/`mirror/main` unchanged. This identity/binding
+  slice is an offline application lane and does not change roadmap priority or
+  acceptance; the capability-pack CP1 lane remains blocked on its own re-review
+  (§93).
+
