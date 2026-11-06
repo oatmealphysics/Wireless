@@ -8,8 +8,11 @@ Sacrificial Target, Prerequisite Mode, Evidence Level, Result State.
 from __future__ import annotations
 
 import enum
+import threading
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
@@ -151,6 +154,11 @@ class ApplicabilityBoundary:
     phy_domain: str
     firmware_impl: str
     firmware_version: str
+    # ``"*"`` means the pack does not constrain this attribute. A specific
+    # value is an exact requirement a target must meet to be armable.
+    model: str = "*"
+    revision: str = "*"
+    interface: str = "*"
     configuration: dict[str, Any] = field(default_factory=dict)
     prerequisite_knowledge: list[str] = field(default_factory=list)
     access_conditions: list[str] = field(default_factory=list)
@@ -246,6 +254,9 @@ _APPLICABILITY_MATCH_FIELDS = (
     "phy_domain",
     "firmware_impl",
     "firmware_version",
+    "model",
+    "revision",
+    "interface",
 )
 
 
@@ -282,17 +293,45 @@ class PackRegistry:
 
     @staticmethod
     def _target_matches(boundary: ApplicabilityBoundary, target: dict[str, Any]) -> bool:
+        """Lenient discovery match: "could this pack apply to this target?"
+
+        Used by :meth:`query` for listing/resolution. A target attribute that
+        is unknown (``None`` or ``"*"``) does not constrain discovery, and a
+        boundary of ``"*"`` does not constrain either. This is intentionally
+        permissive; it is NOT an authorization decision. Arming uses the
+        strict :meth:`_target_satisfies` instead.
+        """
         for field_name in _APPLICABILITY_MATCH_FIELDS:
             target_value = target.get(field_name)
-            # ``None`` (field unknown for this target) and ``"*"`` (explicit
-            # wildcard) both mean "do not constrain on this field".
             if target_value is None or target_value == "*":
                 continue
             boundary_value = getattr(boundary, field_name, None)
-            if boundary_value == "*":
+            if boundary_value is None or boundary_value == "*":
                 continue
             if target_value != boundary_value:
                 return False
+        return True
+
+    @staticmethod
+    def _target_satisfies(boundary: ApplicabilityBoundary, target: dict[str, Any]) -> bool:
+        """Strict authorization match: does the target meet EVERY requirement?
+
+        This is the exact-target gate for arming (SECURITY.md: reject an
+        unknown, ambiguous, or mismatched target). Wildcards are asymmetric:
+
+        * A boundary value of ``"*"`` (or absent) means the pack does not
+          constrain that attribute.
+        * A specific boundary value is an exact requirement. A target whose
+          value is unknown (``None``/``"*"``) or different does NOT satisfy it,
+          so an ambiguous target can never arm a pack with a specific boundary.
+        """
+        for field_name in _APPLICABILITY_MATCH_FIELDS:
+            boundary_value = getattr(boundary, field_name, None)
+            if boundary_value is None or boundary_value == "*":
+                continue  # pack does not constrain this attribute
+            target_value = target.get(field_name)
+            if target_value is None or target_value == "*" or target_value != boundary_value:
+                return False  # specific requirement unmet by unknown/mismatched target
         return True
 
 
@@ -307,21 +346,28 @@ class TargetDescriptor:
     firmware_impl: str
     firmware_version: str
     phy_domain: str = "*"
-    interface: str = ""
-    model: str = ""
+    model: str = "*"
+    revision: str = "*"
+    interface: str = "*"
 
     def as_query(self) -> dict[str, str]:
-        """Return the applicability-match fields.
+        """Return every applicability-match field for an exact-target check.
 
-        ``phy_domain`` participates in the Applicability Boundary match so
-        a target whose PHY/domain is known can be verified against the
-        pack's declared boundary rather than matched tautologically.
+        All of ``protocol_version``, ``phy_domain``, ``firmware_impl``,
+        ``firmware_version``, ``model``, ``revision`` and ``interface``
+        participate so a target is verified against the pack's declared
+        boundary rather than matched tautologically. ``"*"`` marks a value
+        this target does not actually know, which cannot satisfy a specific
+        pack requirement.
         """
         return {
             "protocol_version": self.protocol_version,
             "phy_domain": self.phy_domain,
             "firmware_impl": self.firmware_impl,
             "firmware_version": self.firmware_version,
+            "model": self.model,
+            "revision": self.revision,
+            "interface": self.interface,
         }
 
 
@@ -415,10 +461,14 @@ class ScopeManager:
                 f"Pack not found: {pack_name} v{pack_version}"
             )
 
-        if not PackRegistry._target_matches(pack.applicability, target.as_query()):
+        # Arming is the exact-target gate: the target must satisfy EVERY
+        # specific boundary attribute. An unknown ("*") target attribute does
+        # not satisfy a specific requirement (SECURITY.md: reject an unknown,
+        # ambiguous, or mismatched target).
+        if not PackRegistry._target_satisfies(pack.applicability, target.as_query()):
             raise ValueError(
-                f"Target {target.identity!r} does not match Applicability Boundary "
-                f"of {pack_name} v{pack_version}"
+                f"Target {target.identity!r} does not satisfy the Applicability "
+                f"Boundary of {pack_name} v{pack_version}"
             )
 
         if pack.has_destructive_effects and not sacrificial_target:
@@ -597,7 +647,12 @@ class FakeExecutor:
         self._timeout_after = timeout_after_step
         self._cancel_after = cancel_after_step
 
-    def run(self, inp: ExecutorInput) -> ExecutorOutput:
+    def run(
+        self,
+        inp: ExecutorInput,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> ExecutorOutput:
         if not self._sequence:
             raise ValueError(
                 "FakeExecutor requires a non-empty canned_sequence"
@@ -607,12 +662,19 @@ class FakeExecutor:
         stop_reason = "completed"
 
         for i, state in enumerate(self._sequence, start=1):
+            # Operator cancellation (runtime): an Event set from another thread
+            # — e.g. the cancel API — stops the run between steps. This is a
+            # real cancellation signal, not a predetermined test-step setting.
+            if cancel_event is not None and cancel_event.is_set():
+                stop_reason = "cancelled"
+                break
+
             # Check timeout before this step
             if self._timeout_after is not None and i > self._timeout_after:
                 stop_reason = "timeout"
                 break
 
-            # Check cancellation before this step
+            # Check cancellation before this step (deterministic test hook)
             if self._cancel_after is not None and i > self._cancel_after:
                 stop_reason = "cancelled"
                 break
@@ -625,6 +687,75 @@ class FakeExecutor:
             stop_reason=stop_reason,
             final_state=sm.current if sm.current is not None else self._sequence[0],
         )
+
+
+# ---------------------------------------------------------------------------
+# Bounded worker: off-thread execution with wall-clock timeout + cancellation
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class WorkerResult:
+    """Outcome of a bounded worker run.
+
+    ``stop_reason`` is one of ``completed`` / ``timeout`` / ``cancelled`` /
+    ``error``. ``output`` is the executor's ``ExecutorOutput`` when it
+    finished, else ``None``. ``error`` carries the exception on ``error``.
+    """
+    output: ExecutorOutput | None
+    stop_reason: str
+    error: BaseException | None = None
+
+
+class BoundedWorker:
+    """Run one capability execution off the caller's thread, bounded.
+
+    The executor call runs in a dedicated worker thread so a slow or hung
+    attack cannot block the caller (e.g. the Flask request thread) past the
+    wall-clock ``timeout_s``. A ``threading.Event`` provides runtime
+    cancellation that the executor observes between Result State steps, and
+    the structured ``WorkerResult`` carries the stop reason.
+
+    v1 is thread-backed. A true OS-process / minimal-privilege backing (so a
+    wedged task can be killed, not just abandoned) is a documented follow-up;
+    the only shipped executor is the no-I/O ``FakeExecutor``.
+    """
+
+    def __init__(self, *, timeout_s: float = 30.0) -> None:
+        if timeout_s <= 0:
+            raise ValueError("timeout_s must be positive")
+        self._timeout_s = timeout_s
+
+    def run(
+        self,
+        executor: Any,
+        inp: ExecutorInput,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> WorkerResult:
+        cancel_event = cancel_event or threading.Event()
+        # A cancellation requested before dispatch short-circuits the run.
+        if cancel_event.is_set():
+            return WorkerResult(output=None, stop_reason="cancelled")
+
+        pool = ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(executor.run, inp, cancel_event=cancel_event)
+        try:
+            output = future.result(timeout=self._timeout_s)
+        except FuturesTimeoutError:
+            # Signal the task to stop and return promptly. The thread may
+            # linger (Python cannot force-kill it); it is abandoned, not
+            # waited on, so the caller is never blocked past the timeout.
+            cancel_event.set()
+            pool.shutdown(wait=False)
+            return WorkerResult(output=None, stop_reason="timeout")
+        except BaseException as exc:  # executor raised
+            pool.shutdown(wait=False)
+            return WorkerResult(output=None, stop_reason="error", error=exc)
+
+        # Completed path: the task is done, so waiting on shutdown is safe.
+        pool.shutdown(wait=True)
+        stop_reason = output.stop_reason if output.stop_reason else "completed"
+        return WorkerResult(output=output, stop_reason=stop_reason)
 
 
 # ---------------------------------------------------------------------------

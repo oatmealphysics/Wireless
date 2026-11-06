@@ -51,6 +51,7 @@ from exploit_chains.common import AbortHandler, ChainLogger
 from capability_pack import (
     AuthorizationError,
     AuthorizationScope,
+    BoundedWorker,
     EvidenceStore,
     ExecutionRecord,
     ExecutorInput,
@@ -81,6 +82,9 @@ MAX_EVENTS = 500
 MAX_LOG = 200
 MAX_CHAIN2_INJECTIONS = 200
 MAX_ARM_SECONDS = 3600  # upper bound on an authorization scope's time limit
+CHAIN2_MAX_SEND_PACKETS = 5       # hard ceiling on a live Chain 2 injection burst
+CHAIN2_MIN_SEND_INTERVAL_S = 0.05  # floor on the inter-packet interval (rate bound)
+EXECUTION_TIMEOUT_S = 30.0        # wall-clock bound on a single bounded-worker run
 DEFAULT_PROTOCOLS = ("wifi", "ble", "sdr", "mavlink", "telemetry")
 VALID_PROTOCOLS = frozenset(DEFAULT_PROTOCOLS)
 STATE_EXTENSION_KEY = "dashboard_state"
@@ -154,6 +158,9 @@ class DashboardState:
     pack_registry: PackRegistry | None = field(default=None, repr=False)
     scope_manager: ScopeManager | None = field(default=None, repr=False)
     evidence_store: EvidenceStore = field(default_factory=EvidenceStore, repr=False)
+    # Runtime cancellation tokens for in-flight bounded-worker executions,
+    # keyed by execution id. Guarded by state_lock like every mutable field.
+    executions: dict[str, Any] = field(default_factory=dict, repr=False)
     _app_owner_token: object | None = field(
         default=None, init=False, repr=False, compare=False,
     )
@@ -190,6 +197,10 @@ class DashboardState:
             self.hw_status = {}
             self.chain2_state = _new_chain2_state()
             self.events.clear()
+            # Cancel/clear any in-flight execution tokens on reset.
+            for cancel_event in self.executions.values():
+                cancel_event.set()
+            self.executions.clear()
             # Authorization scopes are bound to specific discovered targets;
             # once the targets are cleared the scopes are stale, so drop them.
             if self.scope_manager is not None:
@@ -916,8 +927,10 @@ def _derive_target_descriptor(target: dict[str, Any]) -> TargetDescriptor:
     The applicability fields come from the target's own discovered
     attributes (``protocol``/``details``), never from client-supplied
     applicability claims, so the Applicability Boundary match is a real
-    check against the discovered target rather than a tautology.  Unknown
-    fields are left as the ``"*"`` wildcard.
+    check against the discovered target rather than a tautology.  Any
+    attribute the scan did not actually establish is left as the ``"*"``
+    wildcard, which (by the strict arm rule) cannot satisfy a pack's specific
+    boundary requirement — so an ambiguous target cannot arm a specific pack.
     """
     details = target.get("details", {}) or {}
     protocol = target.get("protocol", "")
@@ -932,8 +945,9 @@ def _derive_target_descriptor(target: dict[str, Any]) -> TargetDescriptor:
         firmware_impl=str(details.get("firmware_impl", "*") or "*"),
         firmware_version=str(details.get("firmware_version", "*") or "*"),
         phy_domain=str(details.get("phy_domain", "*") or "*"),
-        interface=str(details.get("interface", "") or ""),
-        model=str(target.get("type", "") or ""),
+        model=str(target.get("type") or details.get("model") or "*"),
+        revision=str(details.get("revision", "*") or "*"),
+        interface=str(details.get("interface", "*") or "*"),
     )
 
 
@@ -996,7 +1010,38 @@ def _execute_via_registry(
         parameters={"action": action_name, "target_details": target.get("details", {})},
     )
 
-    output = executor.run(inp)
+    # Run in an isolated bounded worker (off this request thread) with a
+    # wall-clock timeout and a runtime cancellation token registered so the
+    # operator cancel API can stop an in-flight execution.
+    exec_id = uuid.uuid4().hex[:8]
+    cancel_event = threading.Event()
+    with state.state_lock:
+        state.executions[exec_id] = cancel_event
+    try:
+        worker_result = BoundedWorker(timeout_s=EXECUTION_TIMEOUT_S).run(
+            executor, inp, cancel_event=cancel_event,
+        )
+    finally:
+        with state.state_lock:
+            state.executions.pop(exec_id, None)
+
+    output = worker_result.output
+    if output is None:
+        # The run did not complete (timeout / cancelled / error): no truthful
+        # Result State was produced, so none is claimed.
+        return {
+            "id": exec_id,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "target_id": target["id"],
+            "target_name": target.get("name", "Unknown"),
+            "action": action_name,
+            "result_state": None,
+            "transition_log": [],
+            "stop_reason": worker_result.stop_reason,
+            "error": str(worker_result.error) if worker_result.error else None,
+            "pack_name": pack_id.name,
+            "pack_version": pack_id.version,
+        }
 
     # Emit SSE events for each Result State transition
     for rs, ts in output.transition_log:
@@ -1010,7 +1055,7 @@ def _execute_via_registry(
 
     # Build action log entry
     entry = {
-        "id": uuid.uuid4().hex[:8],
+        "id": exec_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "target_id": target["id"],
         "target_name": target.get("name", "Unknown"),
@@ -2416,6 +2461,30 @@ def _serialize_evidence_record(rec: ExecutionRecord, *, record_id: str) -> dict[
     }
 
 
+# --- Execution control ---
+
+@dashboard.route("/api/executions/<exec_id>/cancel", methods=["POST"])
+def api_execution_cancel(exec_id: str) -> tuple[Response, int] | Response:
+    """Request runtime cancellation of an in-flight bounded-worker execution.
+
+    Sets the execution's cancellation token; the bounded worker observes it
+    between Result State steps (or abandons the task on timeout). Returns 404
+    when no execution with that id is currently in flight.
+    """
+    state = get_dashboard_state()
+    with state.state_lock:
+        cancel_event = state.executions.get(exec_id)
+        if cancel_event is not None:
+            cancel_event.set()
+    if cancel_event is None:
+        return jsonify({
+            "error": "No in-flight execution with that id",
+            "execution_id": exec_id,
+        }), 404
+    _push_event(state, "execution_cancel_requested", {"execution_id": exec_id})
+    return jsonify({"status": "cancel_requested", "execution_id": exec_id})
+
+
 # --- Chain 2: WiFi → MAVLink injection endpoints ---
 
 @dashboard.route("/api/chain2/status")
@@ -2514,32 +2583,67 @@ def api_chain2_inject() -> tuple[Response, int] | Response:
     # target. A dry-run builds the packet for inspection and transmits nothing.
     chain2_pack = "sim-chain2_wifi_mavlink"
     chain2_version = "0.1.0"
+    send_endpoint: str | None = None
+    send_count = 0
+    send_interval = CHAIN2_MIN_SEND_INTERVAL_S
+
+    def _denied(status: str, reason: str) -> tuple[Response, int]:
+        record = {
+            "id": uuid.uuid4().hex[:8],
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "target_id": target_id,
+            "command": command,
+            "description": cmd["desc"],
+            "severity": cmd["severity"],
+            "status": status,
+            "error": reason,
+            "packet_hex": pkt.hex(),
+            "packet_size": len(pkt),
+        }
+        _record_chain2_evidence(state, record, chain2_pack, chain2_version)
+        return jsonify(record), 403
+
     if not dry_run:
         scope_mgr = state.scope_manager
         try:
             if scope_mgr is None:
                 raise AuthorizationError("Authorization subsystem not initialized")
-            scope_mgr.authorize(
+            scope = scope_mgr.authorize(
                 pack_name=chain2_pack,
                 pack_version=chain2_version,
                 target_identity=target_id or "",
                 action=command,
             )
         except AuthorizationError as exc:
-            denied = {
-                "id": uuid.uuid4().hex[:8],
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "target_id": target_id,
-                "command": command,
-                "description": cmd["desc"],
-                "severity": cmd["severity"],
-                "status": "authorization_denied",
-                "error": str(exc),
-                "packet_hex": pkt.hex(),
-                "packet_size": len(pkt),
-            }
-            _record_chain2_evidence(state, denied, chain2_pack, chain2_version)
-            return jsonify(denied), 403
+            return _denied("authorization_denied", str(exc))
+
+        # Exact-target + count/rate bounds (SECURITY.md): a live injection may
+        # only reach the endpoint the scope bound, and only within the bound
+        # packet count and rate. The destination is taken from the scope, not
+        # the client; a request to any other endpoint is refused and nothing
+        # is sent.
+        bounds = scope.bounds or {}
+        bound_endpoint = bounds.get("endpoint")
+        max_packets = bounds.get("max_packets")
+        if not isinstance(bound_endpoint, str) or not bound_endpoint:
+            return _denied("bounds_violation", "scope bounds do not bind an endpoint")
+        if target_endpoint is not None and target_endpoint != bound_endpoint:
+            return _denied(
+                "bounds_violation",
+                f"requested endpoint {target_endpoint!r} is not the bound endpoint "
+                f"{bound_endpoint!r}",
+            )
+        if isinstance(max_packets, bool) or not isinstance(max_packets, int) or max_packets < 1:
+            return _denied("bounds_violation", "scope bounds do not bound a positive packet count")
+        if ":" not in bound_endpoint or len(bound_endpoint.rsplit(":", 1)) != 2:
+            return _denied("bounds_violation", "bound endpoint must be host:port")
+        send_endpoint = bound_endpoint
+        send_count = min(int(max_packets), CHAIN2_MAX_SEND_PACKETS)
+        interval_bound = bounds.get("min_interval_s", CHAIN2_MIN_SEND_INTERVAL_S)
+        try:
+            send_interval = max(CHAIN2_MIN_SEND_INTERVAL_S, float(interval_bound))
+        except (TypeError, ValueError):
+            return _denied("bounds_violation", "min_interval_s must be a number")
 
     entry = {
         "id": uuid.uuid4().hex[:8],
@@ -2553,22 +2657,26 @@ def api_chain2_inject() -> tuple[Response, int] | Response:
         "packet_size": len(pkt),
     }
 
-    if not dry_run and target_endpoint:
+    if not dry_run and send_endpoint is not None:
         import socket as _sock
-        parts = target_endpoint.split(":")
-        if len(parts) == 2:
-            try:
-                sock = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
-                for i in range(5):
-                    p = build_command_long(1, 1, cmd["cmd_id"],
-                                           list(cmd["params"]), seq=i)
-                    sock.sendto(p, (parts[0], int(parts[1])))
-                    time.sleep(0.05)
-                sock.close()
-                entry["status"] = "sent"
-            except Exception as e:
-                entry["status"] = "error"
-                entry["error"] = str(e)
+        host, port_str = send_endpoint.rsplit(":", 1)
+        entry["endpoint"] = send_endpoint
+        entry["packets_sent_max"] = send_count
+        try:
+            sock = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
+            sent = 0
+            for i in range(send_count):
+                p = build_command_long(1, 1, cmd["cmd_id"],
+                                       list(cmd["params"]), seq=i)
+                sock.sendto(p, (host, int(port_str)))
+                sent += 1
+                time.sleep(send_interval)
+            sock.close()
+            entry["status"] = "sent"
+            entry["packets_sent"] = sent
+        except Exception as e:
+            entry["status"] = "error"
+            entry["error"] = str(e)
 
     # Attach the truthful final Result State for this outcome.
     final_states = _CHAIN2_STATE_PATHS.get(entry["status"], [ResultState.PREVIEWED])

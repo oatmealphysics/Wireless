@@ -6406,3 +6406,107 @@ otherwise proceed with G0 as scheduled.
   acceptance; the capability-pack CP1 lane remains blocked on its own re-review
   (§93).
 
+## 96. Capability Pack §93 re-review findings remediated (Claude Opus 4.8, 2026-11-06)
+
+### Starting state and objective
+- Started from `capability-pack-system` at `70664e0` (local == `origin` ==
+  `mirror`; a clean `git pull --ff-only` reported current). Objective: fix the
+  §93 independent re-review findings against remediation `9143f3f` and
+  re-publish to both authorities. Operator-directed.
+
+### Findings addressed (§93 → fix)
+- **CRITICAL — live Chain 2 did not bind the network target or enforce
+  bounds.** `/api/chain2/inject`'s live path now reads the authorized scope's
+  `bounds` and refuses to transmit unless the request's endpoint equals the
+  bound `endpoint`, a positive `max_packets` is bound, and the endpoint is
+  `host:port`; the destination is taken from the scope, not the client. The
+  burst is capped at `min(max_packets, CHAIN2_MAX_SEND_PACKETS=5)` at a floored
+  interval (`CHAIN2_MIN_SEND_INTERVAL_S`). Reproduced the §93 case: arming
+  `127.0.0.1:14550 / max_packets=1` then posting a live request for
+  `203.0.113.99:9999` now returns HTTP 403 `bounds_violation` with **0**
+  `sendto()` calls (was HTTP 200 `sent` with five out-of-bound sends).
+- **CRITICAL — an unknown ("*") target attribute was treated as a match.**
+  Arming now uses a strict `PackRegistry._target_satisfies()`: a specific
+  boundary attribute is an exact requirement that an unknown (`None`/`"*"`) or
+  different target value does NOT satisfy, so an ambiguous target cannot arm a
+  specific pack. `query()` keeps the old lenient semantics for discovery only.
+  `TargetDescriptor`/`ApplicabilityBoundary` gained `model`, `revision`, and
+  `interface`, all of which (with `phy_domain`) now participate in
+  `as_query()`/matching, and `_derive_target_descriptor()` populates them from
+  the server-side record, leaving anything the scan did not establish as `"*"`.
+  Verified: an ELRS-v3 target with unknown firmware/PHY is refused (HTTP 400).
+- **HIGH — ELRS `verify()` was mislabeled "independent".** It now reports an
+  encoder/decoder *self-consistency* check only: `evidence_level` never exceeds
+  `candidate`, `independent_validation` is always `False`, the result carries
+  `self_consistency_check: passed|failed|not_run`, and the scope note states it
+  is not independent validation (SECURITY.md:146). The CRC re-check is retained
+  as useful self-consistency coverage.
+- **HIGH — `classify()` turned missing evidence into a positive.** It no longer
+  defaults an absent OTA version to the pack's expected value. When the version
+  was not observed, `applies` is `None` (inconclusive); it is `True`/`False`
+  only against an actually observed version.
+- **HIGH — the canned-IQ detection stage was metadata, not IQ.** `detect()` now
+  consumes real sample data (`params["iq"]` as float magnitudes, `[re, im]`
+  pairs, or `complex`) and computes presence observables (sample count,
+  mean/peak magnitude, coefficient of variation) with a burst heuristic;
+  no/unparseable IQ fails closed. It does not infer version/rate from raw
+  magnitude (left inconclusive for `classify`); an explicit `decoded_*` field
+  may be passed through as observed.
+- **HIGH — isolated worker + runtime cancellation were absent.** Added
+  `BoundedWorker` (capability_pack.py): it runs the executor in a dedicated
+  worker thread off the request thread, enforces a wall-clock `timeout_s`
+  (returning promptly without blocking the caller on a hung task), and takes a
+  `threading.Event` cancellation token that `FakeExecutor.run()` now observes
+  between Result State steps (a real operator signal, not the predetermined
+  test-step hook). `_execute_via_registry()` runs through it with a per-run
+  cancel token registered in `DashboardState.executions`; new
+  `POST /api/executions/<id>/cancel` sets that token (404 when not in flight).
+  Stop reasons (`completed`/`timeout`/`cancelled`/`error`) are surfaced.
+- **HIGH — destructive confirmation could not proceed.** The Proceed handler
+  now captures `destructiveCallback` *before* `closeDestructiveConfirm()`
+  clears it, so a confirmed danger action actually reaches
+  `doExecuteAction()`.
+
+### Reproduced evidence and validation
+- `python3 -B -m pytest -p no:cacheprovider -q web/tests`: **299 passed, 11
+  skipped, 5 subtests** (was 289; +10 tests: strict-arm rejection, bounded
+  worker completed/precancel/mid-step-cancel/timeout/error, Chain 2
+  out-of-bound + packet-cap, execution-cancel endpoint, ELRS IQ/classify/verify
+  honesty).
+- `python3 -B -m pytest -p no:cacheprovider -q tools/tests`: **473 passed, 444
+  skipped, 167 subtests**.
+- `python3 -B tools/validate-project.py`: PASS. `node --check
+  dashboard.v2.js`, `compileall`, `git diff --check`: clean. Ruff unavailable.
+- Direct Flask reproduction of both §93 CRITICALs confirms closure (above).
+
+### Safety boundaries
+- Offline only. No RF, serial, device, firmware, configuration, reset,
+  external-target, or live network action occurred; the one transmission-path
+  reproduction used a mocked Python socket and recorded zero out-of-bound
+  sends. No E8/TinyHawk access.
+
+### Deferred follow-ups (merge still blocked on independent re-review)
+1. **MEDIUM — durable evidence.** Records are deeply immutable but still
+   process-memory-only; survive-restart persistence (append-only JSONL under
+   ignored `work/`) remains open.
+2. **Bounded-worker process backing.** The worker isolates execution from the
+   request thread with timeout + cancellation, but is thread-backed; a true
+   OS-process / minimal-privilege backing (so a wedged task can be killed, not
+   just abandoned) remains a follow-up. It is proportionate given the sole
+   shipped executor is the no-I/O `FakeExecutor`.
+3. **Scope creep.** The deferred-family simulation packs (DJI BLE,
+   WiFi/Tello/Parrot, MAVLink, Chain 2) are retained as clearly
+   simulation-scoped demo packs the dashboard and its tests depend on.
+
+### Files changed, commit/push, next step
+- Changed: `web/app.py`, `web/capability_pack.py`, `web/elrs_v3_pack.py`,
+  `web/static/dashboard.v2.js`, and the tests `web/tests/test_capability_pack.py`,
+  `web/tests/test_elrs_v3_pack.py`, `web/tests/test_executor.py`,
+  `web/tests/test_web_integration.py`, `web/tests/test_authorization_ui.py`,
+  plus this `SESSION-NOTES.md`.
+- Published on `capability-pack-system` by ordinary fast-forward to GitHub
+  (`origin`) and the GitLab `mirror`; no force, no history rewrite.
+  `main`/`mirror/main` unchanged; the branch is **not merged**. Next step: a
+  fresh independent re-review of this round (and the three deferred items)
+  before any merge or marking tickets 01--05 accepted.
+

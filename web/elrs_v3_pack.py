@@ -155,6 +155,33 @@ def _build_v3_rc_packets(uid: bytes, crc_init: int, fhss_seq: list[int],
     return packets
 
 
+def _iq_magnitudes(iq: Any) -> list[float]:
+    """Convert a canned IQ sample list to a magnitude series (pure Python).
+
+    Accepts samples as real/float numbers (treated as magnitudes), ``[re, im]``
+    pairs, or Python ``complex`` values.  Returns an empty list if the input is
+    not a usable sample sequence.  No numpy dependency and no hardware.
+    """
+    if not isinstance(iq, list) or not iq:
+        return []
+    mags: list[float] = []
+    for sample in iq:
+        if isinstance(sample, bool):
+            return []
+        if isinstance(sample, complex):
+            mags.append(abs(sample))
+        elif isinstance(sample, (int, float)):
+            mags.append(abs(float(sample)))
+        elif isinstance(sample, (list, tuple)) and len(sample) == 2 and all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) for v in sample
+        ):
+            re_part, im_part = float(sample[0]), float(sample[1])
+            mags.append((re_part * re_part + im_part * im_part) ** 0.5)
+        else:
+            return []
+    return mags
+
+
 # ---------------------------------------------------------------------------
 # The Capability Pack
 # ---------------------------------------------------------------------------
@@ -336,49 +363,86 @@ class ELRSv3OTAInjectionPack(CapabilityPack):
         }
 
     def detect(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Passive ELRS detection stage (offline, canned capture only).
+        """Passive presence stage over *canned IQ* (offline, no hardware).
 
-        Accepts a canned capture descriptor under ``params['capture']``
-        (e.g. a passive SYNC observation produced by the offline pipeline).
-        No SDR access or RF.  Returns whether an ELRS 2.4 GHz signal was
-        observed and the raw observables used for classification.
+        Consumes real sample data under ``params['iq']`` (float magnitudes,
+        ``[re, im]`` pairs, or ``complex`` values) and computes presence
+        observables: sample count, mean/peak magnitude, and coefficient of
+        variation.  Presence requires an actual bursty signal above the noise
+        floor; no IQ (or unparseable IQ) fails closed with ``detected=False``.
+        It deliberately does not infer OTA version or packet rate from raw
+        magnitude data -- that is left inconclusive for :meth:`classify`.
+        If a caller has a real decode, it may pass ``decoded_ota_version`` /
+        ``decoded_packet_rate_hz`` through, which are surfaced as observed.
         """
-        capture = params.get("capture") or {}
-        sync_word = capture.get("sync_word")
-        detected = bool(capture.get("elrs_detected") or sync_word is not None)
-        return {
+        import statistics
+
+        mags = _iq_magnitudes(params.get("iq"))
+        base = {
             "stage": "passive_detection",
-            "detected": detected,
             "phy_domain": self.applicability.phy_domain,
-            "sync_word": sync_word,
-            "observed_hop_count": capture.get("hop_count"),
-            "ota_version": capture.get("ota_version"),
-            "packet_rate_hz": capture.get("packet_rate_hz"),
+            "source": "canned_iq",
             "requires_hardware": False,
-            "source": "canned_offline_capture",
+            # Only populated from an explicit decode, never guessed from IQ.
+            "ota_version": params.get("decoded_ota_version"),
+            "packet_rate_hz": params.get("decoded_packet_rate_hz"),
         }
+        if not mags:
+            base.update({"detected": False, "reason": "no usable canned IQ provided"})
+            return base
+
+        mean = statistics.fmean(mags)
+        peak = max(mags)
+        stdev = statistics.pstdev(mags) if len(mags) > 1 else 0.0
+        cv = (stdev / mean) if mean > 0 else 0.0
+        # A real burst is non-continuous (high CV) and has peaks well above the
+        # mean. A flat/continuous tone or pure noise does not qualify.
+        detected = bool(mean > 0 and cv >= 0.15 and peak >= 3.0 * mean)
+        base.update({
+            "detected": detected,
+            "sample_count": len(mags),
+            "mean_magnitude": mean,
+            "peak_magnitude": peak,
+            "coefficient_of_variation": cv,
+            "reason": "bursty energy above floor" if detected
+            else "no qualifying burst (flat/continuous or below floor)",
+        })
+        return base
 
     def classify(self, detection: dict[str, Any]) -> dict[str, Any]:
-        """Version/rate/domain classification stage (offline).
+        """Version/rate/domain classification stage (offline, honest).
 
-        Maps a passive-detection observation to the ELRS OTA version,
-        packet rate, and RF domain, and reports whether the observation
-        falls inside this pack's Applicability Boundary.
+        Reports the RF domain (a pack fact) and, when an OTA version was
+        actually *observed* (decoded) in the detection, whether it matches this
+        pack. A missing/unknown version is reported as ``applies=None``
+        (inconclusive) -- never defaulted to the pack's expected value and
+        never turned into a positive result (SECURITY.md: record negative and
+        inconclusive results; a static expectation is not an observation).
         """
         cfg = self.applicability.configuration
         expected_version = cfg.get("ota_version", 3)
-        ota_version = detection.get("ota_version")
-        if ota_version is None:
-            ota_version = expected_version
+        observed = detection.get("ota_version")
+        if observed is None:
+            applies: bool | None = None
+            reason = "OTA version was not observed; classification is inconclusive"
+        else:
+            applies = observed == expected_version
+            reason = (
+                "observed OTA version matches this pack"
+                if applies
+                else "observed OTA version differs from this pack"
+            )
         return {
             "stage": "classification",
-            "ota_version": ota_version,
-            "applies": ota_version == expected_version,
+            "detected": bool(detection.get("detected")),
             "domain": self.applicability.phy_domain,
             "channel_count": cfg.get("channel_count"),
-            "packet_rate_hz": detection.get("packet_rate_hz"),
             "fhss_sequence_len": cfg.get("fhss_sequence_len"),
-            "matched_hop_count": detection.get("observed_hop_count"),
+            "expected_ota_version": expected_version,
+            "observed_ota_version": observed,
+            "applies": applies,
+            "packet_rate_hz": detection.get("packet_rate_hz"),
+            "reason": reason,
         }
 
     def execute(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -408,37 +472,43 @@ class ELRSv3OTAInjectionPack(CapabilityPack):
         }
 
     def verify(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Independently verify the constructed frames (offline only).
+        """Encoder/decoder self-consistency check (offline, NOT independent).
 
-        Re-derives the v3 CRC initializer and FHSS sequence from the UID and
-        re-validates the CRC-14 of every constructed RC packet with the
-        vendored decoder.  ``OFFLINE_VALIDATED`` is reported only when that
-        independent check actually passes; otherwise the claim is only a
-        ``CANDIDATE``.  This never asserts bench or field evidence.
+        Re-validates the CRC-14 of every constructed RC packet with the same
+        vendored ``elrs_core.ota`` implementation that built them. This proves
+        the encoder and decoder agree; per SECURITY.md a self-consistent
+        encoder/decoder is **not** an independent protocol validation. The
+        Evidence Level therefore never exceeds ``CANDIDATE`` and
+        ``independent_validation`` is always ``False`` -- independent proof
+        would require a second-source decoder or a live RF round-trip against
+        the stock receiver (gated, tickets 06-07).
         """
         scope_note = (
-            "Offline, source-derived only. Not bench-validated (no live RF "
-            "round-trip) and not field-ready. Receiver acceptance is a "
-            "separate gated question (tickets 06-07)."
+            "Offline encoder/decoder self-consistency only. This is NOT "
+            "independent protocol validation (same vendored codec builds and "
+            "checks the frames), NOT bench-validated, and NOT field-ready. "
+            "Receiver acceptance is a separate gated question (tickets 06-07)."
         )
+        base = {
+            "result_state": "previewed",
+            "evidence_level": "candidate",
+            "independent_validation": False,
+            "scope": scope_note,
+        }
         try:
             uid = _resolve_uid(params)
         except (ValueError, KeyError):
             return {
-                "result_state": "previewed",
-                "evidence_level": "candidate",
-                "independently_verified": False,
-                "reason": "no binding_phrase or target_uid supplied; cannot verify",
-                "scope": scope_note,
+                **base,
+                "self_consistency_check": "not_run",
+                "reason": "no binding_phrase or target_uid supplied; cannot check",
             }
 
         if not _ELRS_CORE_AVAILABLE:
             return {
-                "result_state": "previewed",
-                "evidence_level": "candidate",
-                "independently_verified": False,
-                "reason": "elrs_core unavailable; CRC validation cannot run",
-                "scope": scope_note,
+                **base,
+                "self_consistency_check": "not_run",
+                "reason": "elrs_core unavailable; CRC self-check cannot run",
             }
 
         crc_init = _v3_crc_init(uid)
@@ -454,18 +524,17 @@ class ELRSv3OTAInjectionPack(CapabilityPack):
                 break
             checked += 1
 
-        verified = all_valid and checked > 0
+        passed = all_valid and checked > 0
         return {
-            "result_state": "previewed",
-            "evidence_level": "offline_validated" if verified else "candidate",
-            "independently_verified": verified,
+            **base,
+            "self_consistency_check": "passed" if passed else "failed",
             "packets_checked": checked,
             "crc_init": crc_init,
             "notes": (
-                "CRC-14 of every constructed RC packet re-validated against "
-                "the source-derived v3 initializer (nonce 0)."
+                "CRC-14 of every constructed RC packet re-encodes/decodes "
+                "consistently under the source-derived v3 initializer "
+                "(nonce 0). Self-consistency only; not independent validation."
             ),
-            "scope": scope_note,
         }
 
     def stop(self) -> dict[str, Any]:

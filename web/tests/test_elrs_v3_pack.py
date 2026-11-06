@@ -366,6 +366,7 @@ class TestHeadlessPipelineIntegration(unittest.TestCase):
         target = TargetDescriptor(
             identity="tinyhawk-iii-bench-01",
             protocol_version="ELRS v3 OTA",
+            phy_domain="2.4 GHz LoRa SX1280",
             firmware_impl="Betaflight",
             firmware_version="4.4.2",
         )
@@ -438,6 +439,7 @@ class TestHeadlessPipelineIntegration(unittest.TestCase):
         target = TargetDescriptor(
             identity="tinyhawk-iii-bench-01",
             protocol_version="ELRS v3 OTA",
+            phy_domain="2.4 GHz LoRa SX1280",
             firmware_impl="Betaflight",
             firmware_version="4.4.2",
         )
@@ -517,41 +519,52 @@ class TestOfflineEvidenceHonesty(unittest.TestCase):
         self.assertEqual(result["result_state"], "previewed")
         self.assertFalse(result["transmitted"])
 
-    def test_verify_validated_only_when_crc_checks_pass(self) -> None:
+    def test_verify_is_self_consistency_not_independent(self) -> None:
         from elrs_v3_pack import ELRSv3OTAInjectionPack
         pack = ELRSv3OTAInjectionPack()
         result = pack.verify({"binding_phrase": FIXTURE_PHRASE})
-        self.assertTrue(result["independently_verified"])
-        self.assertEqual(result["evidence_level"], "offline_validated")
+        # The CRC re-check uses the same vendored codec, so it is a
+        # self-consistency check, never an independent validation.
+        self.assertEqual(result["self_consistency_check"], "passed")
+        self.assertFalse(result["independent_validation"])
+        self.assertEqual(result["evidence_level"], "candidate")
         self.assertGreater(result["packets_checked"], 0)
-        # Even when validated, it must not claim bench/field evidence.
-        self.assertIn("bench-validated", result["scope"].lower())
+        self.assertIn("not independent", result["scope"].lower())
         self.assertIn("not field-ready", result["scope"].lower())
 
-    def test_verify_is_candidate_without_prerequisites(self) -> None:
+    def test_verify_not_run_without_prerequisites(self) -> None:
         from elrs_v3_pack import ELRSv3OTAInjectionPack
         pack = ELRSv3OTAInjectionPack()
         result = pack.verify({})
         self.assertEqual(result["evidence_level"], "candidate")
-        self.assertFalse(result["independently_verified"])
+        self.assertEqual(result["self_consistency_check"], "not_run")
+        self.assertFalse(result["independent_validation"])
 
-    def test_detect_and_classify_stages(self) -> None:
+    def test_detect_requires_real_iq_and_is_fail_closed(self) -> None:
         from elrs_v3_pack import ELRSv3OTAInjectionPack
         pack = ELRSv3OTAInjectionPack()
-        detection = pack.detect({"capture": {
-            "elrs_detected": True, "sync_word": 0x42, "hop_count": 240,
-            "ota_version": 3, "packet_rate_hz": 250,
-        }})
-        self.assertTrue(detection["detected"])
-        classification = pack.classify(detection)
-        self.assertEqual(classification["ota_version"], 3)
-        self.assertTrue(classification["applies"])
+        # No IQ -> fail closed.
+        self.assertFalse(pack.detect({})["detected"])
+        # A flat/continuous tone is not a burst -> not detected.
+        flat = pack.detect({"iq": [1.0] * 256})
+        self.assertFalse(flat["detected"])
+        # A bursty magnitude series (mostly quiet with sharp peaks) is detected.
+        bursty = [0.01] * 200 + [5.0] * 10 + [0.01] * 200
+        hot = pack.detect({"iq": bursty})
+        self.assertTrue(hot["detected"])
+        self.assertEqual(hot["sample_count"], len(bursty))
+        self.assertGreater(hot["coefficient_of_variation"], 0.15)
 
-    def test_classify_rejects_v4_observation(self) -> None:
+    def test_classify_is_inconclusive_without_observed_version(self) -> None:
         from elrs_v3_pack import ELRSv3OTAInjectionPack
         pack = ELRSv3OTAInjectionPack()
-        classification = pack.classify({"ota_version": 4})
-        self.assertFalse(classification["applies"])
+        # Missing version must NOT become a positive result.
+        inconclusive = pack.classify({"detected": True})
+        self.assertIsNone(inconclusive["applies"])
+        self.assertEqual(inconclusive["observed_ota_version"], None)
+        # An observed v3 matches; an observed v4 does not.
+        self.assertTrue(pack.classify({"ota_version": 3})["applies"])
+        self.assertFalse(pack.classify({"ota_version": 4})["applies"])
 
 
 if __name__ == "__main__":

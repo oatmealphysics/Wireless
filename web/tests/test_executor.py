@@ -145,6 +145,7 @@ class TestExecutorInput(unittest.TestCase):
         target = TargetDescriptor(
             identity="bench-01",
             protocol_version="ELRS v3 OTA",
+            phy_domain="2.4 GHz LoRa SX1280",
             firmware_impl="Betaflight",
             firmware_version="4.4.2",
         )
@@ -260,6 +261,7 @@ class TestFakeExecutorDeterministicSequence(unittest.TestCase):
         target = TargetDescriptor(
             identity="bench-01",
             protocol_version="ELRS v3 OTA",
+            phy_domain="2.4 GHz LoRa SX1280",
             firmware_impl="Betaflight",
             firmware_version="4.4.2",
         )
@@ -303,6 +305,7 @@ class TestFakeExecutorDeterministicSequence(unittest.TestCase):
         target = TargetDescriptor(
             identity="bench-01",
             protocol_version="ELRS v3 OTA",
+            phy_domain="2.4 GHz LoRa SX1280",
             firmware_impl="Betaflight",
             firmware_version="4.4.2",
         )
@@ -340,6 +343,7 @@ class TestFakeExecutorTimeout(unittest.TestCase):
         target = TargetDescriptor(
             identity="bench-01",
             protocol_version="ELRS v3 OTA",
+            phy_domain="2.4 GHz LoRa SX1280",
             firmware_impl="Betaflight",
             firmware_version="4.4.2",
         )
@@ -378,6 +382,7 @@ class TestFakeExecutorCancellation(unittest.TestCase):
         target = TargetDescriptor(
             identity="bench-01",
             protocol_version="ELRS v3 OTA",
+            phy_domain="2.4 GHz LoRa SX1280",
             firmware_impl="Betaflight",
             firmware_version="4.4.2",
         )
@@ -610,6 +615,7 @@ class TestHeadlessPipelineIntegration(unittest.TestCase):
         target = TargetDescriptor(
             identity="tinyhawk-iii-bench-01",
             protocol_version="ELRS v3 OTA",
+            phy_domain="2.4 GHz LoRa SX1280",
             firmware_impl="Betaflight",
             firmware_version="4.4.2",
         )
@@ -690,6 +696,7 @@ class TestHeadlessPipelineIntegration(unittest.TestCase):
         target = TargetDescriptor(
             identity="bench-01",
             protocol_version="ELRS v3 OTA",
+            phy_domain="2.4 GHz LoRa SX1280",
             firmware_impl="Betaflight",
             firmware_version="4.4.2",
         )
@@ -736,6 +743,7 @@ class TestHeadlessPipelineIntegration(unittest.TestCase):
         target = TargetDescriptor(
             identity="bench-01",
             protocol_version="ELRS v3 OTA",
+            phy_domain="2.4 GHz LoRa SX1280",
             firmware_impl="Betaflight",
             firmware_version="4.4.2",
         )
@@ -785,6 +793,7 @@ class TestHeadlessPipelineIntegration(unittest.TestCase):
         target = TargetDescriptor(
             identity="bench-01",
             protocol_version="ELRS v3 OTA",
+            phy_domain="2.4 GHz LoRa SX1280",
             firmware_impl="Betaflight",
             firmware_version="4.4.2",
         )
@@ -840,6 +849,7 @@ class TestHeadlessPipelineIntegration(unittest.TestCase):
         target = TargetDescriptor(
             identity="bench-01",
             protocol_version="ELRS v3 OTA",
+            phy_domain="2.4 GHz LoRa SX1280",
             firmware_impl="Betaflight",
             firmware_version="4.4.2",
         )
@@ -876,6 +886,106 @@ class TestHeadlessPipelineIntegration(unittest.TestCase):
             record.prerequisite_modes["fhss_seed"],
             PrerequisiteMode.DERIVED,
         )
+
+
+# ---------------------------------------------------------------------------
+# Seam 5: Bounded worker (off-thread, timeout, runtime cancellation)
+# ---------------------------------------------------------------------------
+
+def _worker_input():
+    from capability_pack import ExecutorInput, PackIdentity, TargetDescriptor
+    return ExecutorInput(
+        pack_identity=PackIdentity(name="w", version="0.1.0", description="t"),
+        target=TargetDescriptor(
+            identity="bench-01", protocol_version="*",
+            firmware_impl="*", firmware_version="*",
+        ),
+        scope_reference="w/0.1.0/bench-01",
+        parameters={},
+    )
+
+
+class TestBoundedWorker(unittest.TestCase):
+    """The executor runs off the caller's thread, bounded and cancellable."""
+
+    def test_completed_run_returns_output(self) -> None:
+        from capability_pack import BoundedWorker, FakeExecutor, ResultState
+
+        executor = FakeExecutor(
+            canned_sequence=[ResultState.PREVIEWED, ResultState.ATTEMPTED],
+            canned_evidence={"ok": True},
+        )
+        result = BoundedWorker(timeout_s=5.0).run(executor, _worker_input())
+        self.assertEqual(result.stop_reason, "completed")
+        self.assertIsNotNone(result.output)
+        self.assertEqual(result.output.final_state, ResultState.ATTEMPTED)
+
+    def test_precancelled_run_never_executes(self) -> None:
+        import threading
+
+        from capability_pack import BoundedWorker, FakeExecutor, ResultState
+
+        executor = FakeExecutor(
+            canned_sequence=[ResultState.PREVIEWED],
+            canned_evidence={},
+        )
+        cancel = threading.Event()
+        cancel.set()
+        result = BoundedWorker(timeout_s=5.0).run(
+            executor, _worker_input(), cancel_event=cancel,
+        )
+        self.assertEqual(result.stop_reason, "cancelled")
+        self.assertIsNone(result.output)
+
+    def test_cancel_event_stops_executor_between_steps(self) -> None:
+        import threading
+
+        from capability_pack import FakeExecutor, ResultState
+
+        # A FakeExecutor observing a set cancel event stops before step 1.
+        executor = FakeExecutor(
+            canned_sequence=[ResultState.PREVIEWED, ResultState.ATTEMPTED],
+            canned_evidence={},
+        )
+        cancel = threading.Event()
+        cancel.set()
+        output = executor.run(_worker_input(), cancel_event=cancel)
+        self.assertEqual(output.stop_reason, "cancelled")
+        self.assertEqual(len(output.transition_log), 0)
+
+    def test_timeout_returns_promptly_without_blocking(self) -> None:
+        import threading
+        import time
+
+        from capability_pack import BoundedWorker
+
+        class SlowExecutor:
+            def run(self, inp, *, cancel_event=None):
+                # Honor cancellation so the abandoned thread can exit.
+                for _ in range(100):
+                    if cancel_event is not None and cancel_event.is_set():
+                        break
+                    time.sleep(0.05)
+                raise AssertionError("should have been abandoned on timeout")
+
+        started = time.monotonic()
+        result = BoundedWorker(timeout_s=0.2).run(SlowExecutor(), _worker_input())
+        elapsed = time.monotonic() - started
+        self.assertEqual(result.stop_reason, "timeout")
+        self.assertIsNone(result.output)
+        # The caller returns near the timeout, not after the slow task's 5s.
+        self.assertLess(elapsed, 2.0)
+
+    def test_executor_error_is_reported(self) -> None:
+        from capability_pack import BoundedWorker
+
+        class BoomExecutor:
+            def run(self, inp, *, cancel_event=None):
+                raise RuntimeError("boom")
+
+        result = BoundedWorker(timeout_s=5.0).run(BoomExecutor(), _worker_input())
+        self.assertEqual(result.stop_reason, "error")
+        self.assertIsInstance(result.error, RuntimeError)
 
 
 if __name__ == "__main__":

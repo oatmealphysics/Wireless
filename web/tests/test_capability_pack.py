@@ -428,6 +428,7 @@ class TestScopeManager(unittest.TestCase):
         self.target = TargetDescriptor(
             identity="tinyhawk-iii-bench-01",
             protocol_version="ELRS v3 OTA",
+            phy_domain="2.4 GHz LoRa SX1280",
             firmware_impl="Betaflight",
             firmware_version="4.4.2",
         )
@@ -454,6 +455,38 @@ class TestScopeManager(unittest.TestCase):
                 pack_version="0.0.0",
                 target=self.target,
                 permitted_actions=frozenset({"preview"}),
+                bounds={},
+                time_limit=timedelta(minutes=1),
+                stop_conditions=[],
+                sacrificial_target=False,
+                evidence_destination="work/evidence",
+            )
+
+    def test_arm_rejects_ambiguous_target(self) -> None:
+        """A target with an unknown ("*") attribute cannot arm a specific pack.
+
+        The pack's boundary pins phy_domain; a target that does not actually
+        know its PHY must not satisfy that requirement by wildcard, even though
+        lenient discovery (query) would still list the pack.
+        """
+        from capability_pack import TargetDescriptor
+
+        ambiguous = TargetDescriptor(
+            identity="ambiguous-drone",
+            protocol_version="ELRS v3 OTA",
+            firmware_impl="Betaflight",
+            firmware_version="4.4.2",
+            # phy_domain left unknown ("*") — the pack requires a specific PHY.
+        )
+        # Lenient discovery still lists the pack (a partial target "could" match).
+        self.assertIn(self.pack, self.registry.query(ambiguous.as_query()))
+        # Strict authorization refuses to arm it.
+        with self.assertRaises(ValueError):
+            self.manager.arm(
+                pack_name="elrs-desync",
+                pack_version="0.1.0",
+                target=ambiguous,
+                permitted_actions=frozenset({"execute"}),
                 bounds={},
                 time_limit=timedelta(minutes=1),
                 stop_conditions=[],
@@ -698,6 +731,7 @@ class TestDestructiveEffectAuthorization(unittest.TestCase):
         self.target = TargetDescriptor(
             identity="sacrificial-bench-02",
             protocol_version="ELRS v3 OTA",
+            phy_domain="2.4 GHz LoRa SX1280",
             firmware_impl="Betaflight",
             firmware_version="4.4.2",
         )

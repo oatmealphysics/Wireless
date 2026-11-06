@@ -843,6 +843,64 @@ class TestChain2UnifiedDispatch:
         # No transmission occurred; the packet was built but not sent.
         assert "packet_hex" in data
 
+    @staticmethod
+    def _arm_chain2(client, target_id, *, endpoint, max_packets):
+        return client.post(
+            "/api/packs/sim-chain2_wifi_mavlink/0.1.0/arm",
+            json={
+                "target_identity": target_id,
+                "permitted_actions": ["land", "disarm"],
+                "time_limit_seconds": 300,
+                "stop_conditions": ["operator_abort"],
+                "sacrificial_target": True,
+                "evidence_destination": "test",
+                "bounds": {"endpoint": endpoint, "max_packets": max_packets},
+            },
+        )
+
+    def test_chain2_live_rejects_out_of_bound_endpoint(self, live_client, live_app_state):
+        """An armed scope bound to endpoint A must not transmit to endpoint B."""
+        _inject_target(live_app_state, {
+            "id": "mav:bound", "name": "MAV", "protocol": "mavlink",
+            "chain": "chain2_wifi_mavlink", "available_actions": ["land"],
+            "details": {},
+        })
+        armed = self._arm_chain2(
+            live_client, "mav:bound", endpoint="127.0.0.1:14550", max_packets=1,
+        )
+        assert armed.status_code == 200
+        with patch("socket.socket") as socket_cls:
+            resp = live_client.post("/api/chain2/inject", json={
+                "command": "land", "target_id": "mav:bound",
+                "endpoint": "203.0.113.99:9999",
+            })
+        assert resp.status_code == 403
+        assert resp.get_json()["status"] == "bounds_violation"
+        socket_cls.assert_not_called()
+
+    def test_chain2_live_within_bounds_caps_packet_count(self, live_client, live_app_state):
+        """Within bounds, the burst is capped at the scope's max_packets."""
+        _inject_target(live_app_state, {
+            "id": "mav:bound", "name": "MAV", "protocol": "mavlink",
+            "chain": "chain2_wifi_mavlink", "available_actions": ["land"],
+            "details": {},
+        })
+        self._arm_chain2(
+            live_client, "mav:bound", endpoint="127.0.0.1:14550", max_packets=1,
+        )
+        with patch("socket.socket") as socket_cls:
+            sock = socket_cls.return_value
+            resp = live_client.post("/api/chain2/inject", json={
+                "command": "land", "target_id": "mav:bound",
+                "endpoint": "127.0.0.1:14550",
+            })
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["status"] == "sent"
+        # max_packets=1 bound → exactly one datagram, not the default burst of 5.
+        assert sock.sendto.call_count == 1
+        assert data["packets_sent"] == 1
+
 
 # ---------------------------------------------------------------------------
 # Index page

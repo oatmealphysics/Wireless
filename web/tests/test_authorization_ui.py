@@ -611,6 +611,29 @@ class TestAuthorizationEnforcement(unittest.TestCase):
 
 
 @needs_flask
+class TestExecutionCancel(unittest.TestCase):
+    """POST /api/executions/<id>/cancel controls the bounded-worker token."""
+
+    def setUp(self) -> None:
+        self.client = make_flask_client(web_app)
+        self.state = web_app.get_dashboard_state(self.client.application)
+
+    def test_cancel_unknown_execution_returns_404(self) -> None:
+        resp = self.client.post("/api/executions/deadbeef/cancel")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_cancel_sets_inflight_token(self) -> None:
+        import threading
+        event = threading.Event()
+        with self.state.state_lock:
+            self.state.executions["exec-1"] = event
+        resp = self.client.post("/api/executions/exec-1/cancel")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()["status"], "cancel_requested")
+        self.assertTrue(event.is_set())
+
+
+@needs_flask
 class TestPack1Registration(unittest.TestCase):
     """Pack 1 (ELRS v3 OTA Injection) is registered in the app registry."""
 

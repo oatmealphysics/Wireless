@@ -1227,8 +1227,12 @@ function initDestructiveConfirm() {
   }
   if (proceedBtn) {
     proceedBtn.addEventListener('click', () => {
+      // Capture the callback BEFORE closing: closeDestructiveConfirm() clears
+      // destructiveCallback, so reading it afterwards would always be null and
+      // a confirmed destructive action would never actually run.
+      const cb = destructiveCallback;
       closeDestructiveConfirm();
-      if (destructiveCallback) destructiveCallback();
+      if (cb) cb();
     });
   }
 }
