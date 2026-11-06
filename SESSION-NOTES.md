@@ -5978,4 +5978,8 @@ otherwise proceed with G0 as scheduled.
 - Files changed by this review: `SESSION-NOTES.md` only. The pre-existing
   untracked `setup/` directory was not inspected beyond file-name inventory and
   was not modified.
+- The substantive review entry was committed as `ef40343` (`docs: record
+  capability pack review findings`) and pushed by ordinary fast-forward to
+  `origin/capability-pack-system`. `main` and the GitLab `mirror/main` authority
+  were not changed; merge remains blocked on remediation and re-review.
 
