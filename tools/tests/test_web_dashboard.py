@@ -178,7 +178,23 @@ class TestActionValidation(unittest.TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("not available", resp.get_json()["error"])
 
-    def test_valid_action_dry_run(self):
+    def _arm_land(self):
+        """Arm the wifi_tello pack for wifi:test so 'land' is authorized."""
+        return self.client.post(
+            "/api/packs/sim-wifi_tello/0.1.0/arm",
+            json={
+                "target_identity": "wifi:test",
+                "permitted_actions": ["land", "streamon"],
+                "time_limit_seconds": 300,
+                "stop_conditions": ["operator_abort"],
+                "sacrificial_target": True,
+                "evidence_destination": "test",
+            },
+            content_type="application/json",
+        )
+
+    def test_valid_action_armed_returns_result_state(self):
+        self._arm_land()
         resp = self.client.post(
             "/api/targets/wifi:test/action",
             json={"action": "land"},
@@ -186,13 +202,21 @@ class TestActionValidation(unittest.TestCase):
         )
         self.assertEqual(resp.status_code, 200)
         data = resp.get_json()
-        self.assertEqual(data["status"], "dry_run")
-        self.assertIn("DRY-RUN", data["result"])
+        # New contract: the executor reports a truthful Result State, never a
+        # flat "status"/"result" string.
+        self.assertEqual(data["result_state"], "attempted")
+        self.assertEqual(data["stop_reason"], "completed")
 
-    def test_dry_run_mode_gates_live_execution(self):
-        """Even in non-simulate mode, dry_run_mode prevents live execution."""
+    def test_dry_run_mode_performs_no_live_execution(self):
+        """In non-simulate dry-run mode an armed action still only simulates.
+
+        Dry-run governs whether real I/O occurs; execution always runs through
+        the fake executor here, so no real transmission happens and the Result
+        State never exceeds ATTEMPTED.
+        """
         _state().simulate_mode = False
         _state().dry_run_mode = True
+        self._arm_land()
 
         resp = self.client.post(
             "/api/targets/wifi:test/action",
@@ -200,7 +224,20 @@ class TestActionValidation(unittest.TestCase):
             content_type="application/json",
         )
         data = resp.get_json()
-        self.assertEqual(data["status"], "dry_run")
+        self.assertEqual(data["result_state"], "attempted")
+        self.assertNotIn(
+            data["result_state"], ("target_accepted", "effect_confirmed"),
+        )
+
+    def test_unarmed_action_denied(self):
+        """Without an armed scope, execution is denied (403)."""
+        resp = self.client.post(
+            "/api/targets/wifi:test/action",
+            json={"action": "land"},
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.get_json()["stop_reason"], "authorization_denied")
 
     def test_nonexistent_target_404(self):
         resp = self.client.post(
@@ -242,8 +279,13 @@ class TestActionCategories(unittest.TestCase):
         client = web_app.app.test_client()
         resp = client.get("/api/actions")
         data = resp.get_json()
-        for name, defn in data.items():
-            self.assertIn("category", defn)
+        # New contract: /api/actions returns a list of pack metadata, each with
+        # an "actions" list whose entries carry a category.
+        self.assertIsInstance(data, list)
+        self.assertGreater(len(data), 0)
+        for pack in data:
+            for action in pack.get("actions", []):
+                self.assertIn("category", action)
 
 
 @needs_flask
@@ -586,18 +628,26 @@ class TestDryRunDefault(unittest.TestCase):
         data = resp.get_json()
         self.assertTrue(data["dry_run"])
 
-    def test_live_actions_flag_updates_default_app_gate(self):
+    def test_live_actions_flag_is_removed(self):
+        """The global --live-actions gate is gone; the flag must be rejected."""
+        with patch.object(sys, "argv", ["app.py", "--simulate", "--live-actions"]):
+            with self.assertRaises(SystemExit):
+                web_app.main()
+
+    def test_simulate_run_keeps_dry_run_and_sets_defaults(self):
+        """--simulate wires scan defaults and keeps dry-run on (no live gate)."""
         original_simulate = _state().simulate_mode
         original_dry_run = _state().dry_run_mode
         original_defaults = dict(_state().scan_defaults)
         try:
             with patch.object(sys, "argv", [
-                    "app.py", "--simulate", "--live-actions",
+                    "app.py", "--simulate",
                     "--wifi-iface", "test-wifi", "--ble-iface", "test-ble",
                     "--sdr-args", "driver=test"]), patch.object(web_app.app, "run") as run:
                 web_app.main()
 
-            self.assertFalse(_state().dry_run_mode)
+            # Authorization is per-pack scoping now; dry-run stays enabled.
+            self.assertTrue(_state().dry_run_mode)
             self.assertEqual(_state().scan_defaults["wifi_iface"], "test-wifi")
             self.assertEqual(_state().scan_defaults["ble_iface"], "test-ble")
             self.assertEqual(_state().scan_defaults["sdr_args"], "driver=test")

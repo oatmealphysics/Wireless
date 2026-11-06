@@ -28,7 +28,10 @@
 <div class="toolbar">
   <button type="button" class="btn btn-primary" id="btn-scan">Scan</button>
   <button type="button" class="btn" id="btn-clear">Clear</button>
+  <button type="button" class="btn" id="btn-packs">Packs</button>
+  <button type="button" class="btn" id="btn-evidence">Evidence</button>
   <span class="toolbar-spacer"></span>
+  <span id="scope-indicator" class="scope-indicator" role="status" aria-live="polite"></span>
   <span id="mode-badge" class="mode-badge"></span>
   <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle theme"><span class="theme-toggle-icon"></span></button>
   <div class="hw-widget-wrap" id="hw-widget-wrap">
@@ -76,6 +79,100 @@
       <p>Select a target to view details and actions</p>
     </div>
     <div id="detail-content" hidden></div>
+  </div>
+</div>
+
+<!-- Pack listing panel -->
+<div class="pack-list-overlay" id="pack-list-overlay" hidden>
+  <div class="pack-list-modal">
+    <div class="pack-list-header">
+      <h2>Capability Packs</h2>
+      <button type="button" class="btn btn-sm" id="pack-list-close">Close</button>
+    </div>
+    <div id="pack-list" class="pack-list"></div>
+  </div>
+</div>
+
+<!-- Arming dialog -->
+<div class="arm-dialog-overlay" id="arm-dialog" hidden>
+  <div class="arm-dialog-modal">
+    <h2 id="arm-dialog-title">Arm Capability Pack</h2>
+    <div class="arm-dialog-body">
+      <div class="arm-field">
+        <label for="arm-pack-name">Pack</label>
+        <input type="text" id="arm-pack-name" readonly>
+      </div>
+      <div class="arm-field">
+        <label for="arm-target-select">Target</label>
+        <select id="arm-target-select"></select>
+      </div>
+      <div class="arm-field">
+        <label for="arm-time-limit">Time limit (seconds)</label>
+        <input type="number" id="arm-time-limit" value="300" min="10" max="3600">
+      </div>
+      <div class="arm-field">
+        <label for="arm-stop-conditions">Stop conditions</label>
+        <input type="text" id="arm-stop-conditions" value="operator_abort" placeholder="comma-separated">
+      </div>
+      <div id="arm-destructive-notice" class="arm-destructive-notice" hidden>
+        <strong>Destructive pack:</strong> This capability has destructive effects.
+      </div>
+      <div class="arm-field" id="arm-sacrificial-field">
+        <label>
+          <input type="checkbox" id="arm-sacrificial-target">
+          Designate as Sacrificial Target
+        </label>
+      </div>
+      <div class="arm-field">
+        <label for="arm-evidence-dest">Evidence destination</label>
+        <input type="text" id="arm-evidence-dest" value="default">
+      </div>
+    </div>
+    <div class="arm-dialog-actions">
+      <button type="button" class="btn" id="arm-dialog-cancel">Cancel</button>
+      <button type="button" class="btn btn-warning" id="arm-dialog-confirm">Arm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Destructive action confirmation dialog -->
+<div class="destructive-confirm-overlay" id="destructive-confirm" hidden>
+  <div class="destructive-confirm-modal">
+    <h2>Destructive Action Confirmation</h2>
+    <p id="destructive-confirm-desc">This action has destructive effects on the target.</p>
+    <div class="destructive-confirm-body">
+      <div class="arm-field">
+        <label>
+          <input type="checkbox" id="destructive-confirm-checkbox">
+          I confirm this is a designated Sacrificial Target
+        </label>
+      </div>
+    </div>
+    <div class="arm-dialog-actions">
+      <button type="button" class="btn" id="destructive-confirm-cancel">Cancel</button>
+      <button type="button" class="btn btn-danger" id="destructive-confirm-proceed" disabled>Proceed</button>
+    </div>
+  </div>
+</div>
+
+<!-- Result State display -->
+<div id="result-state-display" class="result-state-display" hidden>
+  <div class="result-state-header">
+    <h3>Result State</h3>
+    <button type="button" class="btn btn-sm" id="result-state-close">Close</button>
+  </div>
+  <div id="result-state-transitions" class="result-state-transitions"></div>
+</div>
+
+<!-- Evidence viewer -->
+<div class="evidence-viewer-overlay" id="evidence-viewer" hidden>
+  <div class="evidence-viewer-modal">
+    <div class="evidence-viewer-header">
+      <h2>Evidence Records</h2>
+      <button type="button" class="btn btn-sm" id="evidence-viewer-close">Close</button>
+    </div>
+    <div id="evidence-viewer-list" class="evidence-viewer-list"></div>
+    <div id="evidence-viewer-detail" class="evidence-viewer-detail" hidden></div>
   </div>
 </div>
 

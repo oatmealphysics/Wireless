@@ -14,7 +14,7 @@ TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
 sys.path.insert(0, str(TOOLS_DIR / "tests"))
 
-from helpers import get_web_app, make_target, needs_flask
+from helpers import arm_pack, get_web_app, make_target, needs_flask
 
 web_app = get_web_app()
 
@@ -286,6 +286,7 @@ class TestDashboardHistoryOwnership(unittest.TestCase):
 
         recorded_ids = []
         with flask_app.test_client() as client:
+            arm_pack(client, "wifi:bounded", actions=["land"], time_limit=3600)
             for _ in range(web_app.MAX_LOG + 7):
                 response = client.post(
                     "/api/targets/wifi:bounded/action",
@@ -354,6 +355,12 @@ class TestDashboardHistoryOwnership(unittest.TestCase):
         target = make_target(target_id="wifi:parallel")
         with state.state_lock:
             state.targets[target["id"]] = target
+
+        # Arm once up front; the scope lives on the shared ScopeManager, so
+        # every parallel writer's action is authorized for the whole run.
+        with flask_app.test_client() as armer:
+            armed = arm_pack(armer, "wifi:parallel", actions=["land"], time_limit=3600)
+            self.assertEqual(armed.status_code, 200)
 
         writer_count = 8
         barrier = threading.Barrier(writer_count + 1)

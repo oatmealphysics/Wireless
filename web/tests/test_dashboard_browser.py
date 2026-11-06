@@ -312,17 +312,37 @@ class DashboardBrowserTests(unittest.TestCase):
         tello.click()
         expect(self.page.locator(".detail-title")).to_have_text("TELLO-AABBCC")
 
+        # Authorization is always enforced, so arm a scope for this target
+        # before exercising the (non-destructive, info-severity) action.
+        from datetime import timedelta
+        web_app.get_dashboard_state().scope_manager.arm(
+            pack_name="sim-wifi_tello",
+            pack_version="0.1.0",
+            target=web_app.TargetDescriptor(
+                identity="wifi:60:60:1F:AA:BB:CC",
+                protocol_version="*", firmware_impl="*", firmware_version="*",
+            ),
+            permitted_actions=frozenset(["streamon"]),
+            bounds={},
+            time_limit=timedelta(seconds=300),
+            stop_conditions=["operator_abort"],
+            sacrificial_target=True,
+            evidence_destination="e2e",
+        )
+
         action = self.page.locator('.action-card[data-action-name="streamon"]')
         action.click()
-        expect(self.page.locator("#action-result")).to_contain_text("[dry_run]")
-        expect(self.page.locator("#action-result")).to_contain_text("[DRY-RUN]")
+        # Simulation executor walks to ATTEMPTED; the UI renders the Result
+        # State, never a phantom "executed"/"target_accepted".
+        expect(self.page.locator("#action-result")).to_contain_text("attempted")
+        expect(self.page.locator("#action-result")).not_to_contain_text("target_accepted")
         expect(self.page.locator("#action-log-entries .log-entry")).to_have_count(1)
         expect(self.page.locator("#action-log-entries")).to_contain_text("Capture Video")
-        expect(self.page.locator("#action-log-entries")).to_contain_text("[dry_run]")
+        expect(self.page.locator("#action-log-entries")).to_contain_text("[attempted]")
 
         self.assertEqual(len(web_app.get_dashboard_state().action_log), 1)
         self.assertEqual(
-            web_app.get_dashboard_state().action_log[0]["status"], "dry_run",
+            web_app.get_dashboard_state().action_log[0]["result_state"], "attempted",
         )
 
         self.page.locator("#btn-clear").click()
