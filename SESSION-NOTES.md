@@ -6141,3 +6141,101 @@ otherwise proceed with G0 as scheduled.
   conclusion and the CP1 review-checkpoint model) before any merge or marking
   tickets 01–05 resolved.
 
+## 93. Capability Pack remediation independent re-review — still not merge-ready (Codex, 2026-11-06)
+
+### Starting state and objective
+- Started from clean `capability-pack-system` at `9143f3f` after the required
+  `git pull --ff-only` reported that the branch was current. At review start,
+  both `origin/capability-pack-system` and `mirror/capability-pack-system`
+  already resolved to `9143f3f`; `main`, `origin/main`, and `mirror/main`
+  remained at `208eef8`.
+- Objective: independently re-review remediation commit `9143f3f` against its
+  parent `4ae643d`, the CP1 acceptance criteria in `PROJECT-ROADMAP.md:226-267`,
+  the findings in §90, and the repository guardrails before publishing to both
+  repository authorities. No GitHub Issues exist and the earlier ignored
+  `.scratch/capability-pack-system/spec.md` was not present, so those maintained
+  sources formed the specification axis.
+
+### Standards and safety findings
+- **CRITICAL — live Chain 2 authorization does not bind the actual network
+  target or enforce bounds.** `/api/chain2/inject` authorizes only the supplied
+  `target_id`, then independently accepts a client-supplied `endpoint` and sends
+  five packets to it (`web/app.py:2491-2493,2522-2527,2556-2566`). The scope's
+  `bounds` are stored but never checked by `ScopeManager.authorize()`
+  (`web/capability_pack.py:345-357,459-500`). This violates the exact-target and
+  count/rate/duration requirements in `SECURITY.md:75-97`.
+- **CRITICAL — unknown applicability is treated as authorization to match.**
+  `_derive_target_descriptor()` substitutes `"*"` for unknown protocol,
+  firmware, and PHY attributes (`web/app.py:913-936`), and
+  `PackRegistry._target_matches()` treats a target-side `"*"` as unconstrained
+  (`web/capability_pack.py:281-296`). `TargetDescriptor.as_query()` still omits
+  its `model` and `interface` fields and has no revision field. A discovered but
+  ambiguous target can therefore arm a mismatched pack, contrary to
+  `SECURITY.md:87-91` and §90's exact-target requirement.
+- **HIGH — ELRS verification is mislabeled independent.** `verify()` builds
+  frames with `_build_v3_rc_packets()` and validates them with the same
+  vendored `elrs_core.ota` implementation (`web/elrs_v3_pack.py:444-457`). This
+  is useful self-consistency coverage, but `SECURITY.md:145-151` explicitly says
+  a self-consistent encoder/decoder is not independent protocol validation.
+- **HIGH — classification turns missing evidence into a positive result.**
+  `classify()` defaults an absent observed OTA version to the pack's expected
+  v3 value and then returns `applies: true`; it also echoes supplied rate data
+  and the pack's domain rather than classifying IQ
+  (`web/elrs_v3_pack.py:361-382`). This conflicts with the repository's
+  fact-versus-hypothesis and negative/inconclusive-result rules.
+
+### Specification findings
+- **HIGH — isolation and runtime cancellation remain absent.** The roadmap
+  requires live execution to be isolated from Flask with timeout,
+  cancellation, stop reason, and minimal privilege
+  (`PROJECT-ROADMAP.md:262-263`). `_execute_via_registry()` still runs a
+  `FakeExecutor` synchronously in the request thread, and Chain 2 still opens
+  and uses its UDP socket in the route (`web/app.py:991-999,2556-2567`). This is
+  also the unresolved HIGH finding from §90.
+- **HIGH — destructive confirmation is connected but cannot proceed.** The
+  Proceed listener calls `closeDestructiveConfirm()`, which sets
+  `destructiveCallback = null`, before it checks and calls the callback
+  (`web/static/dashboard.v2.js:1228-1232,1248-1252`). A confirmed danger action
+  therefore never reaches `doExecuteAction()`.
+- **HIGH — the requested canned-IQ detection/classification stage is not
+  implemented.** `detect()` accepts caller-authored metadata rather than canned
+  IQ, and `classify()` performs no rate/domain/version inference. Registering
+  the pack fixes registry lookup but not §90's ticket-05 behavior.
+- **MEDIUM — evidence remains process-memory-only.** Deep immutability is fixed,
+  but `EvidenceStore` is still a list that does not survive restart
+  (`web/capability_pack.py:765-780`), leaving the durable half of §90 open.
+- **Scope creep retained.** Deferred DJI BLE, WiFi/Tello/Parrot, MAVLink, and
+  Chain 2 simulation families remain registered. This was acknowledged in §92
+  but does not resolve the §90 finding.
+
+### Reproduced evidence and validation
+- Offline Flask/mocked-socket reproduction: armed target `mav:authorized` with
+  `bounds={"endpoint":"127.0.0.1:14550","max_packets":1}`, then posted a live
+  Chain 2 request for `203.0.113.99:9999`. The API returned HTTP 200 / `sent`,
+  and the mocked socket recorded **five** `sendto()` calls to the out-of-bound
+  destination. No real socket transmission occurred.
+- `python3 -B -m pytest -p no:cacheprovider -q web/tests`: **289 passed, 11
+  skipped, 5 subtests passed**.
+- `python3 -B -m pytest -p no:cacheprovider -q tools/tests`: **473 passed, 444
+  skipped, 167 subtests passed**. The first sandboxed collection attempt was
+  blocked when Scapy tried to create its local route-inspection socket; the
+  permitted rerun outside that restricted sandbox passed.
+- `node --check web/static/dashboard.v2.js` and `git diff --check`: passed.
+- The green suites do not exercise the broken destructive-confirmation Proceed
+  flow; the 11 Playwright tests remain skipped.
+
+### Safety, decision, and next steps
+- No RF, serial, device, firmware, configuration, reset, external-target, or
+  live network action occurred. The only transmission-path reproduction used a
+  mocked Python socket. No E8/TinyHawk access occurred.
+- **Decision: not merge-ready.** The branch must not be fast-forwarded or
+  merged into `main`, and tickets 01--05 must not be marked accepted. Fix the
+  two authorization-boundary defects and destructive-confirmation callback,
+  replace metadata echo/defaulting with real offline IQ classification, and
+  implement the required isolated bounded worker/cancellation seam before the
+  next independent review. Durable evidence and deferred-family scope remain
+  open follow-ups.
+- This review changes `SESSION-NOTES.md` only. Publish the review commit by
+  ordinary fast-forward to the same `capability-pack-system` branch on GitHub
+  and GitLab; leave both `main` authorities unchanged.
+
